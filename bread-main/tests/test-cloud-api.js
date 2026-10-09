@@ -292,16 +292,38 @@ async function main() {
   check('订单状态为已取消', r.data.orderInfo.status === -1, r.data.orderInfo)
 
   // ---- 核销 ----
-  console.log('\n=== 10) 核销 ===')
+  // 2026-10-09 阶段二安全修复：核销现在要求「调用者在商家白名单」且「订单已支付(status=1)」。
+  // 原来这里是直接用下单用户核销未支付订单 —— 那正是被修掉的漏洞（任何人可核销他人订单）。
+  // 新的边界用例见 tests/test-security.js 的 SEC-2 小节。
+  console.log('\n=== 10) 核销（阶段二后需管理员 + 已支付）===')
   r = await dispatch('orderCreate', {
     goodsJsonStr: JSON.stringify([{ goodsId: 'g_ice', number: 1, propertyChildIds: '' }]),
     extJsonStr: '{}', shopIdZt: 0, shopNameZt: '卿欢蛋糕'
   }, ctx)
   const hx = r.data.hxNumber
+  const hxOrderId = r.data.id
+  const SHOP_CFG = require('../cloudfunctions/api/shop-config')
+
+  // (1) 普通用户核销 → 必须被拒（白名单为空）
   r = await dispatch('orderHx', { hxNumber: hx }, ctx)
-  check('核销成功', r.code === 0, r)
+  check('普通用户核销被拒（无核销权限）', r.code !== 0, r)
+
+  // (2) 加入白名单，但订单仍为「待支付」→ 仍必须被拒
+  SHOP_CFG.adminOpenids.push(ctx.openid)
+  r = await dispatch('orderHx', { hxNumber: hx }, ctx)
+  check('未支付订单不可核销', r.code !== 0, r)
+
+  // (3) 模拟支付成功（status=1）后核销 → 成功
+  const hxDoc = db._store.order.find((o) => o._id === hxOrderId)
+  hxDoc.status = 1
+  hxDoc.statusStr = '制作中'
+  r = await dispatch('orderHx', { hxNumber: hx }, ctx)
+  check('已支付订单核销成功', r.code === 0, r)
+  check('  记录核销人 hxBy', hxDoc.hxBy === ctx.openid, hxDoc.hxBy)
   r = await dispatch('orderHx', { hxNumber: hx }, ctx)
   check('重复核销被拒', r.code !== 0 && /已核销/.test(r.msg), r)
+  // 收尾：把白名单还原，避免影响后续小节
+  SHOP_CFG.adminOpenids.length = 0
 
   // ---- 防改价 ----
   console.log('\n=== 11) 安全性：服务端不信任前端价格 ===')

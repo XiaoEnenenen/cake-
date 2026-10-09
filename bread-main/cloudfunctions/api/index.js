@@ -89,6 +89,42 @@ const dbAdapter = {
       await db.collection(collection).doc(d._id).remove()
     }
     return { removed: docs.length }
+  },
+
+  /**
+   * 库存原子扣减（2026-10-09 阶段二新增，防超卖）
+   * -----------------------------------------------------------------
+   * 为什么必须原子：原实现是「先 get 读库存 → 校验 → 覆盖写 stores - n」，
+   * 两个并发请求会同时读到同一个库存值、同时通过校验，覆盖后库存变成负数（超卖）。
+   * 这里用条件更新 + command.inc：
+   *   where({ _id, stores: _.gte(n) }) —— 只有库存还够时才命中
+   *   data: { stores: _.inc(-n) }      —— 由数据库做原子自减
+   * stats.updated 为 0 表示条件不满足（库存不足/商品不存在），调用方据此回滚。
+   * @returns {Promise<{ok:boolean, reason?:string, stores?:number}>}
+   */
+  async decStores(collection, id, n) {
+    const res = await db
+      .collection(collection)
+      .where({ _id: String(id), stores: _.gte(n) })
+      .update({ data: { stores: _.inc(-n) } })
+    const updated = (res && res.stats && res.stats.updated) || 0
+    if (updated < 1) return { ok: false, reason: 'insufficient' }
+    return { ok: true }
+  },
+
+  /**
+   * 库存原子回补（取消订单 / 删除未支付订单时用）。
+   * 用 update 的 inc（不是读改写），保证与并发扣减不会互相覆盖。
+   * @returns {Promise<{ok:boolean, reason?:string}>}
+   */
+  async incStores(collection, id, n) {
+    const res = await db
+      .collection(collection)
+      .doc(String(id))
+      .update({ data: { stores: _.inc(n) } })
+    const updated = (res && res.stats && res.stats.updated) || 0
+    if (updated < 1) return { ok: false, reason: 'not_found' }
+    return { ok: true }
   }
 }
 
@@ -96,7 +132,22 @@ const dbAdapter = {
  * 支付回调（第 2 阶段接微信支付时启用）
  * cloud.cloudPay.unifiedOrder 的支付结果会回调到云函数，
  * 这里预留处理入口，避免将来找不到地方接。
+ *
+ * ⚠️ 安全警告（2026-10-09 阶段二修复）
+ *   以下分支原本是「无 action 且 event 带 outTradeNo/resultCode 就直接当成支付回调」。
+ *   但客户端 wx.cloud.callFunction({ data: {...} }) 的 data 会**原样**成为云函数的 event，
+ *   因此任何人都能构造 { outTradeNo: '<自己的订单号>', resultCode: 'SUCCESS' }
+ *   把自己的未付款订单改成"已支付/制作中" —— 无签名、无来源校验、无金额校验。
+ *   而当前项目**还没有任何 cloudPay.unifiedOrder 调用方**，这条分支唯一能被触发的途径就是伪造。
+ *
+ *   因此接入真实支付之前，本分支由 ENABLE_PAY_CALLBACK 开关关闭（默认 false）。
+ *   将来接入时改成独立入口，并且必须做到：
+ *     1) 验签（商户平台证书 / 云开发支付回调机制）
+ *     2) 校验 totalFee 与订单 amountReal 一致
+ *     3) 幂等（以 outTradeNo 为幂等键，且只允许 status 0 → 1）
  */
+const ENABLE_PAY_CALLBACK = false
+
 async function handlePayCallback(event) {
   const outTradeNo = event.outTradeNo
   const resultCode = event.resultCode
@@ -119,8 +170,10 @@ async function handlePayCallback(event) {
 }
 
 exports.main = async (event, context) => {
-  // 支付回调分支：由微信支付触发，不带 action
-  if (event && event.outTradeNo && event.resultCode) {
+  // 支付回调分支：由微信支付触发，不带 action。
+  // 由 ENABLE_PAY_CALLBACK 开关保护（默认关闭），关闭时一律视为普通 action 调用，
+  // 避免客户端伪造 { outTradeNo, resultCode } 把自己的订单改成"已支付"。详见上方安全警告。
+  if (ENABLE_PAY_CALLBACK && event && event.outTradeNo && event.resultCode) {
     return handlePayCallback(event)
   }
 
