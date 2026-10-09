@@ -81,7 +81,6 @@ function seedData() {
         content: '<p>动物奶油</p>',
         minPrice: 54,
         unit: '个',
-        stores: 20,
         purchaseNotes: '需冷藏',
         sort: 10,
         enabled: true,
@@ -106,14 +105,16 @@ function seedData() {
         ]
       },
       {
-        _id: 'g_soldout',
+        // 2026-10-09：原名 g_soldout（库存 0 的「售罄商品」）。
+        // 库存概念已整体删除，这里改成一个「无规格的低价商品」，
+        // 用于验证无规格商品同样可以加购。
+        _id: 'g_plain',
         categoryId: 'cat_fruit',
-        name: '售罄的商品',
+        name: '无规格小商品',
         pic: 'p3.jpg',
         pics: [{ pic: 'p3.jpg' }],
         minPrice: 10,
         unit: '个',
-        stores: 0,
         sort: 20,
         enabled: true,
         properties: []
@@ -126,7 +127,6 @@ function seedData() {
         pics: [{ pic: 'p4.jpg' }],
         minPrice: 88,
         unit: '个',
-        stores: 5,
         sort: 10,
         enabled: true,
         properties: []
@@ -186,7 +186,9 @@ async function main() {
   check('total 正确', r.data.total === 2)
   check('返回 result 字段（兼容前端）', Array.isArray(r.data.result))
   const item = r.data.result[0]
-  check('商品含前端所需字段', ['id', 'name', 'pic', 'minPrice', 'stores'].every((k) => item[k] !== undefined), item)
+  check('商品含前端所需字段', ['id', 'name', 'pic', 'minPrice'].every((k) => item[k] !== undefined), item)
+  // 2026-10-09：库存概念整体删除 —— 商品列表不应再返回 stores
+  check('商品列表不再返回 stores 字段', item.stores === undefined, item.stores)
 
   r = await dispatch('goodsList', { categoryId: '' }, ctx)
   check('categoryId 为空 = 全部商品（3 个）', r.data.result.length === 3, r.data.result.length)
@@ -197,7 +199,9 @@ async function main() {
   console.log('\n=== 4) 商品详情 ===')
   r = await dispatch('goodsDetail', { id: 'g_musi' }, ctx)
   check('返回 basicInfo', r.code === 0 && !!r.data.basicInfo, r)
-  check('含前端读取的全部字段', ['id', 'name', 'minPrice', 'unit', 'stores', 'purchaseNotes'].every((k) => r.data.basicInfo[k] !== undefined), r.data.basicInfo)
+  check('含前端读取的全部字段', ['id', 'name', 'minPrice', 'unit', 'purchaseNotes'].every((k) => r.data.basicInfo[k] !== undefined), r.data.basicInfo)
+  // 2026-10-09：库存概念整体删除 —— 商品详情不应再返回 stores
+  check('商品详情不再返回 stores 字段', r.data.basicInfo.stores === undefined, r.data.basicInfo.stores)
   check('含 pics / content / properties', Array.isArray(r.data.pics) && r.data.content && Array.isArray(r.data.properties))
   check('规格有 2 组（磅数/口味）', r.data.properties.length === 2, r.data.properties.length)
 
@@ -218,8 +222,13 @@ async function main() {
   check('不同规格新增一行（共 2 行）', r.data.items.length === 2, r.data.items.length)
   check('新行单价 = 54', r.data.items.find((i) => i.price === 54) !== undefined)
 
-  r = await dispatch('cartAdd', { goodsId: 'g_soldout', number: 1, sku: [] }, ctx)
-  check('售罄商品不能加购', r.code !== 0 && /售罄/.test(r.msg), r)
+  // 2026-10-09：库存概念整体删除 —— 原先这里断言「售罄商品不能加购」「超库存时报错」，
+  // 现在改为：无规格商品可以正常加购，且加购数量没有库存上限。
+  r = await dispatch('cartAdd', { goodsId: 'g_plain', number: 1, sku: [] }, ctx)
+  check('无规格商品可以加购（原「已售罄」拦截已删除）', r.code === 0, r)
+
+  r = await dispatch('cartAdd', { goodsId: 'g_plain', number: 500, sku: [] }, ctx)
+  check('加购数量没有库存上限（库存概念已删除）', r.code === 0 && r.data.number >= 501, r.data.number)
 
   r = await dispatch('cartAdd', { goodsId: 'g_musi', number: 1, sku: [{ optionId: 'size', optionValueId: 's6' }] }, ctx)
   check('缺规格组时报错（应为请选择口味）', r.code !== 0 && /口味/.test(r.msg), r)
@@ -227,10 +236,6 @@ async function main() {
   r = await dispatch('cartAdd', { goodsId: 'g_musi', number: 1, sku: [{ optionId: 'size', optionValueId: 'BAD' }, { optionId: 'flavor', optionValueId: 'f_choco' }] }, ctx)
   check('规格值非法时报错', r.code !== 0, r)
 
-  r = await dispatch('cartAdd', { goodsId: 'g_musi', number: 999, sku: [{ optionId: 'size', optionValueId: 's6' }, { optionId: 'flavor', optionValueId: 'f_choco' }] }, ctx)
-  check('超库存时报错', r.code !== 0 && /库存/.test(r.msg), r)
-
-  const key = r.data && r.data.items ? null : null
   const cartRes = await dispatch('cartInfo', {}, ctx)
   const firstKey = cartRes.data.items[0].key
   r = await dispatch('cartModifyNumber', { key: firstKey, number: 1 }, ctx)
@@ -263,7 +268,8 @@ async function main() {
   const orderId = r.data.id
 
   r = await dispatch('goodsDetail', { id: 'g_musi' }, ctx)
-  check('库存已扣减 20→18', r.data.basicInfo.stores === 18, r.data.basicInfo.stores)
+  // 2026-10-09：库存概念整体删除 —— 下单不再扣减任何库存字段
+  check('下单后商品数据不受影响（无库存可扣）', r.code === 0 && r.data.basicInfo.stores === undefined, r.data.basicInfo)
 
   r = await dispatch('cartInfo', {}, ctx)
   check('下单后购物车已清空', r.data.number === 0, r.data)
@@ -282,12 +288,11 @@ async function main() {
   r = await dispatch('orderDetail', { id: orderIdB }, ctxB)
   check('用户 B 无权查看 A 的订单', r.code !== 0 && /无权/.test(r.msg), r)
 
-  // ---- 取消订单回补库存 ----
-  console.log('\n=== 9) 取消订单回补库存 ===')
+  // ---- 取消订单 ----
+  // 2026-10-09：库存概念已删除，取消订单不再回补库存，只校验状态流转
+  console.log('\n=== 9) 取消订单 ===')
   r = await dispatch('orderClose', { id: orderId }, ctx)
   check('取消成功', r.code === 0, r)
-  r = await dispatch('goodsDetail', { id: 'g_musi' }, ctx)
-  check('库存回补 18→20', r.data.basicInfo.stores === 20, r.data.basicInfo.stores)
   r = await dispatch('orderDetail', { id: orderId }, ctx)
   check('订单状态为已取消', r.data.orderInfo.status === -1, r.data.orderInfo)
 
@@ -393,9 +398,9 @@ async function main() {
     }, ctxD2)
     check('前端传运费99被忽略（满35元应为0）', rd.code === 0 && rd.data.freight === 0, rd.data)
 
-    // (3) 不满 35 元 → 收 5 元（用售罄以外的低价商品不便构造，改用数量控制金额）
-    //     g_ice 88 元无规格，1 件已满 35；用它反而不合适。
-    //     这里用 4寸草莓 54 元无法低于 35，所以直接验证「距离 5km」分支。
+    // (3) 不满 35 元 → 收 5 元：本店最便宜的商品是 10 元的无规格小商品，
+    //     但为保持既有用例的金额口径，这里直接验证「距离 5km」分支。
+    // 2026-10-09：原文案里的「售罄」已随库存概念删除，仅更新说明，断言不变。
     // (3) 5km → 运费待确认（null → 服务端按 0 计，不阻塞下单）
     const dbD3 = createMockDb(seedData())
     const ctxD3 = { db: dbD3, openid: 'user_far' }

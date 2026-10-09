@@ -11,6 +11,11 @@
  *   若确定要启用选点，在 app.json 中加回声明即可，本页代码无需改动。
  *
  * 手动填写路径同样完整可用（省/市/区 + 详细地址）。
+ *
+ * 2026-10-09 变更：删除「标签（家 / 公司 / 学校 / 其他）」选择。
+ *   原因：该卡片位于表单最底部，被固定定位的「保存」按钮遮挡；
+ *        店主确认不需要地址标签，故整体移除（UI + 逻辑），
+ *        保存时不再写入 tag 字段（utils/address.js 仍保留该字段以兼容历史数据）。
  * ---------------------------------------------------------------------------
  */
 const ADDR = require('../../utils/address')
@@ -25,11 +30,9 @@ Page({
     city: '',
     district: '',
     detail: '',
-    tag: '',
     isDefault: false,
     latitude: 0,
     longitude: 0,
-    tags: ['家', '公司', '学校', '其他'],
     saving: false,
     // 省市区选择弹层
     showArea: false,
@@ -51,7 +54,6 @@ Page({
           district: addr.district || '',
           areaText: [addr.province, addr.city, addr.district].filter(Boolean).join(''),
           detail: addr.detail,
-          tag: addr.tag || '',
           isDefault: !!addr.isDefault,
           latitude: addr.latitude || 0,
           longitude: addr.longitude || 0
@@ -97,12 +99,6 @@ Page({
   onInput(e) {
     const field = e.currentTarget.dataset.field
     this.setData({ [field]: e.detail.value })
-  },
-
-  onTagTap(e) {
-    const tag = e.currentTarget.dataset.tag
-    // 再次点击同一个标签则取消选择
-    this.setData({ tag: this.data.tag === tag ? '' : tag })
   },
 
   onDefaultChange(e) {
@@ -173,7 +169,6 @@ Page({
         city: this.data.city,
         district: this.data.district,
         detail,
-        tag: this.data.tag,
         isDefault: this.data.isDefault,
         latitude: this.data.latitude,
         longitude: this.data.longitude

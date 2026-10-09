@@ -232,21 +232,17 @@ page {
   line-height: 38rpx;
 }
 
-.store-nav-btn {
-  margin-top: 30rpx;
-  height: 80rpx;
-  line-height: 80rpx;
-  text-align: center;
-  font-size: 30rpx;
-  font-weight: 600;
-  color: #1f1f1f;
-  background-color: #ffd100;
-  border-radius: 40rpx;
-}
+/* 2026-10-09：原「一键导航到店」按钮（.store-nav-btn / .disabled）已由
+   components/shop-map 组件内的 .shopmap-nav-btn 取代，此处样式删除。 */
 
-.store-nav-btn.disabled {
-  background-color: #ebebeb;
-  color: #b3b3b3;
+/* 店主专用的「校准门店坐标」入口（仅开发版/体验版渲染） */
+.store-locator-entry {
+  margin-top: 24rpx;
+  padding: 20rpx 0;
+  text-align: center;
+  font-size: 24rpx;
+  color: #8a8a8a;
+  text-decoration: underline;
 }
 
 /* ===== 底部留白（给自定义 tabbar 让位）===== */

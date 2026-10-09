@@ -1,143 +1,157 @@
+<!-- ===== 卿欢蛋糕 订单结算页 =====
+     2026-10-09 改版（按店主提供的参考图重做，仅调整布局与视觉，不加任何新业务字段）：
+       1. 顶部「自提 / 外送」改为分段式（灰底滑槽 + 白底选中块），替换原来的下划线 Tab。
+       2. 新增门店卡片：左侧店名 / 门店地址 / 营业时间，右侧门店地图缩略图
+          （map 组件画固定门店坐标，不再需要第三方 key）+ 「距离您 X」气泡 + 导航按钮。
+          距离来自 wx.getLocation（用户定位授权），未授权或未申请接口权限时不显示，不影响下单。
+       3. 商品列表改为卡片：图片 + 名称 + 价格 + 数量。
+       4. 联络电话由「自动填写」按钮改为**直接手填**。
+          改因：当前主体未开通「手机号快速验证」，点自动填写会弹 getPhoneNumber:fail no permission，
+                顾客无法填写电话。现改为输入框（11 位校验，成功后存 storage 供下次带出）。
+       5. 费用区（小计 / 配送费）与底部栏（合计 + 去支付）按参考图重排，适配 iPhone 安全区。
+     ⚠️ 参考图中的「会员卡 / 优惠券 / 余额支付 / 储值卡」四块**未实现**：
+        会员、积分、余额体系在阶段二已整体移除（云函数 orderPay、前端 orderPayV2/userAmount 均已删除），
+        此处不做假数据，避免页面显示无法兑现的优惠。
+-->
+
 <van-notice-bar
   wx:if="{{purchaseNotes}}"
   custom-class="notice-bar"
   background-color="#f5f5f5"
   text="{{purchaseNotes}}"
 />
-<!-- ===== 改造：新增「自提 / 外送」配送方式切换 =====
-     简化版外送：切换只记录选择，不涉及地址簿、距离校验与运费。
-     外送模式下由商家按下方联络电话与顾客确认配送地址。
--->
-<view class="mode-bar">
-  <view class="mode-tab {{ !isDelivery ? 'active' : '' }}" data-mode="pickup" bindtap="onModeChange">自提</view>
-  <view wx:if="{{ deliveryEnabled }}" class="mode-tab {{ isDelivery ? 'active' : '' }}" data-mode="delivery" bindtap="onModeChange">外送</view>
-</view>
 
-<view class="shops-bar">
-  <view class="shops-box">
-    <view class="content">
-      <view class="titles">{{ shopInfo.name }}</view>
-    </view>
-    <!-- 改造：文案随配送方式变化。原为「距你 X 米，请确认门店正确」（依赖定位距离，已移除），
-         且在纯自提时代写死「自提」；现按模式区分。 -->
-    <view wx:if="{{ isDelivery }}" class="text">{{ deliveryReminder }}</view>
-    <view wx:else class="text">请确认商品与自取时间无误</view>
+<!-- ===== 配送方式：分段控件 =====
+     文案沿用全站既有叫法「自提 / 外送」（与点单页、订单表「配送方式」字段一致），
+     不采用参考图里的「自取 / 外卖」，避免同一个状态在不同页面叫两个名字。 -->
+<view class="seg-wrap">
+  <view class="seg">
+    <view
+      class="seg-item {{ !isDelivery ? 'active' : '' }}"
+      data-mode="pickup"
+      bindtap="onModeChange"
+    >自提</view>
+    <view
+      wx:if="{{ deliveryEnabled }}"
+      class="seg-item {{ isDelivery ? 'active' : '' }}"
+      data-mode="delivery"
+      bindtap="onModeChange"
+    >外送</view>
   </view>
-  <view class="get">{{ modeText }}</view>
 </view>
 
-<!-- ===== 改造：外送模式下的收货地址选择 ===== -->
+<!-- ===== 门店卡片（含地图缩略图与距离） ===== -->
+<view class="card store-card" bindtap="openShopLocation">
+  <view class="store-left">
+    <view class="store-name">{{ shopInfo.name || '卿欢蛋糕' }}</view>
+    <view class="store-addr">{{ shopInfo.address }}</view>
+    <view class="store-hours">营业时间 {{ shopInfo.openHoursText }}</view>
+  </view>
+
+  <!-- 门店地图板块（components/shop-map，mini 形态）：
+       地图 + 门店标记 + 用户位置蓝点 + 「距离您 X」气泡 + 圆形导航按钮。
+       定位授权与降级提示都在组件内处理。 -->
+  <view class="store-map-wrap">
+    <shop-map
+      shop="{{ shopInfo }}"
+      height="150rpx"
+      scale="{{ 14 }}"
+      mini="{{ true }}"
+      show-distance="{{ true }}"
+    />
+  </view>
+</view>
+
+<view wx:if="{{ isDelivery }}" class="store-tip">{{ deliveryReminder }}</view>
+
+<!-- ===== 收货地址（仅外送） ===== -->
 <block wx:if="{{ isDelivery }}">
-  <view class="shops-bar" bindtap="goSelectAddress">
-    <view class="shops-box">
-      <view class="content">
-        <view class="titles">收货地址</view>
+  <view class="card">
+    <view class="row" bindtap="goSelectAddress">
+      <view class="row-label">收货地址</view>
+      <view class="row-value {{ selectedAddress ? '' : 'row-empty' }}">
+        {{ selectedAddress ? (selectedAddress.name + ' ' + selectedAddress.phone) : '请选择收货地址' }}
       </view>
-      <view wx:if="{{ selectedAddress }}" class="text addr-text">
-        {{ selectedAddress.name }} {{ selectedAddress.phone }}
-      </view>
-      <view wx:else class="text addr-empty">请选择收货地址</view>
+      <van-icon name="arrow" />
     </view>
-    <van-icon name="arrow"/>
+    <view wx:if="{{ selectedAddress }}" class="addr-detail-text">{{ addressText }}</view>
+    <view wx:if="{{ quote && !quote.deliverable }}" class="delivery-warn">{{ quote.freightText }}</view>
+    <view wx:elif="{{ deliveryTip }}" class="delivery-tip">{{ deliveryTip }}</view>
   </view>
-
-  <!-- 已选地址的详细行 -->
-  <view wx:if="{{ selectedAddress }}" class="addr-detail-row">
-    <view class="addr-detail-text">{{ addressText }}</view>
-  </view>
-
-  <!-- 超出配送范围提示 -->
-  <view wx:if="{{ quote && !quote.deliverable }}" class="delivery-warn">
-    {{ quote.freightText }}
-  </view>
-  <!-- 距离/运费说明 -->
-  <view wx:elif="{{ deliveryTip }}" class="delivery-tip">{{ deliveryTip }}</view>
 </block>
 
-<view class="shops-bar">
-  <view class="shops-box">
-    <view class="content">
-      <view class="titles">联络电话</view>
-    </view>
-    <view class="text">{{mobile}}</view>
-  </view>
-  <view class="get1-box" bind:tap="bindMobile">
-    <view class="get1">自动填写</view>
-  </view>
-</view>
-<navigator url="/pages/select-time/index" hover-class="none">
-  <view class="shops-bar">
-    <view class="shops-box">
-      <view class="content">
-        <view class="titles">{{ isDelivery ? '期望送达时间' : '自取时间' }}</view>
-      </view>
-      <view class="text">{{fetchTime}}</view>
-    </view>
-    <van-icon name="arrow"/>
-  </view>
-</navigator>
-<view class="blank1"></view>
-<view wx:for="{{shippingCarInfo.items}}" wx:key="key" class="orderdetails-bar">
-  <image mode='aspectFill' class='photos' src='{{item.pic}}'></image>
-  <view class="titles-bar">
-    <view class="titles-box1">
-      <view class="titles">{{item.name}}</view>
-      <view class="price">
-      <text>¥</text>{{item.price}}
-      </view>
-    </view>
-    <view class="titles-box2">
-      <view class="titles"> </view>
-      <view class="num">×{{ item.number }}</view>
+<!-- ===== 商品列表 ===== -->
+<view class="card">
+  <view wx:for="{{ shippingCarInfo.items }}" wx:key="key" class="goods-item">
+    <image class="goods-pic" mode="aspectFill" src="{{ item.pic }}"></image>
+    <view class="goods-name">{{ item.name }}</view>
+    <view class="goods-right">
+      <view class="goods-price"><text class="yen">¥</text>{{ item.price }}</view>
+      <view class="goods-num">x{{ item.number }}个</view>
     </view>
   </view>
+  <view wx:if="{{ !shippingCarInfo }}" class="goods-empty">购物车加载中…</view>
+  <view wx:elif="{{ cartEmpty }}" class="goods-empty">购物车是空的</view>
 </view>
 
-<view class="blank2"></view>
+<!-- ===== 订单信息：联络电话 / 时间 / 备注 ===== -->
+<view class="card">
+  <view class="row">
+    <view class="row-label">联络电话</view>
+    <input
+      class="row-input"
+      type="number"
+      maxlength="11"
+      value="{{ mobile }}"
+      placeholder="请填写手机号"
+      placeholder-class="row-ph"
+      bindinput="onMobileInput"
+      bindblur="onMobileBlur"
+    />
+  </view>
+  <view wx:if="{{ mobileError }}" class="row-hint">{{ mobileError }}</view>
 
-<navigator url="/pages/add-note/index" hover-class="none">
-  <view class="shops-bar1">
-    <view class="shops-box">
-      <view class="content">
-        <view class="titles">备注信息</view>
-      </view>
-      <view class="text">{{remark}}</view>
+  <navigator url="/pages/select-time/index" hover-class="none" class="row-nav">
+    <view class="row">
+      <view class="row-label">{{ isDelivery ? '期望送达时间' : '自取时间' }}</view>
+      <view class="row-value">{{ fetchTime }}</view>
+      <van-icon name="arrow" />
     </view>
-    <van-icon name="arrow"/>
-  </view>
-</navigator>
-<view class="num-bar">
-  <view class="num">共 {{shippingCarInfo.number}} 件商品，小计</view>
-  <view class="price">
-    <text>¥</text>{{shippingCarInfo.price}}
-  </view>
+  </navigator>
+
+  <navigator url="/pages/add-note/index" hover-class="none" class="row-nav">
+    <view class="row">
+      <view class="row-label">备注信息</view>
+      <view class="row-value">{{ remark }}</view>
+      <van-icon name="arrow" />
+    </view>
+  </navigator>
 </view>
 
-<!-- ===== 改造：配送费独立一行（外送时才显示）===== -->
-<view wx:if="{{ isDelivery }}" class="num-bar num-bar-freight">
-  <view class="num">配送费</view>
-  <view class="price {{ freight === 0 ? 'price-free' : '' }}">
-    {{ freight === null ? freightText : (freight === 0 ? '免配送费' : '¥' + freight) }}
+<!-- ===== 费用 ===== -->
+<view class="card">
+  <view class="fee-row">
+    <view class="fee-label">共 {{ shippingCarInfo.number }} 件商品</view>
+    <view class="fee-value"><text class="yen">¥</text>{{ shippingCarInfo.price }}</view>
+  </view>
+  <view wx:if="{{ isDelivery }}" class="fee-row">
+    <view class="fee-label">配送费</view>
+    <view class="fee-value {{ freight === 0 ? 'fee-free' : '' }}">
+      {{ freight === null ? freightText : (freight === 0 ? '免配送费' : '¥' + freight) }}
+    </view>
   </view>
 </view>
 
-<view class="blank1"></view>
+<!-- 底部固定栏占位（避免最后一张卡片被遮挡） -->
+<view class="bottom-holder"></view>
 
-<view class="blank1 blank-bottom"></view>
 <view class="pay-bar">
   <view class="pay-box">
-    <view class="title">应付总额</view>
-    <view class="price">
-      <text>¥</text>{{ isDelivery ? payableAmount : shippingCarInfo.price }}
+    <view class="pay-total">
+      <text class="pay-label">合计</text>
+      <text class="pay-price"><text class="yen">¥</text>{{ isDelivery ? payableAmount : shippingCarInfo.price }}</text>
     </view>
+    <view class="pay-sub">共 {{ shippingCarInfo.number }} 件商品</view>
   </view>
-  <view class="pay-byn" bindtap="createorder">结算</view>
+  <view class="pay-byn" bindtap="createorder">去支付</view>
 </view>
-
-<bind-mobile
-  title="绑定手机号码"
-  alarmText="为保障您的资金安全，请先绑定手机号码"
-  show="{{ bindMobileShow }}"
-  bind:cancel="bindMobileCancel"
-  bind:ok="bindMobileOk"
-/>

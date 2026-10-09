@@ -4,12 +4,13 @@
   "description": "",
   "main": "app.js",
   "scripts": {
-    "test": "node tests/test-cloud-api.js && node tests/test-spec.js && node tests/test-address.js && node tests/test-delivery.js && node tests/test-security.js",
+    "test": "node tests/test-cloud-api.js && node tests/test-spec.js && node tests/test-address.js && node tests/test-delivery.js && node tests/test-security.js && node tests/test-location.js",
     "test:api": "node tests/test-cloud-api.js",
     "test:spec": "node tests/test-spec.js",
     "test:address": "node tests/test-address.js",
     "test:delivery": "node tests/test-delivery.js",
-    "test:security": "node tests/test-security.js"
+    "test:security": "node tests/test-security.js",
+    "test:location": "node tests/test-location.js"
   },
   "author": "",
   "license": "ISC",

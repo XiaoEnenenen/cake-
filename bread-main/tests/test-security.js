@@ -10,7 +10,7 @@
  *   SEC-2 核销必须校验调用者身份 + 订单状态
  *   SEC-3 orderCreate 入参校验（负数 / 0 / 非整数 / 超量 / 重复行 / 规格 / 上架）
  *   SEC-4 importData 必须从公开路由移除
- *   SEC-5 orderDelete 状态限制 + 未支付订单回滚库存
+ *   SEC-5 orderDelete 状态限制（原「未支付订单回滚库存」随库存概念一并删除）
  *
  * 运行：node tests/test-security.js
  * ---------------------------------------------------------------------------
@@ -76,22 +76,8 @@ function createMockDb(seed) {
         (r) => !Object.keys(where).every((k) => r[k] === where[k])
       )
       return { removed: before - store[col].length }
-    },
-    // 库存原子扣减（与 cloudfunctions/api/index.js 的真实实现同语义）
-    async decStores(col, id, n) {
-      const r = (store[col] || []).find((x) => x._id === String(id))
-      if (!r) return { ok: false, reason: 'not_found' }
-      if (typeof r.stores !== 'number' || r.stores < n) return { ok: false, reason: 'insufficient' }
-      r.stores -= n
-      return { ok: true, stores: r.stores }
-    },
-    // 库存原子回补
-    async incStores(col, id, n) {
-      const r = (store[col] || []).find((x) => x._id === String(id))
-      if (!r) return { ok: false, reason: 'not_found' }
-      r.stores = (typeof r.stores === 'number' ? r.stores : 0) + n
-      return { ok: true, stores: r.stores }
     }
+    // 2026-10-09：库存概念整体删除，原来的 decStores / incStores 测试桩一并移除
   }
 }
 
@@ -107,7 +93,6 @@ function seedData() {
         pics: [{ pic: 'p1.jpg' }],
         minPrice: 54,
         unit: '个',
-        stores: 20,
         sort: 10,
         enabled: true,
         properties: [
@@ -136,7 +121,6 @@ function seedData() {
         pic: 'p2.jpg',
         minPrice: 10,
         unit: '个',
-        stores: 20,
         sort: 20,
         enabled: true,
         properties: []
@@ -148,7 +132,6 @@ function seedData() {
         pic: 'p3.jpg',
         minPrice: 30,
         unit: '个',
-        stores: 10,
         sort: 30,
         enabled: false,
         properties: []
@@ -233,7 +216,7 @@ function orderPayload(rows, extra) {
   section('SEC-3 orderCreate 入参校验（核心资损口）')
   // =========================================================================
   {
-    // --- 负数数量：以前能过，金额为负、库存反而增加 ---
+    // --- 负数数量：以前能过，金额为负（负数行直接抵扣总额）---
     const db = createMockDb(seedData())
     const ctx = ctxOf(db, 'user_a')
     let r = await dispatch(
@@ -243,7 +226,8 @@ function orderPayload(rows, extra) {
     )
     check('负数数量被拒', r.code !== 0, r)
     check('负数数量不产生订单', (db._store.order || []).length === 0, db._store.order)
-    check('负数数量不改变库存（仍 20）', db._store.goods[0].stores === 20, db._store.goods[0].stores)
+    // 2026-10-09：库存概念已删除，商品数据里不应再有 stores 字段
+    check('商品数据不含 stores 字段（库存概念已删除）', db._store.goods[0].stores === undefined, db._store.goods[0])
 
     // --- 数量为 0 ---
     r = await dispatch('orderCreate', orderPayload([{ goodsId: 'g_plain', number: 0 }]), ctx)
@@ -274,7 +258,9 @@ function orderPayload(rows, extra) {
   }
 
   {
-    // --- 同一请求内重复行：以前单请求就能超卖 ---
+    // --- 同一请求内重复行：以前单请求两行各 20 就能绕过校验 ---
+    // 2026-10-09：库存概念已删除，重复行现在的意义是「必须合并成一行」，
+    //             否则可以拆成多行绕过单行 99 的上限。
     const db = createMockDb(seedData())
     const ctx = ctxOf(db, 'user_b')
     const r = await dispatch(
@@ -285,13 +271,29 @@ function orderPayload(rows, extra) {
       ]),
       ctx
     )
-    check('重复行合计超库存被拒（库存只有 20）', r.code !== 0, r)
-    check('被拒后库存不变（仍 20）', db._store.goods[1].stores === 20, db._store.goods[1].stores)
+    check('重复行合并后成功（20+20=40）', r.code === 0, r)
+    check('  金额 = 10 * 40 = 400', r.data && r.data.amountReal === 400, r.data)
+    check('  订单里只有一条商品行', (db._store.order[0].goods || []).length === 1, db._store.order[0].goods)
+  }
+
+  {
+    // --- 拆成多行绕过单行上限：合并后仍受 99 上限约束 ---
+    const db = createMockDb(seedData())
+    const ctx = ctxOf(db, 'user_b2')
+    const r = await dispatch(
+      'orderCreate',
+      orderPayload([
+        { goodsId: 'g_plain', number: 60 },
+        { goodsId: 'g_plain', number: 60 }
+      ]),
+      ctx
+    )
+    check('拆行绕过单行上限被拒（合并后 120 > 99）', r.code !== 0, r)
     check('被拒后不产生订单', (db._store.order || []).length === 0, db._store.order)
   }
 
   {
-    // --- 重复行合计在库存内：应合并成一行、金额正确 ---
+    // --- 重复行合计在上限内：应合并成一行、金额正确 ---
     const db = createMockDb(seedData())
     const ctx = ctxOf(db, 'user_c')
     const r = await dispatch(
@@ -302,9 +304,9 @@ function orderPayload(rows, extra) {
       ]),
       ctx
     )
-    check('重复行合计不超库存时成功', r.code === 0, r)
+    check('重复行合计在上限内成功', r.code === 0, r)
     check('  金额 = 10 * 7 = 70', r.data && r.data.amountReal === 70, r.data)
-    check('  库存 20 → 13', db._store.goods[1].stores === 13, db._store.goods[1].stores)
+    check('  合并为一行（3+4=7）', (db._store.order[0].goods || []).length === 1 && db._store.order[0].goods[0].number === 7, db._store.order[0].goods)
   }
 
   {
@@ -352,7 +354,7 @@ function orderPayload(rows, extra) {
       ctx
     )
     check('已下架商品不能下单', r.code !== 0, r)
-    check('  下架商品库存未被扣', db._store.goods[2].stores === 10, db._store.goods[2].stores)
+    check('  下架商品未被改动', db._store.goods[2].enabled === false)
   }
 
   // =========================================================================
@@ -405,34 +407,36 @@ function orderPayload(rows, extra) {
   }
 
   // =========================================================================
-  section('SEC-5 orderDelete 状态限制 + 库存回滚')
+  section('SEC-5 orderDelete 状态限制')
   // 规则（与前端 pages/current-order/index.wxml 的按钮一致）：
-  //   status 0（待支付）→ 只能「取消订单」（取消会回补库存），不能直接删除
+  //   status 0（待支付）→ 只能「取消订单」，不能直接删除
   //   status -1（已取消）→ 可以删除
   //   status 1（已支付/制作中）→ 不可删除（阶段 4 补"申请取消"路径）
   //   status 3（已完成/已核销）→ 可以删除（沿用原有前端按钮规则）
+  // 2026-10-09：库存概念已删除，「删单会吃掉库存」这条风险不复存在，
+  //             状态约束保留是为了让订单状态流转清晰。
   // =========================================================================
   {
     const db = createMockDb(seedData())
     const ctx = ctxOf(db, 'user_f')
 
-    // 未支付订单：不能直接删除（否则库存永久丢失）
+    // 未支付订单：不能直接删除，须先取消
     let r = await dispatch(
       'orderCreate',
       orderPayload([{ goodsId: 'g_plain', number: 2 }]),
       ctx
     )
     const unpaidId = r.data.id
-    check('（前置）未支付订单创建成功，库存 20 → 18', db._store.goods[1].stores === 18, db._store.goods[1].stores)
+    check('（前置）未支付订单创建成功', r.code === 0 && !!unpaidId, r)
 
     r = await dispatch('orderDelete', { id: unpaidId }, ctx)
     check('待支付订单不能直接删除（提示先取消）', r.code !== 0, r)
-    check('  订单仍在，库存未变（仍 18）', db._store.goods[1].stores === 18, db._store.goods[1].stores)
+    check('  订单仍在', !!db._store.order.find((o) => o._id === unpaidId))
 
-    // 正确路径：先取消（回补库存），再删除
+    // 正确路径：先取消，再删除
     r = await dispatch('orderClose', { id: unpaidId }, ctx)
     check('取消订单成功', r.code === 0, r)
-    check('  库存已回补 18 → 20', db._store.goods[1].stores === 20, db._store.goods[1].stores)
+    check('  订单状态为已取消', db._store.order.find((o) => o._id === unpaidId).status === -1)
 
     r = await dispatch('orderDelete', { id: unpaidId }, ctx)
     check('已取消订单可以删除', r.code === 0, r)
@@ -493,7 +497,8 @@ function orderPayload(rows, extra) {
     )
     check('正常下单仍然成功', r.code === 0, r)
     check('  金额 = 98 * 2 = 196', r.data && r.data.amountReal === 196, r.data)
-    check('  库存 20 → 18', db._store.goods[0].stores === 18, db._store.goods[0].stores)
+    // 2026-10-09：库存概念已删除，下单不再改动商品数据
+    check('  商品数据不含 stores 字段', db._store.goods[0].stores === undefined, db._store.goods[0])
 
     const c = await dispatch('cartAdd', { goodsId: 'g_cake', number: 1, sku: [{ optionId: 'size', optionValueId: 's6' }, { optionId: 'flavor', optionValueId: 'f_straw' }] }, ctx)
     check('加购仍然成功', c.code === 0, c)

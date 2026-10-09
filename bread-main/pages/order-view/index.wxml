@@ -23,9 +23,9 @@
 </view>
 
 <!-- ===== 改造：显示本店位置（固定坐标 + 标记点）=====
-     说明：坐标来自 shop-config.js，不调用 wx.getLocation / 不申请定位权限 /
-           不依赖 api工厂，因此即使尚未配置自己的 AppID 也能正常显示。
-     注意：颜色与圆角用内联样式，避免改动原有 wxss。
+     2026-10-09：改用 components/shop-map 组件，与结算页 / 我的 共用同一份实现。
+       地图 + 门店标记（含店名气泡）+ 用户定位蓝点 + 「距离您 X」+ 一键导航到店。
+       坐标来自 shop-config.js；定位授权失败只影响距离显示，不影响导航。
 -->
 <view class="shops-bar">
   <view class="shops-box">
@@ -34,16 +34,13 @@
     </view>
   </view>
 </view>
-<view style="width:100%; padding:0 30rpx 20rpx; box-sizing:border-box;">
-  <map
-    id="shopMap"
-    style="width:100%; height:400rpx; border-radius:12rpx;"
-    latitude="{{shop.latitude}}"
-    longitude="{{shop.longitude}}"
-    scale="16"
-    markers="{{shopMarkers}}"
-  ></map>
-  <view style="font-size:26rpx; color:#4a4a4a; padding-top:14rpx; line-height:1.5;">{{shop.address}}</view>
+<view class="shopmap-block">
+  <shop-map
+    shop="{{ shop }}"
+    height="400rpx"
+    show-address="{{ true }}"
+    show-navigate="{{ true }}"
+  />
 </view>
 <view class="shops-bar">
   <view class="shops-box">

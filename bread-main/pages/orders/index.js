@@ -307,13 +307,7 @@ Page({
     if (!curGood) {
       return
     }
-    if (curGood.stores <= 0) {
-      wx.showToast({
-        title: '已售罄~',
-        icon: 'none'
-      })
-      return
-    }
+    // 2026-10-09：库存概念已整体删除，不再有「已售罄」拦截
     // https://www.yuque.com/apifm/nu0f75/et6m6m
     const res = await API.shippingCarInfoAddItemV2({
       token: wx.getStorageSync('token'),

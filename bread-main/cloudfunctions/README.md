@@ -52,14 +52,14 @@ cloudfunctions/
 | `goodsList` | `goodsv2` | 商品列表，按 categoryId 过滤 |
 | `goodsDetail` | `goodsDetailV2` | 商品详情（含规格组） |
 | `cartInfo` | `shippingCarInfo` | 购物车 |
-| `cartAdd` | `shippingCarInfoAddItemV2` | 加购（同规格累加，校验库存与必选规格） |
+| `cartAdd` | `shippingCarInfoAddItemV2` | 加购（同规格累加，校验必选规格） |
 | `cartModifyNumber` | `shippingCarInfoModifyNumber` | 改数量（0 则删除） |
 | `cartRemoveItem` | `shippingCarInfoRemoveItem` | 删除一项 |
 | `cartRemoveAll` | `shippingCarInfoRemoveAll` | 清空 |
-| `orderCreate` | `orderCreate` | 下单（服务端重算金额、扣库存、清购物车） |
+| `orderCreate` | `orderCreate` | 下单（服务端重算金额、清购物车；**不涉及库存**） |
 | `orderList` | `orderList` | 订单列表 |
 | `orderDetail` | `orderDetail` | 订单详情（含 `_openid` 二次校验） |
-| `orderClose` | `orderClose` | 取消订单（回补库存） |
+| `orderClose` | `orderClose` | 取消订单 |
 | `orderDelete` | `orderDelete` | 删除订单 |
 | `orderHx` | `orderHXV2` | 核销 |
 | `wxpay` | `wxpay` | 微信支付统一下单（**当前返回"未接入"**，需先申请商户号，阶段一未接线） |
@@ -177,7 +177,7 @@ node tests/test-delivery.js
 ```
 
 `tests/test-cloud-api.js` 用内存版数据库跑完整流程：分类 → 商品 → 加购 → 下单 → 查单 → 取消 → 核销，
-覆盖价格计算、库存扣减回补、多用户隔离、防改价、错误处理等断言。
+覆盖价格计算、多用户隔离、防改价、错误处理等断言。
 
 > **2026-02-14 更正**：本文档此前写「`node _test-api.js`」——该文件**不存在**，正确路径是 `tests/test-cloud-api.js`；
 > 此前写的「52 项断言」也已过期。四个脚本的脚本名与断言数请以 `package.json` 的 `scripts` 与实跑结果为准
@@ -189,7 +189,8 @@ node tests/test-delivery.js
 
 1. **服务端重算金额**：下单时不信任前端传来的 `price`/`amount`，
    一律用数据库里的商品价格 + 规格加价重新计算（已验证：前端传 `price: 0.01` 会被忽略）。
-2. **库存校验在服务端**：加购与下单都校验库存，下单后扣减，取消后回补。
+2. **数量与规格校验在服务端**：下单校验数量是合理正整数（单行上限 99，重复行合并后仍受该上限约束）、
+   规格每组必选且选项合法；**本店没有库存概念**，不校验也不扣减库存（2026-10-09 删除）。
 3. **用户隔离**：购物车与订单的读写都按 `_openid` 过滤。
 4. **规格必选校验**：商品有规格组时，每组都必须选，且选项必须属于该商品。
 

@@ -1,0 +1,139 @@
+/* ===== 门店地图板块（components/shop-map）=====
+   2026-10-09 新增。配色令牌见 app.wxss 顶部注释（主黄 #ffd100 / 价格红 #ff4b33）。
+   注意：组件内不使用 van-icon，缩略图的导航按钮用纯 CSS 画定位针，减少组件依赖。
+*/
+
+.shopmap {
+  width: 100%;
+}
+
+/* 地图容器：圆角裁切在 map 自身，容器保持 overflow:visible 以便
+   距离气泡与圆形导航按钮可以「压」在边缘外（与参考图一致）。 */
+.shopmap-canvas {
+  position: relative;
+  width: 100%;
+}
+
+.shopmap-map {
+  width: 100%;
+  height: 100%;
+  border-radius: 16rpx;
+}
+
+/* 距离气泡 */
+.shopmap-distance {
+  position: absolute;
+  top: -16rpx;
+  right: 8rpx;
+  height: 40rpx;
+  line-height: 40rpx;
+  padding: 0 16rpx;
+  font-size: 20rpx;
+  color: #8a6a2f;
+  background-color: #f7e8c8;
+  border-radius: 20rpx;
+  white-space: nowrap;
+  z-index: 2;
+}
+
+/* 缩略图形态：右下角圆形导航按钮 */
+.shopmap-mini-nav {
+  position: absolute;
+  right: 0;
+  bottom: -16rpx;
+  width: 56rpx;
+  height: 56rpx;
+  border-radius: 50%;
+  background-color: #ffffff;
+  box-shadow: 0 4rpx 12rpx rgba(0, 0, 0, 0.15);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+}
+
+/* 纯 CSS 定位针（圆形 + 下方三角） */
+.shopmap-pin {
+  width: 16rpx;
+  height: 16rpx;
+  border-radius: 50%;
+  background-color: #1f1f1f;
+  position: relative;
+}
+
+.shopmap-pin::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 12rpx;
+  transform: translateX(-50%);
+  border-left: 5rpx solid transparent;
+  border-right: 5rpx solid transparent;
+  border-top: 8rpx solid #1f1f1f;
+}
+
+/* 门店地址行 */
+.shopmap-addr {
+  padding-top: 14rpx;
+  font-size: 26rpx;
+  color: #4a4a4a;
+  line-height: 1.5;
+}
+
+/* 定位失败 / 未授权提示：可点击 */
+.shopmap-hint {
+  margin-top: 14rpx;
+  padding: 14rpx 18rpx;
+  font-size: 22rpx;
+  color: #8a6a2f;
+  background-color: #fdf3dd;
+  border-radius: 10rpx;
+  line-height: 32rpx;
+}
+
+/* 完整形态的一键导航按钮 */
+.shopmap-nav-btn {
+  margin-top: 20rpx;
+  height: 84rpx;
+  line-height: 84rpx;
+  text-align: center;
+  font-size: 30rpx;
+  font-weight: 600;
+  color: #1f1f1f;
+  background-color: #ffd100;
+  border-radius: 42rpx;
+}
+
+/* 导航兜底：复制门店地址 */
+.shopmap-nav-links {
+  display: flex;
+  justify-content: center;
+  margin-top: 16rpx;
+}
+
+.shopmap-link {
+  padding: 8rpx 20rpx;
+  font-size: 24rpx;
+  color: #8a8a8a;
+  text-decoration: underline;
+}
+
+/* 仅开发者工具里显示的提示（真机不渲染） */
+.shopmap-devtools {
+  margin-top: 14rpx;
+  font-size: 22rpx;
+  line-height: 32rpx;
+  color: #b3b3b3;
+}
+
+/* 门店坐标缺失时的占位 */
+.shopmap-empty {
+  height: 200rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 26rpx;
+  color: #b3b3b3;
+  background-color: #f7f8fa;
+  border-radius: 16rpx;
+}

@@ -21,8 +21,7 @@
 </view>
 
 <!-- ===== 改造：显示本店位置（固定坐标 + 标记点）=====
-     说明：坐标来自 shop-config.js，不调用 wx.getLocation / 不申请定位权限 /
-           不依赖 api工厂。
+     2026-10-09：改用 components/shop-map 组件（与结算页 / 订单详情页共用）。
 -->
 <view class="shops-bar">
   <view class="shops-box">
@@ -31,16 +30,13 @@
     </view>
   </view>
 </view>
-<view style="width:100%; padding:0 30rpx 20rpx; box-sizing:border-box;">
-  <map
-    id="shopMap"
-    style="width:100%; height:400rpx; border-radius:12rpx;"
-    latitude="{{shop.latitude}}"
-    longitude="{{shop.longitude}}"
-    scale="16"
-    markers="{{shopMarkers}}"
-  ></map>
-  <view style="font-size:26rpx; color:#4a4a4a; padding-top:14rpx; line-height:1.5;">{{shop.address}}</view>
+<view class="shopmap-block">
+  <shop-map
+    shop="{{ shop }}"
+    height="400rpx"
+    show-address="{{ true }}"
+    show-navigate="{{ true }}"
+  />
 </view>
 <view class="shops-bar">
   <view class="shops-box">

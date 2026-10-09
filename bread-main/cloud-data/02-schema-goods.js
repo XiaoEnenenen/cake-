@@ -1,6 +1,9 @@
 // ===========================================================================
 // 商品集合（goods）字段结构
 // ---------------------------------------------------------------------------
+// 2026-10-09：**本店没有库存概念**，goods 不再有 stores 字段，
+//          商品详情/列表也不再返回库存、不再显示「已售罄」。
+// ---------------------------------------------------------------------------
 // 设计依据：按小程序页面「实际读取的字段」反推，不凭空造字段。
 // 来源文件：
 //   pages/orders/index.wxml      商品列表（左图右文）
@@ -15,7 +18,6 @@
 //     item.pic            列表缩略图                    必填
 //     item.characteristic 简介（灰色一行）              选填
 //     item.minPrice       显示价格                      必填
-//     item.stores         库存；<=0 时前端显示「已售罄」  必填
 //     item.id             商品唯一标识，加购与详情跳转都用 必填
 //
 //   【商品详情页】pages/goods-details
@@ -23,7 +25,6 @@
 //     goodsDetail.basicInfo.name           商品名
 //     goodsDetail.basicInfo.minPrice       价格
 //     goodsDetail.basicInfo.unit           单位（如「个」「磅」）
-//     goodsDetail.basicInfo.stores         库存；<=0 时禁止加购
 //     goodsDetail.basicInfo.purchaseNotes  购买须知，结算页顶部滚动条显示
 //     goodsDetail.pics                     轮播图数组（至少 1 张）
 //     goodsDetail.content                  详情富文本 HTML（parser 组件渲染）
@@ -58,7 +59,6 @@ module.exports = {
     content: '详情富文本 HTML',
     minPrice: '最低价（有规格时取规格里的最低价）',
     unit: '单位，如「个」',
-    stores: '库存数量，<=0 前端显示已售罄',
     purchaseNotes: '购买须知，显示在结算页顶部',
     sort: '排序，越小越靠前',
     enabled: '是否上架',
@@ -78,7 +78,6 @@ module.exports = {
     content: '<p>动物奶油制作，当日现做。</p>',
     minPrice: 54,
     unit: '个',
-    stores: 20,
     purchaseNotes: '蛋糕需冷藏保存，建议2小时内食用。',
     sort: 10,
     enabled: true,

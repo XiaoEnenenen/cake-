@@ -76,23 +76,17 @@
   bind:close="closeArea"
 />
 
-<view class="form-card">
-  <view class="tag-row">
-    <view class="form-label">标签</view>
-    <view
-      wx:for="{{ tags }}"
-      wx:key="*this"
-      class="tag-item {{ tag === item ? 'active' : '' }}"
-      data-tag="{{ item }}"
-      bindtap="onTagTap"
-    >{{ item }}</view>
-  </view>
-</view>
+<!-- 2026-10-09 删除：「标签（家 / 公司 / 学校 / 其他）」整块。
+     删除原因：该卡片位于表单最底部，被固定定位的「保存」按钮压住且无法滚动到；
+     店主确认不需要地址标签，故整体移除（含 edit.js 的 tags/tag/onTagTap 与相关样式）。 -->
 
 <view class="default-row">
   <view>设为默认地址</view>
   <switch checked="{{ isDefault }}" color="#ffd100" bindchange="onDefaultChange" />
 </view>
+
+<!-- 底部占位：避免「设为默认地址」被固定定位的保存按钮遮挡 -->
+<view class="edit-bottom-holder"></view>
 
 <view class="addr-bottom">
   <view class="addr-btn {{ saving ? 'disabled' : '' }}" bindtap="onSave">

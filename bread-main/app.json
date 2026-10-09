@@ -13,9 +13,13 @@
     "pages/about-us/index",
     "pages/about-us/detail",
     "pages/address/index",
-    "pages/address/edit"
+    "pages/address/edit",
+    "pages/shop-locator/index"
   ],
-  "requiredPrivateInfos": [],
+  "requiredPrivateInfos": [
+    "getLocation",
+    "chooseLocation"
+  ],
   "window":{
     "backgroundTextStyle":"light",
     "navigationBarBackgroundColor": "#fff",
@@ -25,6 +29,7 @@
   "usingComponents": {
     "parser":"/components/parser.20200414.min/parser",
     "bind-mobile": "/components/bind-mobile/index",
+    "shop-map": "/components/shop-map/index",
     "van-tabbar": "@vant/weapp/tabbar/index",
     "van-tabbar-item": "@vant/weapp/tabbar-item/index",
     "van-button": "@vant/weapp/button/index",
@@ -35,6 +40,10 @@
     "van-dialog": "@vant/weapp/dialog/index",
     "van-datetime-picker": "@vant/weapp/datetime-picker/index"
   },
-  "permission": {},
+  "permission": {
+    "scope.userLocation": {
+      "desc": "用于计算您与门店的距离，便于安排自取或配送时间"
+    }
+  },
   "sitemapLocation": "sitemap.json"
 }

@@ -263,3 +263,10 @@ justify-content: space-between;
   width: 650rpx;
   height: 650rpx;
 }
+/* ===== 门店地图板块外层（components/shop-map）=====
+   2026-10-09 新增：替代原来的内联样式 map 容器，统一左右边距。 */
+.shopmap-block {
+  width: 100%;
+  padding: 0 30rpx 20rpx;
+  box-sizing: border-box;
+}

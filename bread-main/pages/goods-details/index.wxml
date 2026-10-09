@@ -34,9 +34,8 @@
   <scroll-view class="detail-scroll" scroll-y>
     <view class="detail-head">
       <view class="content">{{goodsDetail.basicInfo.name}}</view>
-      <!-- 库存状态：沿用既有数据，不新增业务规则 -->
-      <view wx:if="{{goodsDetail.basicInfo.stores > 0}}" class="detail-stock">库存 {{goodsDetail.basicInfo.stores}}</view>
-      <view wx:else class="detail-stock detail-soldout">已售罄</view>
+      <!-- 2026-10-09：库存概念整体删除（本店不记库存），
+           原来的「库存 N / 已售罄」两种状态一并移除。 -->
     </view>
     <!-- 关闭按钮：修复原实现「弹层无遮罩且无关闭入口，只能按返回键」的问题 -->
     <view class="detail-close" bindtap="onClose">×</view>

@@ -116,12 +116,19 @@
       <view class="store-value">{{ shop.phone || '暂未设置' }}</view>
     </view>
 
-    <!-- 一键导航：wx.openLocation，只传门店坐标，不获取用户位置 -->
-    <view
-      class="store-nav-btn {{ hasLocation ? '' : 'disabled' }}"
-      bindtap="openShopLocation"
-    >
-      {{ hasLocation ? '一键导航到店' : '门店坐标未配置' }}
+    <!-- 门店地图板块（components/shop-map）：
+         地图 + 门店标记 + 用户定位（授权后显示蓝点与「距离您 X」）+ 一键导航到店。
+         定位授权、失败降级提示、坐标缺失占位都在组件内处理。 -->
+    <shop-map
+      shop="{{ shop }}"
+      height="300rpx"
+      show-address="{{ false }}"
+      show-navigate="{{ true }}"
+    />
+
+    <!-- 店主专用：校准门店坐标（只在开发版 / 体验版显示，正式版顾客看不到） -->
+    <view wx:if="{{ isDevEnv }}" class="store-locator-entry" bindtap="goShopLocator">
+      校准门店坐标（店主专用，正式版不显示）
     </view>
   </view>
 </view>

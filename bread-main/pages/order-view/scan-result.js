@@ -7,24 +7,10 @@ app.configLoadOK = () => {
 }
 Page({
   data: {
-    // 改造：核销结果页同样显示「本店位置」地图卡片（来自固定配置，不调用定位 API）
-    shop: SHOP_CONFIG.shop,
-    shopMarkers: [{
-      id: 1,
-      latitude: SHOP_CONFIG.shop.latitude,
-      longitude: SHOP_CONFIG.shop.longitude,
-      width: 32,
-      height: 32,
-      callout: {
-        content: SHOP_CONFIG.shop.name,
-        color: '#333333',
-        fontSize: 12,
-        borderRadius: 6,
-        padding: 6,
-        bgColor: '#ffffff',
-        display: 'ALWAYS'
-      }
-    }]
+    // 改造：核销结果页同样显示「本店位置」地图卡片（来自固定配置）
+    // 2026-10-09：地图 / 门店标记 / 定位 / 导航已收敛到 components/shop-map 组件，
+    //             本页不再自己拼 shopMarkers。
+    shop: SHOP_CONFIG.shop
   },
   onLoad: function (options) {
     // options.hxNumber = '2005200818567533'

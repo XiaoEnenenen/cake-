@@ -1,0 +1,170 @@
+/* ===== 门店坐标拾取（店主专用）样式 ===== */
+
+page {
+  background-color: #f5f5f5;
+}
+
+.tip {
+  padding: 24rpx 30rpx;
+  font-size: 26rpx;
+  line-height: 40rpx;
+  color: #3c3c3c;
+  background-color: #fffbe8;
+}
+
+.tip-strong {
+  font-weight: 600;
+  color: #ff4b33;
+}
+
+/* ===== 地图 ===== */
+.map-wrap {
+  position: relative;
+  width: 750rpx;
+  height: 620rpx;
+}
+
+.picker-map {
+  width: 100%;
+  height: 100%;
+}
+
+/* 中心图钉：针尖对准地图中心（translate -50%,-100%） */
+.center-pin {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 48rpx;
+  height: 60rpx;
+  transform: translate(-50%, -100%);
+  z-index: 2;
+  pointer-events: none;
+}
+
+/* 中心点（图钉针尖落点） */
+.center-dot {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 8rpx;
+  height: 8rpx;
+  margin-left: -4rpx;
+  margin-top: -4rpx;
+  border-radius: 50%;
+  background-color: #ff4b33;
+  z-index: 2;
+  pointer-events: none;
+}
+
+/* ===== 操作按钮 ===== */
+.tool-row {
+  display: flex;
+  padding: 20rpx 30rpx 0;
+}
+
+.tool-btn {
+  flex: 1;
+  height: 84rpx;
+  line-height: 84rpx;
+  text-align: center;
+  font-size: 30rpx;
+  font-weight: 600;
+  color: #1f1f1f;
+  background-color: #ffffff;
+  border-radius: 42rpx;
+  box-shadow: 0 4rpx 16rpx rgba(0, 0, 0, 0.04);
+}
+
+.tool-btn.primary {
+  background-color: #ffd100;
+  margin-right: 20rpx;
+}
+
+/* ===== 坐标面板 ===== */
+.panel {
+  margin: 20rpx 30rpx 0;
+  padding: 0 24rpx;
+  background-color: #ffffff;
+  border-radius: 20rpx;
+}
+
+.row {
+  display: flex;
+  align-items: flex-start;
+  min-height: 96rpx;
+  padding: 20rpx 0;
+  border-bottom: 1rpx solid #f2f3f5;
+}
+
+.row:last-child {
+  border-bottom: none;
+}
+
+.row-delta {
+  min-height: 60rpx;
+  padding-top: 0;
+}
+
+.label {
+  width: 190rpx;
+  flex-shrink: 0;
+  font-size: 26rpx;
+  color: #8a8a8a;
+}
+
+.value {
+  flex: 1;
+  font-size: 27rpx;
+  color: #3c3c3c;
+  line-height: 40rpx;
+  word-break: break-all;
+}
+
+.value-ok {
+  color: #1f1f1f;
+  font-weight: 600;
+}
+
+.value-empty {
+  color: #b3b3b3;
+}
+
+/* ===== 其他取点方式 ===== */
+.actions {
+  margin: 20rpx 30rpx 0;
+}
+
+.act-btn {
+  height: 88rpx;
+  line-height: 88rpx;
+  margin-bottom: 16rpx;
+  padding: 0 30rpx;
+  text-align: center;
+  font-size: 28rpx;
+  color: #1f1f1f;
+  background-color: #ffffff;
+  border-radius: 16rpx;
+}
+
+.act-btn-copy {
+  color: #1f1f1f;
+  font-weight: 600;
+  background-color: #ffd100;
+}
+
+.act-btn.disabled {
+  background-color: #ebebeb;
+  color: #b3b3b3;
+}
+
+/* ===== 页脚说明 ===== */
+.foot {
+  padding: 10rpx 30rpx 60rpx;
+  font-size: 22rpx;
+  line-height: 34rpx;
+  color: #b3b3b3;
+}
+
+.mono {
+  color: #8a8a8a;
+}

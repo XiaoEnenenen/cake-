@@ -1,0 +1,55 @@
+<!-- ===== 门店地图板块 =====
+     用法：
+       <shop-map shop="{{ shopInfo }}" height="400rpx" show-address="{{ true }}" />
+     说明见 components/shop-map/index.js 顶部注释。
+-->
+<view class="shopmap">
+  <block wx:if="{{ navigable }}">
+    <view class="shopmap-canvas" style="height:{{ height }}">
+      <map
+        class="shopmap-map"
+        latitude="{{ latitude }}"
+        longitude="{{ longitude }}"
+        scale="{{ scale }}"
+        markers="{{ markers }}"
+        show-location="{{ true }}"
+        enable-scroll="{{ !mini }}"
+        enable-zoom="{{ !mini }}"
+        enable-rotate="{{ false }}"
+        enable-overlooking="{{ false }}"
+        bindtap="onMapTap"
+      ></map>
+
+      <!-- 距离气泡：拿不到定位时不渲染 -->
+      <view wx:if="{{ showDistance && distanceText }}" class="shopmap-distance">{{ distanceText }}</view>
+
+      <!-- 缩略图形态：右下角圆形导航按钮 -->
+      <view wx:if="{{ mini }}" class="shopmap-mini-nav" catchtap="onNavigate">
+        <view class="shopmap-pin"></view>
+      </view>
+    </view>
+  </block>
+
+  <view wx:else class="shopmap-empty">门店坐标未配置，暂时无法显示地图</view>
+
+  <view wx:if="{{ showAddress && shop.address }}" class="shopmap-addr">{{ shop.address }}</view>
+
+  <!-- 定位失败提示：可点击重试 / 去设置页开启 -->
+  <view wx:if="{{ hint }}" class="shopmap-hint" bindtap="onHintTap">{{ hint }}</view>
+
+  <!-- 完整形态的「一键导航到店」 -->
+  <view wx:if="{{ showNavigate && !mini && navigable }}" class="shopmap-nav-btn" bindtap="onNavigate">
+    一键导航到店
+  </view>
+
+  <!-- 兜底：手机没装地图 App / 在开发者工具里时，「导航」按钮不会有反应，
+       复制地址后可粘到任意地图 App 里搜 -->
+  <view wx:if="{{ showNavigate && !mini && navigable }}" class="shopmap-nav-links">
+    <view class="shopmap-link" bindtap="onCopyAddress">复制门店地址</view>
+  </view>
+
+  <!-- 仅在微信开发者工具里提示：工具内导航可能走不通，请用真机预览 -->
+  <view wx:if="{{ devtools && showNavigate && !mini && navigable }}" class="shopmap-devtools">
+    微信开发者工具里导航可能无响应（微信会去找手机上的地图 App），请用「预览 / 真机调试」在手机上测试。
+  </view>
+</view>

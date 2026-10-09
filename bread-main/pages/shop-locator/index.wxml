@@ -1,0 +1,69 @@
+<!-- ===== 门店坐标拾取（店主专用）=====
+     用法说明见 pages/shop-locator/index.js 顶部注释。
+     正式版不对顾客显示入口（入口只在开发版/体验版的「我的」页出现）。
+-->
+<view class="tip">
+  把地图拖到店铺门口，让中间的红色图钉<text class="tip-strong">对准大门</text>，
+  然后点「读取图钉坐标」，把读到的两个数字发给我即可。
+</view>
+
+<!-- 地图：可拖动 / 可缩放，中心固定一个图钉 -->
+<view class="map-wrap">
+  <map
+    id="pickerMap"
+    class="picker-map"
+    latitude="{{ mapLat }}"
+    longitude="{{ mapLng }}"
+    scale="{{ scale }}"
+    markers="{{ markers }}"
+    show-location="{{ true }}"
+    enable-scroll="{{ true }}"
+    enable-zoom="{{ true }}"
+    enable-rotate="{{ false }}"
+    enable-overlooking="{{ false }}"
+  ></map>
+
+  <!-- 中心图钉（真机上是普通视图，覆盖在地图上层） -->
+  <image class="center-pin" src="/images/map-pin-shop@2x.png" mode="aspectFit"></image>
+  <view class="center-dot"></view>
+</view>
+
+<view class="tool-row">
+  <view class="tool-btn primary" bindtap="readCenter">读取图钉坐标</view>
+  <view class="tool-btn" bindtap="resetToConfig">复位</view>
+</view>
+
+<view class="panel">
+  <view class="row">
+    <view class="label">当前配置坐标</view>
+    <view class="value">{{ cfgText }}</view>
+  </view>
+  <view class="row">
+    <view class="label">图钉坐标</view>
+    <view class="value {{ pickedText ? 'value-ok' : 'value-empty' }}">
+      {{ pickedText ? pickedText : '尚未读取' }}
+    </view>
+  </view>
+  <view wx:if="{{ deltaText }}" class="row row-delta">
+    <view class="label"></view>
+    <view class="value">{{ deltaText }}</view>
+  </view>
+  <view wx:if="{{ chosenAddress }}" class="row">
+    <view class="label">选点地址</view>
+    <view class="value">{{ chosenAddress }}</view>
+  </view>
+</view>
+
+<view class="actions">
+  <view class="act-btn" bindtap="chooseByWechat">用微信地图选点（可搜索）</view>
+  <view class="act-btn" bindtap="useCurrentLocation">用我的当前位置（站在店门口时最快）</view>
+  <view class="act-btn act-btn-copy {{ pickedText ? '' : 'disabled' }}" bindtap="copyResult">
+    复制坐标
+  </view>
+</view>
+
+<view class="foot">
+  说明：本页只在开发版 / 体验版可见，正式版顾客看不到。
+  拿到坐标后填回 <text class="mono">shop-config.js → shop.latitude / shop.longitude</text>，
+  导航与「距离您 X」就会准了。
+</view>

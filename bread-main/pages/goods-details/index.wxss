@@ -71,10 +71,14 @@ page {
   z-index: 20;
 }
 
+/* 2026-10-09：右上角是绝对定位的关闭按钮（.detail-close，right:28rpx + 宽 56rpx），
+   标题行必须留出净空，否则长标题会压到「×」下面。
+   （同日早些时候这里还在解「库存 N」被 × 压住的问题，库存已整体删除，
+     但关闭按钮仍在，故保留此内边距。） */
 .detail-head {
   display: flex;
   align-items: flex-start;
-  padding: 20rpx 40rpx 0;
+  padding: 20rpx 120rpx 0 40rpx;
 }
 
 .detail-head .content {
@@ -85,17 +89,8 @@ page {
   line-height: 54rpx;
 }
 
-.detail-head .detail-stock {
-  flex-shrink: 0;
-  margin-left: 16rpx;
-  margin-top: 10rpx;
-  font-size: 22rpx;
-  color: #8a8a8a;
-}
-
-.detail-head .detail-soldout {
-  color: #ff2d2d;
-}
+/* 2026-10-09 删除：.detail-stock / .detail-soldout（库存与已售罄样式），
+   随库存概念整体移除，见 index.wxml 的说明。 */
 
 /* ===== 规格组 ===== */
 .spec-group {

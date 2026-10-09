@@ -101,8 +101,10 @@
 
         <!-- 促销标签（对应截图 神券/立减/新客减） -->
         <view class="goods-tags">
-          <view wx:if="{{ item.stores <= 0 }}" class="qh-tag">已售罄</view>
-          <view wx:else class="qh-tag">现烤现做</view>
+          <!-- 2026-10-09：库存概念整体删除。
+               原为 wx:if="{{ item.stores <= 0 }}" →「已售罄」，wx:else →「现烤现做」；
+               删掉「已售罄」分支后这里不再需要条件判断，固定显示「现烤现做」。 -->
+          <view class="qh-tag">现烤现做</view>
         </view>
 
         <view class="goods-bottom">

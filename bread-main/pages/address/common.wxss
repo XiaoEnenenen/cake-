@@ -62,18 +62,6 @@ page {
   flex-shrink: 0;
 }
 
-.addr-tag {
-  margin-left: 12rpx;
-  padding: 0 12rpx;
-  height: 34rpx;
-  line-height: 34rpx;
-  font-size: 20rpx;
-  color: #ff2d2d;
-  border: 1rpx solid #ff2d2d;
-  border-radius: 6rpx;
-  flex-shrink: 0;
-}
-
 .addr-detail {
   margin-top: 16rpx;
   font-size: 26rpx;
@@ -221,29 +209,8 @@ page {
   margin-left: 12rpx;
 }
 
-/* 标签选择（家/公司/其他） */
-.tag-row {
-  display: flex;
-  align-items: center;
-  padding: 24rpx 0;
-}
-
-.tag-item {
-  padding: 0 28rpx;
-  height: 56rpx;
-  line-height: 56rpx;
-  font-size: 26rpx;
-  color: #3c3c3c;
-  background-color: #f5f5f5;
-  border-radius: 28rpx;
-  margin-right: 20rpx;
-}
-
-.tag-item.active {
-  background-color: #ffd100;
-  color: #1f1f1f;
-  font-weight: 600;
-}
+/* 2026-10-09 删除：地址「标签」选择样式（.tag-row / .tag-item）。
+   标签功能已整体移除，见 pages/address/edit.wxml 的说明。 */
 
 /* 设为默认行 */
 .default-row {

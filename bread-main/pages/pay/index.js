@@ -1,3 +1,20 @@
+/**
+ * 订单结算页
+ * ---------------------------------------------------------------------------
+ * 2026-10-09 改版（按店主提供的参考图重做布局与视觉）：
+ *   1. 配送方式改为分段控件；新增门店卡片（地址 + 地图缩略图 + 距离 + 导航）。
+ *   2. 联络电话由「自动填写（getPhoneNumber）」改为**顾客手填**：
+ *      当前主体未开通「手机号快速验证」，原路径只会弹
+ *      getPhoneNumber:fail no permission，顾客无法填写电话。
+ *      现为输入框 + 11 位校验，成功后存 storage（contactPhone）供下次带出，
+ *      下单时统一写入订单扩展字段「联络电话」。
+ *   3. 距离来自 wx.getLocation（需 app.json 声明 requiredPrivateInfos: getLocation）。
+ *      未授权/未申请接口权限时静默跳过，只影响「距离您 X」是否显示，不影响下单。
+ *   4. 商品、费用与底部「合计 + 去支付」栏按参考图重排。
+ *   参考图中的「会员卡 / 优惠券 / 余额支付 / 储值卡」未实现：会员、积分、余额体系
+ *   在阶段二已整体删除，不做假数据。
+ * ---------------------------------------------------------------------------
+ */
 const API = require('../../utils/api-map')
 const AUTH = require('../../utils/auth')
 const wxpay = require('../../utils/pay.js')
@@ -5,21 +22,38 @@ const SHOP_CONFIG = require('../../shop-config')
 const DELIVERY = require('../../utils/delivery')
 const ADDR = require('../../utils/address')
 const DR = require('../../utils/delivery-range')
+const LOC = require('../../utils/location')
 const app = getApp()
+
+// 联络电话在本地持久化的键名（顾客手填后下次自动带出）
+const CONTACT_PHONE_KEY = 'contactPhone'
+
 app.configLoadOK = () => {
   
 }
 Page({
   data: {
     purchaseNotes: undefined,
-    mobile: '-',
+    // 门店信息（onLoad 里由 shop-config.js + storage 合并后写入）。
+    // 必须声明在 data 中：WXML 直接读取 shopInfo.*，未声明时首次渲染读不到。
+    shopInfo: {},
+    // ===== 2026-10-09 改版：联络电话改为顾客手填 =====
+    // 原实现为「自动填写」按钮 → 弹 bind-mobile 组件 → open-type="getPhoneNumber"。
+    // 当前主体未开通「手机号快速验证」，点开会直接弹 getPhoneNumber:fail no permission，
+    // 顾客根本填不进电话。现改为输入框手填，并做 11 位校验。
+    mobile: '',
+    mobileError: '',
     fetchTime: '请选择',
     remark: '未填写',
+    // 购物车是否为空（由 shippingCarInfo 写入，避免在 WXML 里做 .length 判断）
+    cartEmpty: false,
     // 配送方式
     isDelivery: false,
     deliveryEnabled: false,
     deliveryReminder: '',
-    modeText: '自提',
+    // ===== 2026-10-09 改版：门店卡片 =====
+    // 门店坐标与信息由 components/shop-map 组件消费（地图 / 标记 / 距离 / 导航）
+    shopInfo: {},
     // ===== 改造：收货地址与运费 =====
     // 选中的收货地址（外送用）；来自地址簿，通过 pages/address/index?select=1 选择
     selectedAddress: null,
@@ -44,10 +78,18 @@ Page({
     AUTH.login() // 这句不能省略
     // 改造：改用固定门店配置兜底，避免未经过首页时 shopInfo 为空导致
     //      this.data.shopInfo.name（下单处）报错。
-    const shopInfo = wx.getStorageSync('shopInfo') || SHOP_CONFIG.shop
-    this.setData({
-      shopInfo
-    })
+    // ===== 2026-10-09 改版：门店卡片 =====
+    // 合并 shop-config.js 与 storage 里的门店信息（storage 里可能是旧版本写入的、缺坐标）
+    const shopInfo = Object.assign({}, SHOP_CONFIG.shop, wx.getStorageSync('shopInfo') || {})
+    shopInfo.openHoursText = shopInfo.openingHours || '09:00-22:00'
+    shopInfo.latitude = Number(shopInfo.latitude) || Number(SHOP_CONFIG.shop.latitude) || 0
+    shopInfo.longitude = Number(shopInfo.longitude) || Number(SHOP_CONFIG.shop.longitude) || 0
+    this.setData({ shopInfo })
+    // 联络电话：先用本地保存的（顾客上次填过的）
+    const savedPhone = wx.getStorageSync(CONTACT_PHONE_KEY)
+    if (savedPhone) {
+      this.setData({ mobile: savedPhone })
+    }
     this.syncDeliveryMode()
     this.shippingCarInfo()
   },
@@ -147,8 +189,7 @@ Page({
     this.setData({
       isDelivery,
       deliveryEnabled: DELIVERY.isDeliveryEnabled(),
-      deliveryReminder: cfg.reminder || '',
-      modeText: DELIVERY.getModeText()
+      deliveryReminder: cfg.reminder || ''
     })
   },
   // 改造：切换自提 / 外送
@@ -204,6 +245,7 @@ Page({
       this.setData({
         purchaseNotes,
         shippingCarInfo: res.data,
+        cartEmpty: !(res.data.items && res.data.items.length),
         goodsAmount,
         cartItemsForQuote
       })
@@ -214,31 +256,64 @@ Page({
   async userDetail() {
     // https://www.yuque.com/apifm/nu0f75/zgf8pu
     const res = await API.userDetail(wx.getStorageSync('token'))
-    if (res.code == 0 && res.data.base.mobile) {
-      this.setData({
-        mobile: res.data.base.mobile
-      })
+    const remote = res && res.code == 0 && res.data && res.data.base
+      ? (res.data.base.mobile || '')
+      : ''
+    // 仅在顾客尚未填写（也没有本地保存值）时带出档案里的手机号，
+    // 否则 onShow 返回页面时会把顾客刚输入的内容覆盖掉。
+    if (remote && !this.data.mobile) {
+      this.setData({ mobile: remote })
+      wx.setStorageSync(CONTACT_PHONE_KEY, remote)
     }
   },
-  bindMobile() {
-    this.setData({
-      bindMobileShow: true
-    })
+
+  // ===== 2026-10-09 改版：联络电话改为手填 =====
+  // 输入时只保留数字并限制 11 位（type="number" 仍可能带出非数字字符）
+  onMobileInput(e) {
+    const value = String((e.detail && e.detail.value) || '').replace(/\D/g, '').slice(0, 11)
+    this.setData({ mobile: value, mobileError: '' })
+    return value
   },
-  bindMobileOk(e) {
-    console.log(e.detail); // 这里是组件里data的数据
-    this.setData({
-      bindMobileShow: false
-    })
-    this.userDetail()
+  // 失焦时校验并落地到 storage，便于下次自动带出
+  onMobileBlur() {
+    const value = String(this.data.mobile || '').trim()
+    if (!value) {
+      this.setData({ mobileError: '' })
+      wx.removeStorageSync(CONTACT_PHONE_KEY)
+      return
+    }
+    if (!ADDR.isValidPhone(value)) {
+      this.setData({ mobileError: '手机号格式不正确，请检查后重填' })
+      return
+    }
+    this.setData({ mobileError: '' })
+    wx.setStorageSync(CONTACT_PHONE_KEY, value)
   },
-  bindMobileCancel() {
-    this.setData({
-      bindMobileShow: false
-    })
+
+  // ===== 2026-10-09 改版：门店地图与距离 =====
+  // 地图 / 门店标记 / 用户定位 / 距离 / 圆形导航按钮都由 components/shop-map 负责，
+  // 这里只保留「点整张门店卡片 = 一键导航到店」这一条入口。
+  async openShopLocation() {
+    await LOC.openNavigation(this.data.shopInfo)
   },
   async createorder() {
     const token = wx.getStorageSync('token')
+
+    // 商品未加载成功时按钮会抛 TypeError（弱网下点「结算」直接报错），先拦住。
+    if (!this.data.shippingCarInfo || !this.data.shippingCarInfo.items) {
+      wx.showToast({ title: '商品信息还没加载好，请稍候', icon: 'none' })
+      return
+    }
+
+    // ===== 2026-10-09 改版：联络电话改为手填，下单前统一校验 =====
+    // 外送要靠它确认地址，自提要靠它联系顾客，故两种方式都必填。
+    const contactPhone = String(this.data.mobile || '').trim()
+    if (!ADDR.isValidPhone(contactPhone)) {
+      this.setData({ mobileError: '请填写正确的手机号' })
+      wx.showToast({ title: '请填写正确的联络电话', icon: 'none' })
+      return
+    }
+    wx.setStorageSync(CONTACT_PHONE_KEY, contactPhone)
 
     // ===== 改造：外送下单前的校验 =====
     if (this.data.isDelivery) {
@@ -302,7 +377,7 @@ Page({
     const extJsonStr = {}
     extJsonStr['配送方式'] = modeText
     extJsonStr['自取门店'] = this.data.shopInfo.name
-    extJsonStr['联络电话'] = this.data.mobile
+    extJsonStr['联络电话'] = contactPhone
     extJsonStr['自取时间'] = this.data.fetchTime
 
     // ===== 改造：外送订单写入完整收货地址快照与运费信息 =====

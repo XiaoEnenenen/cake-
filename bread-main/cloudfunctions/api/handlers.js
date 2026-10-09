@@ -76,9 +76,12 @@ function makeCartKey(goodsId, sku) {
 /**
  * 单行商品数量的上限。
  * 为什么需要：orderCreate 原先完全信任前端传来的 number，审计探针实测：
- *   number = -5   → 订单金额 -270 元、库存反而 +5（凭空加库存）
- *   number = "abc"→ 金额 NaN、库存被写成非数字
- *   同一请求两行各 20（库存 20）→ 单请求即超卖到 -20
+ *   number = -5   → 订单金额 -270 元（负数行直接抵扣总额）
+ *   number = "abc"→ 金额 NaN
+ *   同一请求两行各 99 → 拆行绕过单行上限，总额失控
+ *
+ * 2026-10-09：本店**没有库存概念**，这里只保留「数量必须是合理正整数」的校验，
+ * 不再有任何库存上限（原来还有一条 stores 校验，已随库存整体删除）。
  */
 const MAX_ITEM_NUMBER = 99
 
@@ -136,23 +139,6 @@ function resolveOrderSku(goods, propertyChildIds) {
     }
   }
   return { ok: true, sku }
-}
-
-/**
- * 库存原子回补（取消/删除未支付订单时用）
- * 优先用 db 的原子回补（真实云函数 adapter 提供，内部是 command.inc）；
- * 没有时退回「读 + 覆盖写」——仅供最小测试桩使用，真实环境永远走原子路径。
- */
-async function refundStores(ctx, goodsId, number) {
-  if (typeof ctx.db.incStores === 'function') {
-    return ctx.db.incStores('goods', goodsId, number)
-  }
-  const goods = await ctx.db.get('goods', goodsId)
-  if (!goods) return { ok: false, reason: 'not_found' }
-  await ctx.db.update('goods', goods._id, {
-    stores: (typeof goods.stores === 'number' ? goods.stores : 0) + number
-  })
-  return { ok: true }
 }
 
 /**
@@ -216,7 +202,7 @@ async function goodsList(payload, ctx) {
     characteristic: g.characteristic || '',
     minPrice: g.minPrice,
     unit: g.unit || '个',
-    stores: typeof g.stores === 'number' ? g.stores : 0,
+    // 2026-10-09：库存概念整体删除，不再返回 stores 字段
     // 改造：是否蛋糕，供前端计算配送规则（6寸以上免配送费、提前3小时）
     isCake: isCakeGoods(g),
     // 规格组随列表返回，前端据此解析蛋糕尺寸（磅数）
@@ -254,7 +240,7 @@ async function goodsDetail(payload, ctx) {
       name: g.name,
       minPrice: g.minPrice,
       unit: g.unit || '个',
-      stores: typeof g.stores === 'number' ? g.stores : 0,
+      // 2026-10-09：库存概念整体删除，不再返回 stores 字段
       purchaseNotes: g.purchaseNotes || '',
       // 改造：是否蛋糕，供前端配送规则（免配送费 / 提前3小时）判断
       isCake: isCakeGoods(g)
@@ -321,7 +307,7 @@ async function cartAdd(payload, ctx) {
 
   const goods = await ctx.db.get('goods', goodsId)
   if (!goods) return fail('商品不存在')
-  if (goods.stores <= 0) return fail('已售罄')
+  // 2026-10-09：库存概念已整体删除（不再有「已售罄」与库存上限）
 
   // 规格必选校验：商品有规格组时，每组都必须选
   if (goods.properties && goods.properties.length) {
@@ -340,11 +326,9 @@ async function cartAdd(payload, ctx) {
 
   const existing = await ctx.db.findOne('cart', { _openid: ctx.openid, key })
   if (existing) {
-    const nextNumber = existing.number + number
-    if (nextNumber > goods.stores) return fail('库存不足')
-    await ctx.db.update('cart', existing._id, { number: nextNumber })
+    // 2026-10-09：库存概念已删除，同规格加购直接累加
+    await ctx.db.update('cart', existing._id, { number: existing.number + number })
   } else {
-    if (number > goods.stores) return fail('库存不足')
     await ctx.db.add('cart', {
       _openid: ctx.openid,
       key,
@@ -367,8 +351,7 @@ async function cartModifyNumber(payload, ctx) {
     await ctx.db.remove('cart', item._id)
     return cartSummary(ctx, ctx.openid)
   }
-  const goods = await ctx.db.get('goods', item.goodsId)
-  if (goods && number > goods.stores) return fail('库存不足')
+  // 2026-10-09：库存概念已删除，修改数量只校验数量本身
   await ctx.db.update('cart', item._id, { number })
   return cartSummary(ctx, ctx.openid)
 }
@@ -589,10 +572,12 @@ async function shopSubdetail(payload, ctx) {
  *   1) 服务端重新算价，不信任前端传来的金额（防止改价）
  *   2) 服务端校验入参：数量（正整数、单行上限）、规格（每组必选 + 选项合法）、商品必须上架
  *      —— 2026-10-09 阶段二新增，见下方"阶段二安全修复"注释
- *   3) 同一请求内 goodsId + 规格 去重合并，再校验总数量
- *   4) 库存用条件更新原子扣减，失败即回滚已扣部分（防并发超卖）
- *   5) 生成核销码 hxNumber
- *   6) 清空购物车
+ *   3) 同一请求内 goodsId + 规格 去重合并，再校验总数量上限（防止拆成多行绕过单行上限）
+ *   4) 生成核销码 hxNumber
+ *   5) 清空购物车
+ *
+ * 2026-10-09：**本店没有库存概念**，下单不再校验库存、也不再扣减/回补库存
+ *             （原「原子扣减 + 失败回滚」整段已删除）。
  */
 async function orderCreate(payload, ctx) {
   const {
@@ -643,7 +628,7 @@ async function orderCreate(payload, ctx) {
     const skuRes = resolveOrderSku(goods, row.propertyChildIds)
     if (!skuRes.ok) return fail(skuRes.msg)
 
-    // 同一商品 + 同一规格组合：合并为一行（防止"同请求两行各 20、库存 20"式超卖）
+    // 同一商品 + 同一规格组合：合并为一行（防止拆成多行绕过单行的数量上限）
     const key = makeCartKey(row.goodsId, skuRes.sku)
     if (merged[key]) {
       merged[key].number += numRes.number
@@ -656,11 +641,10 @@ async function orderCreate(payload, ctx) {
   for (const key of mergeOrder) {
     const row = merged[key]
     const goods = row.goods
-    // 合并后再校验总数量的上限与库存
+    // 合并后校验总数量的上限（已无库存概念）
     if (row.number > MAX_ITEM_NUMBER) {
       return fail(goods.name + ' 单次最多购买 ' + MAX_ITEM_NUMBER + ' 件')
     }
-    if (goods.stores < row.number) return fail(goods.name + ' 库存不足')
 
     const price = calcPrice(goods, row.sku)
     items.push({
@@ -735,38 +719,10 @@ async function orderCreate(payload, ctx) {
 
   const totalAmount = Math.round((amount + freight) * 100) / 100
 
-  // ===== 阶段二安全修复：库存改为原子条件扣减 + 失败回滚 =====
-  // 原实现是「先 get 读库存 → 覆盖写 stores - n」，两个并发请求会同时读到同一个值、
-  // 同时通过校验，覆盖后库存变成负数（超卖）。改为数据库侧原子 inc，并检查是否真的扣成功。
-  const deducted = []
-  for (const it of items) {
-    let res = null
-    if (typeof ctx.db.decStores === 'function') {
-      res = await ctx.db.decStores('goods', it.goodsId, it.number)
-    } else {
-      // 兼容不支持原子操作的最小 db 实现（例如旧版测试桩）
-      const goods = await ctx.db.get('goods', it.goodsId)
-      if (goods && goods.stores >= it.number) {
-        await ctx.db.update('goods', goods._id, { stores: goods.stores - it.number })
-        res = { ok: true }
-      } else {
-        res = { ok: false, reason: 'insufficient' }
-      }
-    }
-    if (!res || !res.ok) {
-      // 回滚已扣减的部分，避免"扣了一半却下单失败"的脏库存
-      for (const d of deducted) {
-        if (typeof ctx.db.incStores === 'function') {
-          await ctx.db.incStores('goods', d.goodsId, d.number)
-        } else {
-          const g = await ctx.db.get('goods', d.goodsId)
-          if (g) await ctx.db.update('goods', g._id, { stores: g.stores + d.number })
-        }
-      }
-      return fail(it.goodsName + ' 库存不足')
-    }
-    deducted.push({ goodsId: it.goodsId, number: it.number })
-  }
+  // 2026-10-09：库存概念整体删除。
+  // 删除内容：原先在这里对每个商品做「原子条件扣减 stores + 失败回滚」，
+  //          以及对应的 decStores / incStores 数据库适配方法。
+  // 现在下单只生成订单，不再读写任何库存字段。
 
   const now = Date.now()
   const orderNo =
@@ -883,14 +839,7 @@ async function orderClose(payload, ctx) {
   if (o._openid !== ctx.openid) return fail('无权操作该订单')
   if (o.status !== 0) return fail('当前状态不可取消')
   await ctx.db.update('order', o._id, { status: -1, statusStr: '已取消' })
-  // 回补库存（2026-10-09 阶段二：改为原子回补，避免与并发扣减互相覆盖）
-  for (const it of o.goods || []) {
-    const res = await refundStores(ctx, it.goodsId, it.number)
-    if (!res || !res.ok) {
-      // 商品可能已被删除：记录但不阻断取消（订单状态已经落库）
-      console.warn('[orderClose] 库存回补失败 goodsId=' + it.goodsId)
-    }
-  }
+  // 2026-10-09：库存概念已删除，取消订单不再回补库存
   return ok({ id })
 }
 
@@ -898,15 +847,15 @@ async function orderClose(payload, ctx) {
  * 删除订单
  * ---------------------------------------------------------------------------
  * 2026-10-09 阶段二安全修复：
- *   1) 【真问题】原来不校验状态：status=0（待支付）的订单可以被直接删除，
- *      而删除**不会回补库存**（原实现里回补只在 orderClose 里），
- *      于是"下单 → 删单"就能把库存永久吃掉。
- *      → 现在待支付订单必须先走 orderClose（取消会回补库存），不能直删。
- *   2) 【真问题】原来没有状态白名单，任何状态的订单都能删，包括商家还没处理完的。
+ *   1) 【真问题】原来不校验状态：任何状态的订单都能删，包括商家还没处理完的。
  *      → 现在只允许删除「已取消(-1)」和「已完成/已核销(3)」的订单，
  *        与前端 pages/current-order/index.wxml 的按钮规则一致
  *        （status==0 显示"取消订单"，status==3 显示"删除订单"）。
- *   3) 越权校验（o._openid !== ctx.openid）原本就有，保留。
+ *   2) 越权校验（o._openid !== ctx.openid）原本就有，保留。
+ *
+ * 2026-10-09 补充：本店**没有库存概念**，所以「删未支付订单会吃掉库存」这条
+ *   风险已不存在；但"待支付订单先取消再删除"的状态约束仍然保留，
+ *   目的是让订单状态流转清晰（取消 → 已取消 → 可删除），而不是为了库存。
  *
  * 已知边界（阶段 4 处理）：status=1（已支付/制作中）目前前后端都没有删除入口，
  *   既不可取消也不可删除 —— 需要一条"申请取消已支付订单"的路径，届时一起补。
@@ -917,7 +866,7 @@ async function orderDelete(payload, ctx) {
   const o = await ctx.db.get('order', id)
   if (!o) return fail('订单不存在')
   if (o._openid !== ctx.openid) return fail('无权操作该订单')
-  // 待支付订单必须先取消（取消会回补库存），避免"下单后直删"把库存吃掉
+  // 待支付订单请先走「取消订单」，保持状态流转清晰
   if (o.status === 0) return fail('待支付订单请先取消，不能直接删除')
   // 只允许删除终态订单
   if (o.status !== -1 && o.status !== 3) {
@@ -1038,7 +987,7 @@ async function importData(payload, ctx) {
       pic: '/images/logo@2x.png', pics: [{ pic: '/images/logo@2x.png' }],
       characteristic: '动物奶油 / 新鲜水果 / 约400克',
       content: '<p>当季新鲜水果，动物奶油制作，当日现做现卖。</p>',
-      minPrice: 54, unit: '个', stores: 20,
+      minPrice: 54, unit: '个',
       purchaseNotes: '蛋糕需冷藏保存，建议2小时内食用。', sort: 10, enabled: true, isCake: true,
       properties: [
         { id: 'size', name: '磅数', childsCurGoods: [
@@ -1058,7 +1007,7 @@ async function importData(payload, ctx) {
       pic: '/images/logo@2x.png', pics: [{ pic: '/images/logo@2x.png' }],
       characteristic: '可写生日牌 / 送蜡烛',
       content: '<p>经典款生日蛋糕，下单备注生日牌内容。</p>',
-      minPrice: 88, unit: '个', stores: 30,
+      minPrice: 88, unit: '个',
       purchaseNotes: '需要生日牌请在备注里写明文字。', sort: 10, enabled: true, isCake: true,
       properties: [
         { id: 'size', name: '磅数', childsCurGoods: [
@@ -1078,7 +1027,7 @@ async function importData(payload, ctx) {
       pic: '/images/logo@2x.png', pics: [{ pic: '/images/logo@2x.png' }],
       characteristic: '手工千层皮 / 芒果夹心',
       content: '<p>手工摊制千层皮，夹入新鲜芒果。</p>',
-      minPrice: 78, unit: '个', stores: 12,
+      minPrice: 78, unit: '个',
       purchaseNotes: '千层蛋糕需冷藏，建议取出后尽快食用。', sort: 10, enabled: true, isCake: true,
       properties: [
         { id: 'size', name: '磅数', childsCurGoods: [
@@ -1092,7 +1041,7 @@ async function importData(payload, ctx) {
       pic: '/images/logo@2x.png', pics: [{ pic: '/images/logo@2x.png' }],
       characteristic: '需冷冻保存 / 口感冰凉',
       content: '<p>冰淇淋夹心，需冷冻保存。</p>',
-      minPrice: 98, unit: '个', stores: 8,
+      minPrice: 98, unit: '个',
       purchaseNotes: '请尽快食用，避免融化。', sort: 10, enabled: true, isCake: true,
       properties: [
         { id: 'size', name: '磅数', childsCurGoods: [
@@ -1106,7 +1055,7 @@ async function importData(payload, ctx) {
       pic: '/images/logo@2x.png', pics: [{ pic: '/images/logo@2x.png' }],
       characteristic: '蜡烛 + 生日帽 / 无规格',
       content: '<p>一次性生日蜡烛与生日帽套装。</p>',
-      minPrice: 8, unit: '套', stores: 100,
+      minPrice: 8, unit: '套',
       purchaseNotes: '', sort: 90, enabled: true, isCake: false,
       properties: []
     }

@@ -24,7 +24,6 @@ const { dispatch } = require('./handlers')
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV })
 
 const db = cloud.database()
-const _ = db.command
 
 /**
  * 把云开发数据库包装成 handlers.js 期望的接口
@@ -89,43 +88,12 @@ const dbAdapter = {
       await db.collection(collection).doc(d._id).remove()
     }
     return { removed: docs.length }
-  },
-
-  /**
-   * 库存原子扣减（2026-10-09 阶段二新增，防超卖）
-   * -----------------------------------------------------------------
-   * 为什么必须原子：原实现是「先 get 读库存 → 校验 → 覆盖写 stores - n」，
-   * 两个并发请求会同时读到同一个库存值、同时通过校验，覆盖后库存变成负数（超卖）。
-   * 这里用条件更新 + command.inc：
-   *   where({ _id, stores: _.gte(n) }) —— 只有库存还够时才命中
-   *   data: { stores: _.inc(-n) }      —— 由数据库做原子自减
-   * stats.updated 为 0 表示条件不满足（库存不足/商品不存在），调用方据此回滚。
-   * @returns {Promise<{ok:boolean, reason?:string, stores?:number}>}
-   */
-  async decStores(collection, id, n) {
-    const res = await db
-      .collection(collection)
-      .where({ _id: String(id), stores: _.gte(n) })
-      .update({ data: { stores: _.inc(-n) } })
-    const updated = (res && res.stats && res.stats.updated) || 0
-    if (updated < 1) return { ok: false, reason: 'insufficient' }
-    return { ok: true }
-  },
-
-  /**
-   * 库存原子回补（取消订单 / 删除未支付订单时用）。
-   * 用 update 的 inc（不是读改写），保证与并发扣减不会互相覆盖。
-   * @returns {Promise<{ok:boolean, reason?:string}>}
-   */
-  async incStores(collection, id, n) {
-    const res = await db
-      .collection(collection)
-      .doc(String(id))
-      .update({ data: { stores: _.inc(n) } })
-    const updated = (res && res.stats && res.stats.updated) || 0
-    if (updated < 1) return { ok: false, reason: 'not_found' }
-    return { ok: true }
   }
+
+  // 2026-10-09：库存概念整体删除。
+  // 删除内容：原先的 decStores（条件更新 + command.inc 原子扣减）与
+  //          incStores（原子回补）两个适配方法，以及配套的 command 引用。
+  // 本店不记库存：下单只生成订单，不再读写任何库存字段。
 }
 
 /**

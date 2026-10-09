@@ -149,13 +149,7 @@ Page({
       }).catch(() => {})
       return
     }
-    if (this.data.goodsDetail.basicInfo.stores <= 0) {
-      wx.showToast({
-        title: '已售罄~',
-        icon: 'none'
-      })
-      return
-    }
+    // 2026-10-09：库存概念已整体删除，不再有「已售罄」拦截，直接加购
     // ===== 改造：原来只 push 第一组规格，现汇总全部组 =====
     const sku = this.buildSku()
     // https://www.yuque.com/apifm/nu0f75/et6m6m
@@ -273,8 +267,9 @@ Page({
  * 现状（已全项目只读核实）：
  *   goods 集合 / 云函数返回里【没有】原价或新客价字段。
  *   检索 originPrice / marketPrice / newPrice / 划线 / 新客 均零命中；
- *   handlers.js:147-161 的 goodsDetail 只返回
- *     basicInfo{ id,name,minPrice,unit,stores,purchaseNotes,isCake } + pics/content/properties。
+ *   handlers.js 的 goodsDetail 只返回
+ *     basicInfo{ id,name,minPrice,unit,purchaseNotes,isCake } + pics/content/properties。
+ *     （2026-10-09 起 stores 字段已随库存概念一并删除）
  * 因此本页不做假数据，底部价格区只显示真实存在的：
  *   当前合计 = basicInfo.minPrice + 各选中项 priceDelta（与云函数 calcPrice 同规则）
  *   起价     = basicInfo.minPrice

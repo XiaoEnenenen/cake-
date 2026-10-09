@@ -22,6 +22,7 @@ const API = require('../../utils/api-map')
 const AUTH = require('../../utils/auth')
 const SHOP_CONFIG = require('../../shop-config')
 const ADDR = require('../../utils/address')
+const LOC = require('../../utils/location')
 const app = getApp()
 
 // 订单入口：只做项目里真实存在的状态
@@ -49,16 +50,18 @@ Page({
       latitude: 0,
       longitude: 0
     },
-    // 是否具备可用坐标（坐标仍是占位值时也能导航，但会有偏差）
-    hasLocation: false,
     // 默认收货地址（展示在「收货地址」入口右侧）
     defaultAddressText: '',
     // 商家核销权限
-    canHX: false
+    canHX: false,
+    // 是否是开发版 / 体验版：用于显示「校准门店坐标」这个店主专用入口
+    //（正式版为 false，顾客看不到）
+    isDevEnv: false
   },
 
   onLoad() {
     this.loadShopConfig()
+    this.setData({ isDevEnv: LOC.isDevOrTrialEnv() })
   },
 
   onShow() {
@@ -86,8 +89,7 @@ Page({
         openingHours: s.openingHours || '',
         latitude: s.latitude || 0,
         longitude: s.longitude || 0
-      },
-      hasLocation: !!(s.latitude && s.longitude)
+      }
     })
   },
 
@@ -182,26 +184,18 @@ Page({
     })
   },
 
-  // ===== 一键导航到门店 =====
-  // 使用 wx.openLocation（微信原生能力）：
-  //   - 唤起微信内置地图并显示门店位置，用户可在其中选择「用其他地图打开」
-  //   - 只传门店坐标，不获取用户位置，因此无需 scope.userLocation 权限
-  openShopLocation() {
-    const s = this.data.shop
-    if (!s.latitude || !s.longitude) {
-      wx.showToast({ title: '门店坐标未配置', icon: 'none' })
-      return
-    }
-    wx.openLocation({
-      latitude: Number(s.latitude),
-      longitude: Number(s.longitude),
-      name: s.name || '门店',
-      address: s.address || '',
-      scale: 18,
-      fail: (err) => {
-        console.error('[my] openLocation 失败', err)
-        wx.showToast({ title: '打开地图失败', icon: 'none' })
-      }
+  // ===== 一键导航到店 =====
+  // 已收敛到 components/shop-map 组件（内部调 utils/location.js 的 openNavigation）：
+  //   - 唤起微信内置地图并显示门店位置，用户可在其中选择「路线/导航」，
+  //     用高德/百度/腾讯地图开始导航
+  //   - 只传门店坐标，不获取用户位置，因此不需要 scope.userLocation 权限
+  // 本页不再单独实现，避免与组件两套逻辑。
+
+  // ===== 店主专用：门店坐标拾取 =====
+  // 入口只在开发版 / 体验版显示（见 onLoad 的 isDevEnv），正式版顾客看不到。
+  goShopLocator() {
+    wx.navigateTo({
+      url: '/pages/shop-locator/index'
     })
   },
 

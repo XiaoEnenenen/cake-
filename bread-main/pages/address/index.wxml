@@ -14,7 +14,6 @@
       <view class="addr-name">{{ item.name }}</view>
       <view class="addr-phone">{{ item.phone }}</view>
       <view wx:if="{{ item.isDefault }}" class="addr-badge">默认</view>
-      <view wx:if="{{ item.tag }}" class="addr-tag">{{ item.tag }}</view>
     </view>
 
     <view class="addr-detail">{{ item.fullText }}</view>

@@ -1,0 +1,189 @@
+/**
+ * 门店地图板块（可复用组件）
+ * ---------------------------------------------------------------------------
+ * 2026-10-09 新增：把「门店地图 + 用户定位授权 + 距离 + 一键导航到店」收敛成一个组件，
+ * 结算页 / 订单详情 / 核销结果 / 我的 四个位置共用同一份实现。
+ *
+ * 两种形态：
+ *   mini  = true   结算页门店卡右上角的缩略图：小尺寸、不可拖动、圆形导航按钮、无地址行
+ *   mini  = false  完整地图板块：可拖动缩放、门店标记 + 气泡、地址行 + 「一键导航到店」按钮
+ *
+ * 依赖：
+ *   utils/location.js    定位授权 / 距离 / 导航（wx.openLocation）
+ *   images/map-pin-shop@2x.png   门店标记图标（map 的 markers.iconPath 为必填项）
+ *
+ * 权限降级：拿不到定位时，只隐藏「距离您 X」并在下方给一条可点击的提示，
+ *          地图与「一键导航到店」照常可用（openLocation 不需要定位权限）。
+ * ---------------------------------------------------------------------------
+ */
+const LOC = require('../../utils/location')
+
+Component({
+  options: {
+    addGlobalClass: true
+  },
+
+  properties: {
+    // 门店信息 { name, address, latitude, longitude }
+    shop: {
+      type: Object,
+      value: {}
+    },
+    // 地图高度（rpx）
+    height: {
+      type: String,
+      value: '400rpx'
+    },
+    // 缩略图形态（结算页门店卡）
+    mini: {
+      type: Boolean,
+      value: false
+    },
+    // 地图缩放级别
+    scale: {
+      type: Number,
+      value: 16
+    },
+    // 是否显示「距离您 X」气泡
+    showDistance: {
+      type: Boolean,
+      value: true
+    },
+    // 是否显示「一键导航到店」按钮（mini 形态使用圆形按钮，不受此开关影响）
+    showNavigate: {
+      type: Boolean,
+      value: true
+    },
+    // 完整形态下是否在下方显示门店地址
+    showAddress: {
+      type: Boolean,
+      value: false
+    },
+    // 是否在挂载后自动申请定位
+    autoLocate: {
+      type: Boolean,
+      value: true
+    }
+  },
+
+  data: {
+    latitude: 0,
+    longitude: 0,
+    markers: [],
+    navigable: false,
+    distanceText: '',
+    hint: '',
+    hintDenied: false,
+    // 是否运行在微信开发者工具里（工具内导航可能走不通，给一行说明，不阻断操作）
+    devtools: false
+  },
+
+  observers: {
+    shop(shop) {
+      this.syncShop(shop)
+    }
+  },
+
+  lifetimes: {
+    attached() {
+      this.setData({ devtools: LOC.isDevtools() })
+      // syncShop 内部会在坐标就绪时自动补一次定位，这里不重复调用
+      this.syncShop(this.data.shop)
+    }
+  },
+
+  methods: {
+    /** 根据门店坐标准备地图中心与标记点 */
+    syncShop(shop) {
+      const s = LOC.shopOf(shop)
+      const navigable = LOC.isShopReady(s)
+      const latitude = navigable ? Number(s.latitude) : 0
+      const longitude = navigable ? Number(s.longitude) : 0
+      this.setData({
+        navigable,
+        latitude,
+        longitude,
+        markers: navigable
+          ? [
+              {
+                id: 1,
+                latitude,
+                longitude,
+                // iconPath 是 map 组件 markers 的必填项，项目内原本没有定位图标
+                iconPath: '/images/map-pin-shop@2x.png',
+                width: 24,
+                height: 30,
+                callout: {
+                  content: s.name || '门店',
+                  color: '#1f1f1f',
+                  fontSize: 12,
+                  borderRadius: 6,
+                  padding: 6,
+                  bgColor: '#ffffff',
+                  display: 'ALWAYS'
+                }
+              }
+            ]
+          : []
+      })
+      // 门店信息可能是页面 onLoad/接口返回后才写入的（组件此时已 attached），
+      // 因此坐标一旦就绪就补做一次定位；同一实例只自动定位一次，
+      // 之后重试由用户点提示条触发。
+      if (navigable && this.data.autoLocate && !this._autoLocated) {
+        this._autoLocated = true
+        this.locate()
+      }
+    },
+
+    /** 申请定位 → 计算与门店的距离 */
+    async locate() {
+      if (!this.data.navigable) return
+      if (this._locating) return
+      this._locating = true
+      const res = await LOC.getCurrent()
+      this._locating = false
+      if (!res.ok) {
+        this.setData({
+          hint: res.errMsg || '定位失败，点击重试',
+          hintDenied: !!res.denied,
+          distanceText: ''
+        })
+        return
+      }
+      const km = LOC.distanceToShop(res.latitude, res.longitude, this.data.shop)
+      const text = LOC.formatDistance(km)
+      this.setData({
+        hint: '',
+        hintDenied: false,
+        distanceText: text ? '距离您 ' + text : ''
+      })
+      this.triggerEvent('located', { latitude: res.latitude, longitude: res.longitude, km })
+    },
+
+    /** 点击提示条：被拒绝过就引导去设置页，其余情况直接重试 */
+    async onHintTap() {
+      if (this.data.hintDenied) {
+        const opened = await LOC.openSettingGuide(true)
+        if (!opened) return
+      }
+      this.locate()
+    },
+
+    /** 一键导航到店 */
+    onNavigate() {
+      LOC.openNavigation(this.data.shop)
+    },
+
+    /** 复制门店地址（导航按钮不可用时的兜底） */
+    onCopyAddress() {
+      LOC.copyShopAddress(this.data.shop)
+    },
+
+    /** 缩略图形态下点地图也能导航；完整形态保留地图自身的拖动体验 */
+    onMapTap() {
+      if (this.data.mini) {
+        LOC.openNavigation(this.data.shop)
+      }
+    }
+  }
+})
