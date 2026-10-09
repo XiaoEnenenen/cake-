@@ -203,9 +203,11 @@ Page({
   async shippingCarInfo(){
     const token = wx.getStorageSync('token')
     // 改造（2026-02-14）：兼容云开发模式。
-    // 云开发身份由 OPENID 决定，storage 里从来没有 token（证据：utils/auth.js:89-94
-    // 云模式下只写 uid 不写 token）。原实现无 token 即 navigateBack，
+    // 云开发身份由 OPENID 决定，storage 里从来没有 token
+    // （证据：utils/auth.js 的 login()/authorize() 只写 uid，从不写 token）。原实现无 token 即 navigateBack，
     // 会导致云模式下点「去结算」被立刻弹回点单页，结算流程完全不可用。
+    // 单一数据源（阶段三）：__isCloudMode() 恒为 true，这里不需要 token。
+    // 该判断保留为兜底：万一 useCloud 被误设为 false，结算页也不会静默空转。
     if (!API.__isCloudMode() && !token) {
       wx.navigateBack()
       return

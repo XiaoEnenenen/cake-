@@ -106,14 +106,15 @@ Page({
    *
    * 改造（2026-02-14）：
    *   1. 兼容云开发模式 —— 云开发身份由 OPENID 决定，storage 里从来没有 token
-   *      （证据：utils/auth.js:89-94 云模式下只写 uid，不写 token）。
+   *      （证据：utils/auth.js 的 login()/authorize() 只写 uid，从不写 token）。
    *      原实现 `if (!token) return` 会让整条结算栏永远不显示。
    *   2. 把货架返回的值映射成 wxml 好用的结构（规格文字、小计），
    *      金额仍然只用后端返回的 price / number，前端不重算业务金额。
    */
   async shippingCarInfo(){
     const token = wx.getStorageSync('token')
-    // 云开发模式不需要 token；非云模式（legacy api工厂）仍按原样要求 token
+    // 单一数据源（阶段三）：__isCloudMode() 恒为 true，这里不需要 token。
+    // 该判断保留为兜底：万一 useCloud 被误设为 false，也不会拿空购物车去请求。
     if (!API.__isCloudMode() && !token) {
       this.setData({ cartItems: [], cartCount: 0, cartPrice: 0, shippingCarInfo: null })
       return

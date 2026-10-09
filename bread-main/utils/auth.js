@@ -1,68 +1,42 @@
-// ⚠️ 本文件的 apifm-wxapi 为 legacy 备用通道依赖。
-//    保留直接 require 的原因：api-map.js → auth.js 已存在依赖关系，
-//    若此处改 require api-map 会形成循环依赖，反而更脆弱。
-//    云开发模式下下面所有 WXAPI.* 调用都被 isCloudMode() 分支跳过，不会执行。
-//    详见 utils/services/legacy-apifm.js 顶部说明。
-const WXAPI = require('apifm-wxapi')
+/**
+ * 鉴权 / 登录（云开发单一数据源）
+ * ---------------------------------------------------------------------------
+ * 2026-10-09 阶段三改造：
+ *   云开发模式下用户身份由云函数自动注入的 OPENID 决定，**不存在 token 概念**，
+ *   因此本文件只保留一条路径；原 api 工厂的 code 换 token 流程（checkToken /
+ *   login_wx / wxappService* / authorize 注册）整体删除，不再 require apifm-wxapi。
+ *
+ *   同时修掉审计 A-P1-01：isCloudMode() 之前依赖 API.__dataSource() === 'cloud'
+ *   这个**字符串**，一旦发生一次降级就永久变成 false，鉴权会跑去读从不存在的
+ *   storage.token，用户看到「无法登录」。现在唯一判据是与 data-source.js 同源的
+ *   DS.useCloud，不存在"降级后判据变化"的可能。
+ * ---------------------------------------------------------------------------
+ */
+const DS = require('./data-source')
 const API = require('./api-map')
 import Dialog from '@vant/weapp/dialog/dialog'
 
 /**
- * 当前是否运行在云开发模式
- * 云开发模式下用户身份由 OPENID 自动确定，不存在 token 概念，
- * 因此登录/鉴权逻辑与原 api工厂 完全不同。
+ * 当前是否运行在云开发模式。
+ * 单一数据源：唯一判据是 utils/data-source.js 的 useCloud（不再解析 __dataSource() 字符串）。
  */
 function isCloudMode() {
-  return API.__dataSource() === 'cloud'
-}
-
-async function checkSession(){
-  return new Promise((resolve, reject) => {
-    wx.checkSession({
-      success() {
-        return resolve(true)
-      },
-      fail() {
-        return resolve(false)
-      }
-    })
-  })
+  return !!DS.useCloud
 }
 
 // 2026-09-26 阶段二：已删除三级分销函数 bindSeller()（含 storage.referrer 读取与
-// WXAPI.bindSeller 调用）。本店不做分销，功能整体移除。
+// 原 api 工厂的 bindSeller 调用）。本店不做分销，功能整体移除。
 
 // 检测登录状态，返回 true / false
 async function checkHasLogined() {
-  // ===== 云开发模式 =====
   // 云函数自动携带 OPENID，用户身份天然存在，无需 token 与 checkSession。
   // 这里只需确认云函数可通（能读到自己的用户资料）。
-  if (isCloudMode()) {
-    const res = await API.userDetail('')
-    if (res && res.code === 0) {
-      return true
-    }
-    // 云函数不通时不阻断流程，交给调用方决定
-    return false
+  const res = await API.userDetail('')
+  if (res && res.code === 0) {
+    return true
   }
-
-  // ===== 原 api工厂 模式 =====
-  const token = wx.getStorageSync('token')
-  if (!token) {
-    return false
-  }
-  const loggined = await checkSession()
-  if (!loggined) {
-    wx.removeStorageSync('token')
-    return false
-  }
-  // https://www.yuque.com/apifm/nu0f75/mp9f59
-  const checkTokenRes = await WXAPI.checkToken(token)
-  if (checkTokenRes.code != 0) {
-    wx.removeStorageSync('token')
-    return false
-  }
-  return true
+  // 云函数不通时不阻断流程，交给调用方决定
+  return false
 }
 
 async function wxaCode(){
@@ -83,163 +57,46 @@ async function wxaCode(){
 }
 
 async function login(page){
-  // ===== 云开发模式 =====
   // 云开发不需要登录换 token：OPENID 由云函数自动提供。
   // 这里只调一次 getUser 确认云函数可通，并在 user 集合中建立用户记录。
-  if (isCloudMode()) {
-    try {
-      const res = await API.userDetail('')
-      if (res && res.code === 0) {
-        // 缓存 openid 便于本地判断"已登录"
-        wx.setStorageSync('uid', res.data.base.id)
-        if (page) {
-          page.onShow()
-        }
-      } else {
-        wx.showModal({
-          title: '云函数调用失败',
-          content: (res && res.msg) || '请确认已部署 cloudfunctions/api 并开通云开发',
-          showCancel: false
-        })
+  try {
+    const res = await API.userDetail('')
+    if (res && res.code === 0) {
+      // 缓存 openid 便于本地判断"已登录"
+      wx.setStorageSync('uid', res.data.base.id)
+      if (page) {
+        page.onShow()
       }
-    } catch (e) {
-      console.error('[auth] 云开发登录异常', e)
+    } else {
+      wx.showModal({
+        title: '云函数调用失败',
+        content: (res && res.msg) || '请确认已部署 cloudfunctions/api 并开通云开发',
+        showCancel: false
+      })
     }
-    return
+  } catch (e) {
+    console.error('[auth] 云开发登录异常', e)
   }
-
-  // ===== 原 api工厂 模式 =====
-  const _this = this
-  wx.login({
-    success: function (res) {
-      const componentAppid = wx.getStorageSync('componentAppid')
-      if (componentAppid) {
-        WXAPI.wxappServiceLogin({
-          componentAppid,
-          appid: wx.getStorageSync('appid'),
-          code: res.code
-        }).then(function (res) {        
-          if (res.code == 10000) {
-            // 去注册
-            return;
-          }
-          if (res.code != 0) {
-            // 登录错误
-            wx.showModal({
-              title: '无法登录',
-              content: res.msg,
-              showCancel: false
-            })
-            return;
-          }
-          wx.setStorageSync('token', res.data.token)
-          wx.setStorageSync('uid', res.data.uid)
-          if ( page ) {
-            page.onShow()
-          }
-        })
-      } else {
-        // https://www.yuque.com/apifm/nu0f75/qt5o3d
-        WXAPI.login_wx(res.code).then(function (res) {        
-          if (res.code == 10000) {
-            // 去注册
-            return;
-          }
-          if (res.code != 0) {
-            // 登录错误
-            wx.showModal({
-              title: '无法登录',
-              content: res.msg,
-              showCancel: false
-            })
-            return;
-          }
-          wx.setStorageSync('token', res.data.token)
-          wx.setStorageSync('uid', res.data.uid)
-          if ( page ) {
-            page.onShow()
-          }
-        })
-      }
-    }
-  })
 }
 
 async function authorize() {
-  // ===== 云开发模式 =====
   // 原实现是 code 换 token 的注册流程；云开发下没有这一步。
   // 保留同样的返回结构（{ code: 0, data: {...} }），使调用方无需改动。
-  if (isCloudMode()) {
-    const res = await API.userDetail('')
-    if (res && res.code === 0) {
-      wx.setStorageSync('uid', res.data.base.id)
-      return { code: 0, data: res.data }
-    }
-    wx.showToast({
-      title: (res && res.msg) || '云函数调用失败',
-      icon: 'none'
-    })
-    throw new Error((res && res.msg) || 'cloud login failed')
+  const res = await API.userDetail('')
+  if (res && res.code === 0) {
+    wx.setStorageSync('uid', res.data.base.id)
+    return { code: 0, data: res.data }
   }
-
-  // ===== 原 api工厂 模式 =====
-  // const code = await wxaCode()
-  // const resLogin = await WXAPI.login_wx(code)
-  // if (resLogin.code == 0) {
-  //   wx.setStorageSync('token', resLogin.data.token)
-  //   wx.setStorageSync('uid', resLogin.data.uid)
-  //   return resLogin
-  // }
-  return new Promise((resolve, reject) => {
-    wx.login({
-      success: function (res) {
-        const code = res.code
-        // 2026-09-26 阶段二：已移除推荐人（referrer）读取与传参，分销功能整体删除。
-        // 下面开始调用注册接口
-        const componentAppid = wx.getStorageSync('componentAppid')
-        if (componentAppid) {
-          WXAPI.wxappServiceAuthorize({
-            code: code
-          }).then(function (res) {
-            if (res.code == 0) {
-              wx.setStorageSync('token', res.data.token)
-              wx.setStorageSync('uid', res.data.uid)
-              resolve(res)
-            } else {
-              wx.showToast({
-                title: res.msg,
-                icon: 'none'
-              })
-              reject(res.msg)
-            }
-          })
-        } else {
-          // https://www.yuque.com/apifm/nu0f75/tyisgg
-          WXAPI.authorize({
-            code: code
-          }).then(function (res) {
-            if (res.code == 0) {
-              wx.setStorageSync('token', res.data.token)
-              wx.setStorageSync('uid', res.data.uid)
-              resolve(res)
-            } else {
-              wx.showToast({
-                title: res.msg,
-                icon: 'none'
-              })
-              reject(res.msg)
-            }
-          })
-        }
-      },
-      fail: err => {
-        reject(err)
-      }
-    })
+  wx.showToast({
+    title: (res && res.msg) || '云函数调用失败',
+    icon: 'none'
   })
+  throw new Error((res && res.msg) || 'cloud login failed')
 }
 
 function loginOut(){
+  // token 是 api 工厂时代的遗留键，云开发下不再写入；这里一并清掉，
+  // 避免老版本升级上来的机器里残留旧 token 造成误解。
   wx.removeStorageSync('token')
   wx.removeStorageSync('uid')
 }

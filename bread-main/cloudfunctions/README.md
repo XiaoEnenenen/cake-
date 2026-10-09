@@ -97,15 +97,19 @@ const API = require('../../utils/api-map')   // 原来：const WXAPI = require('
 const res = await API.goodsv2({ categoryId: cid })   // 原来：WXAPI.goodsv2(...)
 ```
 
-`api-map` 内部按 `utils/data-source.js` 的 `useCloud` 决定走哪条通道：
+`api-map` 是**唯一的数据出口**：所有调用都打到云函数 `api`（`utils/data-source.js` 里
+只有 `useCloud` 一个开关，且没有第二个数据源可切）。
 
-- `useCloud: true`（**当前生效值**）→ 调云函数 `api`
-- `useCloud: false` → 透传给原 api工厂 SDK（**备用通道**，`utils/services/legacy-apifm.js`，代码全部保留不删）
+**登录的差异**：
+- 身份由 `cloud.getWXContext().OPENID` 自动提供，**没有 token**，
+  `utils/auth.js` 里 `isCloudMode()` 直接读 `utils/data-source.js` 的 `useCloud`（单一判据）
+- 原 api工厂 的 `code` 换 `token` 流程已在阶段三整体删除
 
-**登录的差异**（重要）：
-- 云开发：身份由 `cloud.getWXContext().OPENID` 自动提供，**没有 token**，
-  `utils/auth.js` 里已按 `isCloudMode()` 分支处理
-- 原 api工厂：`code` 换 `token`，token 存 storage，会过期
+> **2026-10-09 阶段三更正**：此前这里写「`useCloud: false` → 透传给原 api工厂 SDK（备用通道）」。
+> 该通道已删除（审计 A-P0-01 / A-P1-01 / A-P1-02）：`utils/services/legacy-apifm.js` 与
+> `bread-main/config.js`（原面包店账号）已归档到 `.trash-cleanup\20261009-1815\`，
+> `apifm-wxapi` 依赖也已从 `package.json` 移除。云函数不可用时页面直接提示
+> 「云函数调用失败：…」，不会静默换源。
 
 > **2026-02-14 更正**：本文档此前写「已接线的文件（14 个）：11 个页面 + `utils/auth.js` + `utils/tools.js` + `app.js`」。
 > 经核对，`utils/tools.js` **已不存在**（全项目无该文件），实际接线为 13 个页面 + `utils/auth.js` + `app.js`。
@@ -147,15 +151,22 @@ const res = await API.goodsv2({ categoryId: cid })   // 原来：WXAPI.goodsv2(.
 
 6. 导入分类：用 `cloud-data/categories.jsonl`（见该目录的 README）
 7. 手动录入商品（结构见 `cloud-data/02-schema-goods.js`）
-8. 打开前端切换开关：`utils/data-source.js` 里把 `useCloud` 改为 `true`
+8. 确认 `utils/data-source.js` 的 `cloudEnvId` 与本步骤 2 记下的环境 ID 一致
+   （阶段三起数据源只有云开发一条，**没有开关需要打开**；`useCloud` 保持 `true` 即可）
 9. 在微信开发者工具「云开发 → 设置」里，确认云函数已能调用
 
 ---
 
-## 切回原后端
+## 数据源只有一条（2026-10-09 阶段三）
 
-如果切换后出问题，把 `utils/data-source.js` 的 `useCloud` 改回 `false` 即可，
-小程序会回到原来的 api工厂 通道（数据是原店的，但能跑）。
+云函数是**唯一**数据源，没有「切回原后端」这回事：
+
+- 云函数没部署 / 环境 ID 不对 / 网络不通 → 页面提示「**云函数调用失败：<原始 errMsg>**」，
+  按提示修云环境即可，**不会**把请求发给别处；
+- 云函数通了但业务出错 → 页面显示云函数返回的业务文案（如「数据库错误」），
+  按内容排查云库数据，与上一条是两回事；
+- 需要回滚这次改造 → 见 `.trash-cleanup\20261009-1815\ROLLBACK.md`
+  （一般直接用 `git revert` 更彻底，因为降级逻辑不只在这两个文件里）。
 
 ---
 

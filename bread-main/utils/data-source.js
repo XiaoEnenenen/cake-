@@ -1,42 +1,37 @@
 /**
- * 数据层开关（唯一事实来源）
+ * 数据源配置（唯一事实来源）
  * ---------------------------------------------------------------------------
- * 2026-09-26 阶段一改造：数据源三态化，并引入降级回退。
+ * 2026-10-09 阶段三改造：数据源收敛为**单一通道** —— 微信云开发（cloudfunctions/api）。
  *
- * 三个数据源与优先级：
- *   1. Mock     —— 本地内存假数据（utils/mock-backend.js）
- *                   用途：不依赖 AppID / 云函数 / 网络，方便先跑通测试
- *                   开关：useMock = true
- *   2. 云开发   —— 自建云函数（cloudfunctions/api），★ 主路线
- *                   开关：useCloud = true
- *   3. api 工厂 —— 原 apifm-wxapi SaaS（config.js 指向原面包店账号）
- *                   开关：useMock = false 且 useCloud = false
- *                   定位：legacy 备用通道，代码全部保留（utils/services/legacy-apifm.js），
- *                         仅在 1、2 都不可用时作为回退。
+ * 阶段一遗留的另外两条通道已彻底删除：
+ *   1. Mock（utils/mock-backend.js）
+ *      从未实现过（mock-backend.js 早已归档），只留下一个永远返回 501 的占位。
+ *   2. api 工厂（apifm-wxapi SaaS，config.js 指向**原面包店**的 api 工厂账号）
+ *      连同「云函数失败自动降级」一起移除（config.js 已随本次改造归档）。
+ *      删除理由（见 audit/A-启动与数据层.md）：
+ *        A-P0-01  降级通道在云模式下从未 init，请求打到 api.it120.cc/-/ 拿不到数据；
+ *                 而一旦有人补上 WXAPI.init(config.subDomain)，orderCreate / cartAdd
+ *                 就会把**顾客订单与购物车写进原面包店账号**——串号风险。
+ *        A-P1-01  降级后 __dataSource() 不再是 'cloud'，isCloudMode() 永久失效，
+ *                 鉴权改读从不存在的 storage.token → 用户看到「无法登录」。
+ *        A-P1-02  云函数把业务异常也返回 500，降级判定把「一次数据库报错」
+ *                 当成「环境不可用」，于是**静默换源**。
  *
- * ⚠️ useMock 与 useCloud 同时为 true 时，Mock 优先。
+ * 现在只有一条路：
+ *   pages / components → utils/api-map.js → wx.cloud.callFunction('api') → cloudfunctions/api
  *
- * ===== 云函数失败自动降级 =====
- *   fallbackToLegacy = true 时：云函数调用失败（未部署 / 未开通云开发 / 网络异常）
- *   会**自动降级**到 api 工厂通道，只降级一次并弹窗提示，避免"云函数没部署导致全站无数据"。
- *
- *   这样做的前提：legacy 通道与云函数通道的**接口名、参数、返回结构**保持一致
- *   （utils/api-map.js 就是这么设计的）。
- *
- *   降级到 api 工厂意味着**数据来自原面包店账号**，仅用于"让项目能跑起来"，
- *   不能作为上线数据。想彻底关掉降级：把 fallbackToLegacy 改为 false。
+ * 云函数不可用（未部署 / 未开通云开发 / 网络异常）时，页面拿到的是
+ * { code: 500, msg: '云函数调用失败' } 这类明确错误，**不再有任何备用数据源**，
+ * 也不会把顾客数据写到别处。排查方向只有一个：云环境与 cloudfunctions/api 的部署状态。
  * ---------------------------------------------------------------------------
  */
 module.exports = {
-  // ===== 数据源三态开关 =====
-  // true = 用本地 Mock 内存数据（当前阶段为 false，Mock 层将在后续阶段补齐）
-  useMock: false,
-
-  // true = 用自建微信云开发云函数（★ 主路线，阶段一起默认）
+  // ===== 数据源（唯一开关）=====
+  // 全项目只有「微信云开发」一个数据源，本开关保留为**显式声明**，不再是三态选择器：
+  //   - utils/api-map.js 用它决定是否执行 wx.cloud.init，并在被误设为 false 时明确报错；
+  //   - utils/auth.js 的 isCloudMode() 用它作为唯一判据（不再依赖 __dataSource() 字符串）。
+  // ⚠️ 不存在「第二个数据源」：改成 false 只会得到「数据源未启用」的报错，不会切到别的通道。
   useCloud: true,
-
-  // 云函数调用失败时是否自动降级到 api 工厂通道（仅一次，且会弹窗提示）
-  fallbackToLegacy: true,
 
   // ===== 云函数配置 =====
   // 云函数名（部署时保持一致，见 cloudfunctions/api）
@@ -56,7 +51,7 @@ module.exports = {
   //   AppID   : wx5b0e027deafefc01
   //   环境 ID : cloud1-d7g2txuxpf22bb979
   //
-  // ⚠️ 换企业 AppID 时，这里必须改成企业环境 ID，并同步改 project.config.json 的 appid。
+  // ⚠️ 换企业 AppID 时（阶段 6），这里必须改成企业环境 ID，并同步改 project.config.json 的 appid。
   //    留空 '' 时的行为 = 使用开发者工具当前选中的默认环境（多环境下不推荐）。
   cloudEnvId: 'cloud1-d7g2txuxpf22bb979',
 

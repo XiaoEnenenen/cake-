@@ -3,7 +3,7 @@
   "description": "商品分类集合。字段按小程序页面实际读取的字段设计，无冗余。",
   "source": "根据 pages/orders/index.wxml、pages/orders/index.js 的实际用法反推",
   "usage": {
-    "读取接口": "原 WXAPI.goodsCategoryV2() → 将改为云函数或 db.collection('category').orderBy('sort','asc').get()",
+    "读取接口": "原接口 goodsCategoryV2()（api 工厂时代）→ 现为云函数 action categoryList（db.collection('category').orderBy('sort','asc').get()）",
     "页面位置": "pages/orders/index.wxml 左侧分类栏 wx:for=\"{{ goodsCategory }}\"",
     "筛选逻辑": "pages/orders/index.js 的 onCategoryClick 用分类 id 调 goodsv2({ categoryId }) 过滤商品"
   },
