@@ -19,6 +19,10 @@ import Dialog from '@vant/weapp/dialog/dialog'
 /**
  * 当前是否运行在云开发模式。
  * 单一数据源：唯一判据是 utils/data-source.js 的 useCloud（不再解析 __dataSource() 字符串）。
+ *
+ * 说明：阶段三之后本文件内部已不再需要对模式做分支（只剩云开发一条路径），
+ * 该函数保留并导出，作为「模式判据」的单一出处，供页面/测试复用，
+ * 避免再出现"每个调用点各自判断模式"的情况（审计 A-P1-01 的根因）。
  */
 function isCloudMode() {
   return !!DS.useCloud
@@ -68,9 +72,13 @@ async function login(page){
         page.onShow()
       }
     } else {
+      const msg = (res && res.msg) || '请确认已部署 cloudfunctions/api 并开通云开发'
+      // 标题按失败类型区分：传输层/环境问题才叫「云函数调用失败」；
+      // 云函数通了但业务报错（如「数据库错误」）不应被误标成环境问题。
+      const isTransportFail = /云函数调用失败|不支持云开发|数据源未启用/.test(msg)
       wx.showModal({
-        title: '云函数调用失败',
-        content: (res && res.msg) || '请确认已部署 cloudfunctions/api 并开通云开发',
+        title: isTransportFail ? '云函数调用失败' : '获取用户信息失败',
+        content: msg,
         showCancel: false
       })
     }
@@ -153,5 +161,6 @@ module.exports = {
   login: login,
   loginOut: loginOut,
   checkAndAuthorize: checkAndAuthorize,
-  authorize: authorize
+  authorize: authorize,
+  isCloudMode: isCloudMode
 }

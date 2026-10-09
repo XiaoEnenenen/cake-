@@ -1,4 +1,5 @@
-// 2026-09-26 阶段一：数据来源改走统一数据层（云函数优先，api工厂仅作降级备用）
+// 2026-09-26 阶段一：数据来源改走统一数据层。
+// 2026-10-09 阶段三：统一数据层只有云开发一条通道（api 工厂降级通道已删除）。
 const API = require('../../utils/api-map')
 const AUTH = require('../../utils/auth')
 const app = getApp()

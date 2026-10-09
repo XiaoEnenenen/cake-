@@ -170,6 +170,16 @@ check('wx.cloud.init 开启 traceUser', initCalls.length === 1 && initCalls[0].t
   check('无 wx 环境 → 提示不支持云开发', r.code === 500 && /不支持云开发/.test(r.msg || ''), r)
   global.wx = savedWx
 
+  // ---- callFunction 同步抛异常：也必须 resolve，否则页面永远转圈 ----
+  const savedCallFunction = global.wx.cloud.callFunction
+  const savedConsoleError = console.error
+  console.error = () => {} // 这一条会故意打印异常，测试输出里屏蔽掉
+  global.wx.cloud.callFunction = () => { throw new Error('sync boom') }
+  r = await API.orderList({ statusBatch: 0 })
+  check('callFunction 同步抛异常时仍返回明确错误', r.code === 500 && /云函数调用失败/.test(r.msg || ''), r)
+  global.wx.cloud.callFunction = savedCallFunction
+  console.error = savedConsoleError
+
   // =========================================================================
   console.log('\n=== 4) 源码检索：运行时代码里不再有 api 工厂 / Mock / 降级 ===')
   // =========================================================================
@@ -199,11 +209,14 @@ check('wx.cloud.init 开启 traceUser', initCalls.length === 1 && initCalls[0].t
   const jsFiles = allFiles.filter((f) => f.endsWith('.js'))
   check('扫描到工程源码（数量合理）', jsFiles.length > 30, jsFiles.length)
 
-  const violations = []
+  const runtimeViolations = []
+  const fallbackViolations = []
   const runtimePatterns = [
     [/require\(\s*['"]apifm-wxapi['"]\s*\)/, 'require(apifm-wxapi)'],
     [/\bWXAPI\./, 'WXAPI.* 调用'],
-    [/legacy-apifm/, 'legacy-apifm 引用'],
+    [/legacy-apifm/, 'legacy-apifm 引用']
+  ]
+  const fallbackPatterns = [
     [/useMock/, 'useMock 开关'],
     [/fallbackToLegacy/, 'fallbackToLegacy 开关'],
     [/withFallback|notifyDegrade|callMock|pickCloudOnly/, '降级/Mock 通道函数']
@@ -211,11 +224,14 @@ check('wx.cloud.init 开启 traceUser', initCalls.length === 1 && initCalls[0].t
   for (const file of jsFiles) {
     const code = stripComments(fs.readFileSync(file, 'utf8'))
     for (const [re, label] of runtimePatterns) {
-      if (re.test(code)) violations.push(path.relative(ROOT, file) + ' → ' + label)
+      if (re.test(code)) runtimeViolations.push(path.relative(ROOT, file) + ' → ' + label)
+    }
+    for (const [re, label] of fallbackPatterns) {
+      if (re.test(code)) fallbackViolations.push(path.relative(ROOT, file) + ' → ' + label)
     }
   }
-  check('没有文件 require apifm-wxapi / 调用 WXAPI.*', violations.length === 0, violations)
-  check('没有文件残留 useMock / fallbackToLegacy / 降级函数', violations.length === 0, violations)
+  check('没有文件 require apifm-wxapi / 调用 WXAPI.*', runtimeViolations.length === 0, runtimeViolations)
+  check('没有文件残留 useMock / fallbackToLegacy / 降级函数', fallbackViolations.length === 0, fallbackViolations)
 
   const configRequires = jsFiles.filter((f) => /require\(\s*['"]config['"]\s*\)/.test(stripComments(fs.readFileSync(f, 'utf8'))))
   check('没有文件 require 已归档的 config.js', configRequires.length === 0, configRequires.map((f) => path.relative(ROOT, f)))
@@ -247,6 +263,7 @@ check('wx.cloud.init 开启 traceUser', initCalls.length === 1 && initCalls[0].t
   // =========================================================================
   const authSrc = fs.readFileSync(path.join(ROOT, 'utils', 'auth.js'), 'utf8')
   check('auth.js 直接读 DS.useCloud 作为判据（修 A-P1-01）', /DS\.useCloud/.test(authSrc))
+  check('auth.js 导出 isCloudMode（模式判据的单一出处）', /isCloudMode:\s*isCloudMode/.test(authSrc))
   check('auth.js 不再用 __dataSource() 字符串判断', !/__dataSource\s*\(/.test(stripComments(authSrc)))
   check('auth.js 不含 apifm require', !/apifm-wxapi/.test(stripComments(authSrc)))
   check('auth.js 不再有 checkToken 分支', !/checkToken/.test(stripComments(authSrc)))

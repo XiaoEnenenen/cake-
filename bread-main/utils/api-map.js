@@ -48,23 +48,30 @@ function callCloud(action, payload) {
       return
     }
     if (DS.debug) console.log('[api-map] cloud →', action, payload)
-    wx.cloud.callFunction({
-      name: DS.cloudFunctionName,
-      data: { action, payload: payload || {} },
-      success(res) {
-        if (DS.debug) console.log('[api-map] cloud ←', action, res.result)
-        // 云函数抛错时 res.result 可能为空
-        resolve(res.result || { code: 500, msg: '云函数无返回' })
-      },
-      fail(err) {
-        if (DS.debug) console.error('[api-map] cloud ✗', action, err)
-        // 失败即失败：不再尝试任何备用数据源（阶段三之前这里会静默降级到 api 工厂）。
-        // 文案以「云函数调用失败」开头——页面会直接把这句话提示给用户，
-        // 冒号后保留原始 errMsg（形如 cloud.callFunction:fail ...）便于排查云环境/部署问题。
-        const detail = err && err.errMsg
-        resolve({ code: 500, msg: detail ? '云函数调用失败：' + detail : '云函数调用失败' })
-      }
-    })
+    try {
+      wx.cloud.callFunction({
+        name: DS.cloudFunctionName,
+        data: { action, payload: payload || {} },
+        success(res) {
+          if (DS.debug) console.log('[api-map] cloud ←', action, res.result)
+          // 云函数抛错时 res.result 可能为空
+          resolve(res.result || { code: 500, msg: '云函数无返回' })
+        },
+        fail(err) {
+          if (DS.debug) console.error('[api-map] cloud ✗', action, err)
+          // 失败即失败：不再尝试任何备用数据源（阶段三之前这里会静默降级到 api 工厂）。
+          // 文案以「云函数调用失败」开头——页面会直接把这句话提示给用户，
+          // 冒号后保留原始 errMsg（形如 cloud.callFunction:fail ...）便于排查云环境/部署问题。
+          const detail = err && err.errMsg
+          resolve({ code: 500, msg: detail ? '云函数调用失败：' + detail : '云函数调用失败' })
+        }
+      })
+    } catch (e) {
+      // callFunction 同步抛异常（少见，例如容器被回收）也必须 resolve，
+      // 否则调用方的 await 永远不返回——没有降级兜底后就只剩"一直转圈"。
+      console.error('[api-map] cloud 调用同步异常', action, e)
+      resolve({ code: 500, msg: '云函数调用失败：' + ((e && e.message) || e) })
+    }
   })
 }
 
@@ -244,13 +251,14 @@ const API = {
   init,
 
   // ---------- 当前数据源信息（调试用）----------
-  // 单一数据源：只有云开发，永远返回 'cloud'
-  // （阶段三之前这里会返回 'mock' / 'apifm' / 'cloud(degraded→apifm)'，
-  //   并因此让 utils/auth.js 的 isCloudMode() 在降级后永久失效，见审计 A-P1-01）
+  // 单一数据源：只有云开发，永远返回 'cloud'。
+  // 注意语义：这里描述的是**项目配置的数据源**（只有一个），
+  // 与下面「云通道是否启用」是两件事（useCloud 被误设为 false 时二者会不同，
+  // 此时 callCloud 会明确返回「数据源未启用」，不会静默换源）。
   __dataSource: () => 'cloud',
 
-  // ---------- 当前是否运行在云开发模式 ----------
-  // 与 utils/data-source.js 的 useCloud 同源，是唯一判据（不再解析字符串）
+  // ---------- 当前云通道是否启用（utils/auth.js / 页面判断用）----------
+  // 与 utils/data-source.js 的 useCloud 同源，是唯一判据（不再解析 __dataSource() 字符串）
   __isCloudMode: () => !!DS.useCloud
 }
 

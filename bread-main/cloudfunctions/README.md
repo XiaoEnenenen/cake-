@@ -165,8 +165,10 @@ const res = await API.goodsv2({ categoryId: cid })   // 原来：WXAPI.goodsv2(.
   按提示修云环境即可，**不会**把请求发给别处；
 - 云函数通了但业务出错 → 页面显示云函数返回的业务文案（如「数据库错误」），
   按内容排查云库数据，与上一条是两回事；
-- 需要回滚这次改造 → 见 `.trash-cleanup\20261009-1815\ROLLBACK.md`
-  （一般直接用 `git revert` 更彻底，因为降级逻辑不只在这两个文件里）。
+- 需要回滚这次改造 → 优先用 `git revert aa70a73`（阶段三提交，含全部改动）。
+  本机另留有归档副本 `.trash-cleanup\20261009-1815\`（**该目录不入版本控制**，新 clone 没有）；
+  被删的两个文件也可从历史取回：
+  `git checkout 307a5a1 -- bread-main/config.js bread-main/utils/services/legacy-apifm.js`。
 
 ---
 

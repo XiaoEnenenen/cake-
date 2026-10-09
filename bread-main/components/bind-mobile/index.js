@@ -1,4 +1,5 @@
-// 2026-09-26 阶段一：数据来源改走统一数据层（云函数优先，api工厂仅作降级备用）
+// 2026-09-26 阶段一：数据来源改走统一数据层。
+// 2026-10-09 阶段三：统一数据层只有云开发一条通道（api 工厂降级通道已删除）。
 const API = require('../../utils/api-map')
 Component({
   options: {
@@ -59,9 +60,8 @@ Component({
     },
     async _getPhoneNumber(e) {
       // 2026-09-26 阶段一：改走统一数据层 API.bindMobile。
-      // 通道由 utils/data-source.js 决定：
-      //   云开发 → 云函数 action bindMobile（当前明确返回"未接入"，需小程序后台开通手机号快速验证）
-      //   legacy → 原 api 工厂 bindMobileWxappV2（行为与改造前一致）
+      // 2026-10-09 阶段三：只有云开发一条通道，云函数 action bindMobile
+      // 当前明确返回"未接入"（需小程序后台开通手机号快速验证，见阶段 4.4）。
       const res = await API.bindMobile({
         token: wx.getStorageSync('token'),
         code: e.detail.code,
