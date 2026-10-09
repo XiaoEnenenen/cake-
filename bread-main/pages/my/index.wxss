@@ -1,0 +1,255 @@
+/* ===== 「我的」页面样式 =====
+   改造说明：原样式围绕「会员卡 + 积分」设计（含绝对定位的白卡、82rpx 左缩进等），
+   现按新版结构重写为分区卡片式布局。配色沿用全站白黄令牌（见 app.wxss）。
+*/
+
+page {
+  background-color: #f5f5f5;
+}
+
+/* ===== 顶部黄色装饰带 ===== */
+.mycard {
+  height: 160rpx;
+  width: 100vw;
+  background-color: #ffd100;
+}
+
+/* ===== 1. 用户信息卡 ===== */
+.card-bar {
+  position: relative;
+  margin: -110rpx 30rpx 0;
+  padding: 30rpx;
+  background-color: #ffffff;
+  border-radius: 20rpx;
+  box-shadow: 0 8rpx 24rpx 0 rgba(0, 0, 0, 0.06);
+}
+
+.user-row {
+  display: flex;
+  align-items: center;
+}
+
+.user-avatar {
+  width: 110rpx;
+  height: 110rpx;
+  border-radius: 50%;
+  background-color: #f5f5f5;
+  flex-shrink: 0;
+}
+
+.user-avatar-empty {
+  border: 2rpx dashed #d0d0d0;
+}
+
+.user-meta {
+  flex: 1;
+  margin-left: 24rpx;
+  min-width: 0;
+}
+
+.user-nick {
+  font-size: 36rpx;
+  font-weight: 600;
+  color: #1f1f1f;
+  line-height: 48rpx;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-id {
+  margin-top: 8rpx;
+  font-size: 24rpx;
+  color: #8a8a8a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 未登录时覆盖整卡的透明按钮（复用原有做法） */
+.user-login-mask {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  z-index: 9;
+}
+
+/* 扫码核销入口 */
+.scan-entry {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 26rpx;
+  padding-top: 24rpx;
+  border-top: 1rpx solid #f2f3f5;
+}
+
+.scan-icon {
+  width: 36rpx;
+  height: 36rpx;
+}
+
+.scan-text {
+  margin-left: 12rpx;
+  font-size: 28rpx;
+  color: #3c3c3c;
+}
+
+/* ===== 通用分区 ===== */
+.section {
+  margin: 24rpx 30rpx;
+  background-color: #ffffff;
+  border-radius: 20rpx;
+  overflow: hidden;
+}
+
+.section-head {
+  padding: 26rpx 30rpx 0;
+}
+
+.section-title {
+  font-size: 30rpx;
+  font-weight: 600;
+  color: #1f1f1f;
+}
+
+/* ===== 2. 订单入口 ===== */
+.order-entries {
+  display: flex;
+  align-items: center;
+  padding: 24rpx 0 30rpx;
+}
+
+.order-entry {
+  flex: 1;
+  text-align: center;
+}
+
+.order-entry-label {
+  font-size: 26rpx;
+  color: #3c3c3c;
+}
+
+/* ===== 3. 列表项 ===== */
+.list-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 28rpx 30rpx;
+  box-sizing: border-box;
+  border-bottom: 1rpx solid #f2f3f5;
+  background-color: #ffffff;
+  text-align: left;
+  line-height: normal;
+}
+
+.list-item:last-child {
+  border-bottom: none;
+}
+
+/* button 作为列表项时需要清除默认样式 */
+.list-item-btn {
+  border-radius: 0;
+  font-weight: normal;
+}
+
+.list-item-btn::after {
+  border: none;
+}
+
+.list-icon {
+  width: 44rpx;
+  height: 44rpx;
+  flex-shrink: 0;
+}
+
+.list-body {
+  flex: 1;
+  margin-left: 24rpx;
+  min-width: 0;
+}
+
+.list-title {
+  font-size: 30rpx;
+  color: #1f1f1f;
+}
+
+.list-sub {
+  margin-top: 6rpx;
+  font-size: 24rpx;
+  color: #8a8a8a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.list-sub-empty {
+  color: #b3b3b3;
+}
+
+.list-arrow {
+  width: 20rpx;
+  height: 20rpx;
+  border: solid #c0c0c0;
+  border-width: 0 3rpx 3rpx 0;
+  transform: rotate(-45deg);
+  flex-shrink: 0;
+  margin-left: 16rpx;
+}
+
+/* ===== 4. 门店信息 ===== */
+.store-block {
+  padding: 24rpx 30rpx 30rpx;
+}
+
+.store-name {
+  font-size: 32rpx;
+  font-weight: 600;
+  color: #1f1f1f;
+  margin-bottom: 16rpx;
+}
+
+.store-row {
+  display: flex;
+  align-items: flex-start;
+  margin-top: 16rpx;
+}
+
+.store-label {
+  width: 130rpx;
+  flex-shrink: 0;
+  font-size: 26rpx;
+  color: #8a8a8a;
+}
+
+.store-value {
+  flex: 1;
+  font-size: 26rpx;
+  color: #3c3c3c;
+  line-height: 38rpx;
+}
+
+.store-nav-btn {
+  margin-top: 30rpx;
+  height: 80rpx;
+  line-height: 80rpx;
+  text-align: center;
+  font-size: 30rpx;
+  font-weight: 600;
+  color: #1f1f1f;
+  background-color: #ffd100;
+  border-radius: 40rpx;
+}
+
+.store-nav-btn.disabled {
+  background-color: #ebebeb;
+  color: #b3b3b3;
+}
+
+/* ===== 底部留白（给自定义 tabbar 让位）===== */
+.bottom {
+  height: 180rpx;
+}

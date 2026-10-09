@@ -1,0 +1,342 @@
+page{
+  position: relative;
+}
+.notice-bar{
+  height: 70rpx !important;
+  padding: 0 !important;
+  background-color: #f5f5f5;
+}
+.notice-bar .van-notice-bar__content {
+  
+  font-size: 28rpx;
+  color: #3c3c3c;
+}
+
+/* ===== 改造新增：配送方式切换（自提 / 外送）=====
+   简化版外送：仅切换选择，不含地址簿与运费。
+   样式对齐点单页的品牌黄选中态。
+*/
+.mode-bar {
+  display: flex;
+  align-items: center;
+  padding: 20rpx 40rpx 0;
+  background-color: #ffffff;
+}
+
+.mode-tab {
+  position: relative;
+  font-size: 32rpx;
+  color: #8a8a8a;
+  padding: 0 24rpx 14rpx;
+}
+
+.mode-tab:first-child {
+  padding-left: 0;
+}
+
+.mode-tab.active {
+  font-weight: 600;
+  color: #1f1f1f;
+}
+
+.mode-tab.active::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  transform: translateX(-50%);
+  width: 40rpx;
+  height: 6rpx;
+  border-radius: 3rpx;
+  background-color: #ffd100;
+}
+
+.mode-tab:first-child.active::after {
+  left: 0;
+  transform: none;
+}
+.shops-bar{
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding:20rpx 40rpx ;
+}
+ .shops-box{
+  display: flex;
+  flex-direction: column;
+}
+
+ .shops-box .content{
+  display: flex;
+  margin-bottom:10rpx ;
+
+}
+ .shops-box .content .titles{
+  font-size: 30rpx;
+  color: #3c3c3c;
+  margin-right: 10rpx;
+}
+ .shops-box .content .arrrow{
+  width: 32rpx;
+  height: 32rpx;
+  background-color: #4a4a4a;
+}
+ .shops-box .text{
+  
+  font-size: 26rpx;
+  color: #8a8a8a;
+}
+/* 自取标签：黑底 → 品牌黄底深字（原黑底 #1f1f1f 与白黄主题冲突） */
+ .get{
+  width: 92rpx;
+  height: 56rpx;
+  border-radius: 12rpx;
+  background-color: #ffd100;
+  
+  font-size: 26rpx;
+  font-weight: 600;
+  color: #1f1f1f;
+  text-align: center;
+  line-height: 56rpx;
+}
+.get1-box {
+  width: 144rpx;
+  height: 56rpx;
+  position: relative;
+}
+.get1{
+  width: 100%;
+  height: 100%;
+  border-radius: 12px;
+  border: solid 1px #ff2d2d;
+  background-color: #fff7d6;
+  
+  font-size: 26rpx;
+  color: #ff2d2d;
+  text-align: center;
+  line-height: 56rpx;
+}
+.get1-box button {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: 100%;
+  opacity: 0;
+  z-index: 99;
+}
+
+.blank1{
+  height: 10rpx;
+  background-color: #f5f5f5;
+}
+
+.orderdetails-bar{
+  margin-top: 10rpx;
+  padding:16rpx 40rpx ;
+  display: flex;
+}
+.orderdetails-bar .photos{
+  width: 160rpx;
+  height:160rpx;
+  border-radius: 10rpx;
+  background-color: #f5f5f5;flex-shrink: 0;
+}
+
+.orderdetails-bar .titles-bar{
+  margin-left:20rpx;
+  margin-top: 4rpx;
+  flex: 1;
+}
+
+.orderdetails-bar .titles-box1{
+display: flex;
+justify-content: space-between;
+
+}
+.orderdetails-bar .titles-box1 .titles{
+  font-size: 30rpx;
+  color: #3c3c3c;
+
+}
+
+.orderdetails-bar .titles-box1 .price{
+  display: flex;
+  align-items:flex-end;
+  background-color: #ffffff;
+  
+  font-size: 30rpx;
+  font-weight: 600;
+  color: #1f1f1f;
+  margin-left: ;
+}
+
+.orderdetails-bar .titles-box1 .price text{
+  width: 14rpx;
+  height: 32rpx;
+  font-size: 22rpx;
+  font-weight: 600;
+  margin-right: 6rpx;
+}
+.orderdetails-bar .titles-box2{
+  display: flex;
+  justify-content: space-between;
+  
+  font-size: 22rpx;
+  color: #8a8a8a;
+}
+.blank2{
+  width: 670rpx;
+  height: 2rpx;
+  background-color: #ebebeb;
+  margin-left:40rpx ;
+}
+
+.shops-bar1{
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding:20rpx 40rpx 26rpx 40rpx ;
+
+}
+.num-bar{
+  padding:0rpx 40rpx 42rpx 40rpx ;
+  display: flex;
+  justify-content: space-between;
+}
+.num-bar .num{
+  
+  font-size: 26rpx;
+  color: #8a8a8a;
+}
+.num-bar .price{
+  display: flex;
+  justify-content: space-between;
+  align-items:flex-end;
+  background-color: #ffffff;
+  
+  font-size: 30rpx;
+  font-weight: 600;
+  color: #ff4b33;
+}
+.num-bar .price text{
+  width: 14rpx;
+  height: 32rpx;
+  font-size: 22rpx;
+  font-weight: 600;
+  margin-right: 6rpx;
+}
+
+/* ===== 改造：收货地址与配送费相关样式 ===== */
+.addr-text {
+  max-width: 320rpx;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.addr-empty {
+  color: #ff2d2d;
+}
+
+.addr-detail-row {
+  padding: 0 40rpx 16rpx 40rpx;
+}
+
+.addr-detail-text {
+  font-size: 26rpx;
+  color: #8a8a8a;
+  line-height: 38rpx;
+}
+
+/* 超出配送范围警示 */
+.delivery-warn {
+  margin: 0 40rpx 16rpx;
+  padding: 16rpx 20rpx;
+  font-size: 26rpx;
+  color: #ff2d2d;
+  background-color: #fff7d6;
+  border-radius: 10rpx;
+}
+
+/* 距离/运费说明 */
+.delivery-tip {
+  margin: 0 40rpx 16rpx;
+  font-size: 24rpx;
+  color: #8a8a8a;
+  line-height: 36rpx;
+}
+
+/* 配送费行 */
+.num-bar-freight {
+  padding-top: 0;
+}
+
+.num-bar-freight .price-free {
+  color: #8a8a8a;
+  font-size: 26rpx;
+  font-weight: normal;
+}
+
+.pay-bar{
+  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
+  box-shadow: 0 -0.5px 0 0 rgba(0, 0, 0, 0.15);
+  background-color: #ffffff;
+  display: flex;
+  justify-content: space-between;
+  position: fixed;
+  bottom: 0rpx;
+  width: 750rpx;
+  height: 120rpx;
+}
+
+.pay-bar .pay-box{
+  display: flex;
+  flex-direction: column;
+  margin-left:40rpx ;
+  margin-top:20rpx;
+}
+
+
+.pay-bar .pay-box .title{
+  
+  font-size: 22rpx;
+
+  text-align: justify;
+  color: #3c3c3c;
+}
+
+.pay-bar .pay-box .price{
+  
+  font-size: 32rpx;
+  font-weight: 600;
+  color: #ff4b33;
+}
+
+.pay-bar .pay-box .price text{
+  width: 14rpx;
+  height: 32rpx;
+  font-size: 22rpx;
+  font-weight: 600;
+  margin-right: 6rpx;
+}
+
+/* 结算按钮：黄底必须配深色字，原白色字在黄底上不可读 */
+.pay-bar .pay-byn{
+  width: 376rpx;
+  height: 80rpx;
+  border-radius: 12rpx;
+  background-color: #ffd100;
+  margin-top: 20rpx;
+  margin-right: 40rpx;
+  
+  font-size: 32rpx;
+  font-weight: 600;
+  text-align: center;
+  line-height: 80rpx;
+  color: #1f1f1f;
+}
+.blank-bottom {
+  height: 140rpx;
+}

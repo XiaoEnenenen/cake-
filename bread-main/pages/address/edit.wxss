@@ -1,0 +1,9 @@
+@import "./common.wxss";
+
+/* 编辑页专属样式（通用部分见 common.wxss） */
+.edit-note {
+  margin: 20rpx 40rpx 0;
+  font-size: 22rpx;
+  color: #b3b3b3;
+  line-height: 32rpx;
+}

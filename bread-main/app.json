@@ -1,0 +1,40 @@
+{
+  "pages":[
+    "pages/index/index",
+    "pages/my/index",
+    "pages/orders/index",
+    "pages/select-time/index",
+    "pages/add-note/index",
+    "pages/pay/index",
+    "pages/goods-details/index",
+    "pages/current-order/index",
+    "pages/order-view/index",
+    "pages/order-view/scan-result",
+    "pages/about-us/index",
+    "pages/about-us/detail",
+    "pages/address/index",
+    "pages/address/edit"
+  ],
+  "requiredPrivateInfos": [],
+  "window":{
+    "backgroundTextStyle":"light",
+    "navigationBarBackgroundColor": "#fff",
+    "navigationBarTitleText": "",
+    "navigationBarTextStyle":"black"
+  },
+  "usingComponents": {
+    "parser":"/components/parser.20200414.min/parser",
+    "bind-mobile": "/components/bind-mobile/index",
+    "van-tabbar": "@vant/weapp/tabbar/index",
+    "van-tabbar-item": "@vant/weapp/tabbar-item/index",
+    "van-button": "@vant/weapp/button/index",
+    "van-icon": "@vant/weapp/icon/index",
+    "van-popup": "@vant/weapp/popup/index",
+    "van-stepper": "@vant/weapp/stepper/index",
+    "van-notice-bar": "@vant/weapp/notice-bar/index",
+    "van-dialog": "@vant/weapp/dialog/index",
+    "van-datetime-picker": "@vant/weapp/datetime-picker/index"
+  },
+  "permission": {},
+  "sitemapLocation": "sitemap.json"
+}

@@ -1,0 +1,134 @@
+<view class="order-status-bar">
+  <view class="order-status">
+    <view class="title">订单状态</view>
+    <view class="order-number">订单编号：{{ orderDetail.orderInfo.orderNumber }}</view>
+    <view class="order-time">下单时间：{{ orderDetail.orderInfo.dateAdd }}</view>
+  </view>
+  <view class="paid">{{ orderDetail.orderInfo.statusStr }}</view>
+</view>
+
+<view class="blank"></view>
+
+<view class="shops-bar">
+  <view class="shops-box">
+    <view class="content">
+      <view class="titles">{{ orderDetail.orderInfo.shopNameZt }}</view>
+    </view>
+  </view>
+  <!-- 改造：原写死「自取」，现按订单的「配送方式」显示；
+       历史订单无该字段时回退为「自提」。 -->
+  <view class="get">{{ orderDetail.extJson['配送方式'] || '自提' }}</view>
+</view>
+
+<!-- ===== 改造：显示本店位置（固定坐标 + 标记点）=====
+     说明：坐标来自 shop-config.js，不调用 wx.getLocation / 不申请定位权限 /
+           不依赖 api工厂。
+-->
+<view class="shops-bar">
+  <view class="shops-box">
+    <view class="content">
+      <view class="titles">店铺位置</view>
+    </view>
+  </view>
+</view>
+<view style="width:100%; padding:0 30rpx 20rpx; box-sizing:border-box;">
+  <map
+    id="shopMap"
+    style="width:100%; height:400rpx; border-radius:12rpx;"
+    latitude="{{shop.latitude}}"
+    longitude="{{shop.longitude}}"
+    scale="16"
+    markers="{{shopMarkers}}"
+  ></map>
+  <view style="font-size:26rpx; color:#4a4a4a; padding-top:14rpx; line-height:1.5;">{{shop.address}}</view>
+</view>
+<view class="shops-bar">
+  <view class="shops-box">
+    <view class="content">      
+      <view class="titles">下单用户</view>
+    </view>
+    <view class="text">
+      <image mode="aspectFill" class="avatarUrl" src="{{ orderDetail.user.avatarUrl }}"></image>
+      <view>{{ orderDetail.user.nick }}</view>
+    </view>
+  </view>
+</view>
+<view class="shops-bar">
+  <view class="shops-box">
+    <view class="content">
+      <view class="titles">联络电话</view>
+    </view>
+    <view class="text">{{ orderDetail.extJson['联络电话'] }}</view>
+  </view>
+</view>
+<view class="shops-bar">
+  <view class="shops-box">
+    <view class="content">
+      <view class="titles">{{ orderDetail.extJson['配送方式'] == '外送' ? '配送时间' : '自取时间' }}</view>
+    </view>
+    <view class="text">{{ orderDetail.extJson['自取时间'] }}</view>
+  </view>
+</view>
+<!-- 改造：外送订单显示配送说明（简化版外送：无地址簿，商家电话确认地址） -->
+<view wx:if="{{ orderDetail.extJson['配送说明'] }}" class="shops-bar">
+  <view class="shops-box">
+    <view class="content">
+      <view class="titles">配送说明</view>
+    </view>
+    <view class="text">{{ orderDetail.extJson['配送说明'] }}</view>
+  </view>
+</view>
+<view class="blank1"></view>
+<view wx:for="{{orderDetail.goods}}" wx:key="id" class="orderdetails-bar">
+  <image mode='aspectFill' class='photos' src='{{ item.pic }}'></image>
+  <view class="titles-bar">
+    <view class="titles-box1">
+      <view class="titles">{{ item.goodsName }}</view>
+      <view class="price">
+      <text>¥</text>{{ item.amount }}
+      </view>
+    </view>
+    <view class="titles-box2">
+      <view class="titles">{{ item.property }}</view>
+      <view class="num">×{{ item.number }}</view>
+    </view>
+  </view>
+</view>
+
+<view class="blank2"></view>
+
+<view class="shops-bar1">
+  <view class="shops-box">
+    <view class="content">
+      <view class="titles">备注信息</view>
+    </view>
+    <view class="text">{{orderDetail.orderInfo.remark}}</view>
+  </view>
+</view>
+<view class="num-bar">
+  <view class="num">共 {{orderDetail.orderInfo.goodsNumber}} 件商品，小计</view>
+  <view class="price">
+    <text>¥</text>{{orderDetail.orderInfo.amountReal}}
+  </view>
+</view>
+<view class="blank1"></view>
+
+<view class="shops-bar">
+  <view class="shops-box">
+    <view class="content">
+      <view class="titles">支付方式</view>
+    </view>
+    <view class="text">微信支付</view>
+  </view>
+</view>
+<view class="blank1"></view>
+<!-- <view class="pay-bar">
+  <view class="pay-box">
+    <view class="title">总价</view>
+    <view class="price">
+      <text>¥</text>211.00
+    </view>
+  </view>
+  <view class="pay-byn">结算</view>
+</view> -->
+<van-button wx:if="{{orderDetail.orderInfo.status ==1 || orderDetail.orderInfo.status ==2}}" custom-class="hexiaobtn" type="danger" block square bindtap="doneHx">确认核销</van-button>

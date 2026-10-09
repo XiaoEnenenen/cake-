@@ -1,0 +1,259 @@
+/* ===== 收货地址模块共用样式 =====
+   被 pages/address/index.wxss 与 pages/address/edit.wxss 通过 @import 引入。
+   配色沿用全站白黄令牌，令牌表见 app.wxss 顶部注释。
+*/
+
+page {
+  background-color: #f5f5f5;
+}
+
+/* 空白提示 */
+.addr-empty {
+  margin-top: 200rpx;
+  text-align: center;
+  font-size: 28rpx;
+  color: #8a8a8a;
+}
+
+.addr-empty-tip {
+  margin-top: 16rpx;
+  text-align: center;
+  font-size: 24rpx;
+  color: #b3b3b3;
+}
+
+/* ===== 地址卡片（列表页）===== */
+.addr-card {
+  position: relative;
+  margin: 20rpx 30rpx;
+  padding: 30rpx;
+  background-color: #ffffff;
+  border-radius: 16rpx;
+  box-shadow: 0 4rpx 16rpx 0 rgba(0, 0, 0, 0.04);
+}
+
+.addr-card-top {
+  display: flex;
+  align-items: center;
+}
+
+.addr-name {
+  font-size: 32rpx;
+  font-weight: 600;
+  color: #1f1f1f;
+}
+
+.addr-phone {
+  margin-left: 20rpx;
+  font-size: 28rpx;
+  color: #3c3c3c;
+}
+
+/* 默认标签 */
+.addr-badge {
+  margin-left: 16rpx;
+  padding: 0 12rpx;
+  height: 34rpx;
+  line-height: 34rpx;
+  font-size: 20rpx;
+  color: #1f1f1f;
+  background-color: #ffd100;
+  border-radius: 6rpx;
+  flex-shrink: 0;
+}
+
+.addr-tag {
+  margin-left: 12rpx;
+  padding: 0 12rpx;
+  height: 34rpx;
+  line-height: 34rpx;
+  font-size: 20rpx;
+  color: #ff2d2d;
+  border: 1rpx solid #ff2d2d;
+  border-radius: 6rpx;
+  flex-shrink: 0;
+}
+
+.addr-detail {
+  margin-top: 16rpx;
+  font-size: 26rpx;
+  color: #8a8a8a;
+  line-height: 38rpx;
+}
+
+/* 卡片底部操作栏 */
+.addr-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 24rpx;
+  padding-top: 20rpx;
+  border-top: 1rpx solid #f2f3f5;
+}
+
+.addr-default-toggle {
+  display: flex;
+  align-items: center;
+  font-size: 26rpx;
+  color: #3c3c3c;
+}
+
+.addr-radio {
+  width: 34rpx;
+  height: 34rpx;
+  margin-right: 12rpx;
+  border-radius: 50%;
+  border: 2rpx solid #d0d0d0;
+  box-sizing: border-box;
+}
+
+.addr-radio.checked {
+  border-color: #ffd100;
+  background-color: #ffd100;
+  position: relative;
+}
+
+/* 选中态的对勾（纯 CSS，避免引入图标资源） */
+.addr-radio.checked::after {
+  content: '';
+  position: absolute;
+  left: 10rpx;
+  top: 4rpx;
+  width: 8rpx;
+  height: 16rpx;
+  border: solid #1f1f1f;
+  border-width: 0 3rpx 3rpx 0;
+  transform: rotate(45deg);
+}
+
+.addr-op {
+  font-size: 26rpx;
+  color: #8a8a8a;
+  padding: 0 10rpx;
+}
+
+.addr-op + .addr-op {
+  margin-left: 20rpx;
+}
+
+/* ===== 底部按钮 ===== */
+.addr-bottom {
+  position: fixed;
+  left: 0;
+  bottom: 0;
+  width: 750rpx;
+  padding: 20rpx 30rpx calc(20rpx + env(safe-area-inset-bottom));
+  box-sizing: border-box;
+  background-color: #ffffff;
+  box-shadow: 0 -2rpx 12rpx 0 rgba(0, 0, 0, 0.05);
+}
+
+.addr-btn {
+  height: 88rpx;
+  line-height: 88rpx;
+  text-align: center;
+  font-size: 32rpx;
+  font-weight: 600;
+  color: #1f1f1f;
+  background-color: #ffd100;
+  border-radius: 44rpx;
+}
+
+.addr-btn.disabled {
+  background-color: #ebebeb;
+  color: #b3b3b3;
+}
+
+/* 列表底部留白，避免被固定按钮遮挡 */
+.addr-list-bottom {
+  height: 180rpx;
+}
+
+/* ===== 表单（编辑页）===== */
+.form-card {
+  margin: 20rpx 30rpx;
+  padding: 0 30rpx;
+  background-color: #ffffff;
+  border-radius: 16rpx;
+}
+
+.form-row {
+  display: flex;
+  align-items: center;
+  min-height: 100rpx;
+  border-bottom: 1rpx solid #f2f3f5;
+}
+
+.form-row:last-child {
+  border-bottom: none;
+}
+
+.form-label {
+  width: 160rpx;
+  flex-shrink: 0;
+  font-size: 30rpx;
+  color: #1f1f1f;
+}
+
+.form-input {
+  flex: 1;
+  font-size: 30rpx;
+  color: #1f1f1f;
+}
+
+.form-placeholder {
+  color: #b3b3b3;
+}
+
+.form-picker {
+  flex: 1;
+  font-size: 30rpx;
+  color: #1f1f1f;
+}
+
+.form-arrow {
+  width: 24rpx;
+  height: 24rpx;
+  border: solid #c0c0c0;
+  border-width: 0 3rpx 3rpx 0;
+  transform: rotate(-45deg);
+  flex-shrink: 0;
+  margin-left: 12rpx;
+}
+
+/* 标签选择（家/公司/其他） */
+.tag-row {
+  display: flex;
+  align-items: center;
+  padding: 24rpx 0;
+}
+
+.tag-item {
+  padding: 0 28rpx;
+  height: 56rpx;
+  line-height: 56rpx;
+  font-size: 26rpx;
+  color: #3c3c3c;
+  background-color: #f5f5f5;
+  border-radius: 28rpx;
+  margin-right: 20rpx;
+}
+
+.tag-item.active {
+  background-color: #ffd100;
+  color: #1f1f1f;
+  font-weight: 600;
+}
+
+/* 设为默认行 */
+.default-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 20rpx 30rpx;
+  padding: 30rpx;
+  background-color: #ffffff;
+  border-radius: 16rpx;
+  font-size: 30rpx;
+  color: #1f1f1f;
+}

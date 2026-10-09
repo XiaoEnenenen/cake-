@@ -1,0 +1,219 @@
+<!-- ===== 卿欢蛋糕 点单页 =====
+     改造说明（MulanPSL-2.0 变更留痕）：
+     原布局为「顶部门店栏 + 分类胶囊横排 + 双列商品卡片瀑布流」。
+     现参照美团 / 瑞幸点单页重构为「店铺信息卡 + 菜单次栏 + 左分类栏 + 右单列商品」。
+     其中「评价」「商家」两个 Tab 已按用户要求删除，次栏仅保留「菜单」。
+     数据来源未改动（仍为 goodsCategoryV2 / goodsv2 / shippingCarInfo），仅调整结构与视觉。
+
+     2026-02-14 点单页交互与结算栏优化（本次改动）：
+       1. 商品卡片【整块区域】可点进详情（原来只有图片可点）。
+       2. 卡片上的「＋」改为进详情/规格选择（原来直接静默加购）。
+       3. 底部结算栏按截图重做：购物袋图标 + 红色数量角标 + 红色金额 + 黄色「去结算」，
+          固定在底部（含 iPhone 安全区适配），空购物车时角标隐藏、按钮置灰并提示。
+       4. 购物车弹层补齐：规格文字、小计、删除按钮、清空按钮。
+     ⚠️ 未新增任何业务字段与优惠逻辑：金额一律取后端 cartSummary 的 price/number。
+-->
+
+<!-- 店铺信息卡（本店信息，非原店铺）
+     改造：仿瑞幸顶栏结构重排 —— 顶行「自提 | 外送」切换 + 门店行（图标 + 店名 + 营业中）。
+     说明：外送为「简化版」——不建地址簿、不采集定位、不算运费，
+           选择外送后由商家按订单联络电话与顾客确认地址（文案见 shop-config.js 的 delivery.reminder）。
+     距离（瑞幸显示 318m）本店不采集定位，故不显示。
+-->
+<view class="shop-head">
+  <view class="pickup-row">
+    <view
+      class="pickup-tab {{ !isDelivery ? 'active' : '' }}"
+      data-mode="pickup"
+      bindtap="onModeChange"
+    >自提</view>
+    <view
+      wx:if="{{ deliveryEnabled }}"
+      class="pickup-tab {{ isDelivery ? 'active' : '' }}"
+      data-mode="delivery"
+      bindtap="onModeChange"
+    >外送</view>
+  </view>
+
+  <view class="store-row">
+    <image class="store-icon" src="/images/icon-font-solid-1@2x.png" mode="aspectFit"></image>
+    <view class="store-name">{{ shopInfo.name || '卿欢蛋糕' }}</view>
+    <view class="store-open">营业中</view>
+  </view>
+
+  <view class="shop-hours">营业时间 {{ shopInfo.openingHours || '08:00-20:00' }}</view>
+  <view wx:if="{{ isDelivery }}" class="shop-delivery-tip">{{ deliveryReminder }}</view>
+
+  <!-- 店铺公告（来自商品购买须知，无则隐藏） -->
+  <view wx:if="{{ shopNotice }}" class="shop-notice">{{ shopNotice }}</view>
+</view>
+
+<!-- 次栏：原为「点菜 / 评价 / 商家」三栏 + 温馨提示，现按用户要求删除「评价」「商家」。
+     仿瑞幸「经典菜单 / 天天9.9 / 我的常点」的次栏结构，但只保留菜单一项：
+       本店后台只有一套菜单，无多套菜单切换，故不写「经典菜单」以免造成可切换的误解；
+       用户明确要求不加「天天9.9」与「我的常点」。
+-->
+<view class="main-tabs">
+  <view class="main-tab active">菜单</view>
+</view>
+
+<!-- 左分类栏 + 右商品列表 -->
+<view class="menu-wrap">
+  <!-- 左侧分类 -->
+  <scroll-view class="side-bar" scroll-y>
+    <view
+      class="side-item {{cid === '' ? 'active' : ''}}"
+      data-id="0"
+      bindtap="onCategoryClick"
+    >全部商品</view>
+    <view
+      wx:for="{{ goodsCategory }}"
+      wx:key="id"
+      class="side-item {{ cid == item.id ? 'active' : '' }}"
+      data-id="{{ item.id }}"
+      bindtap="onCategoryClick"
+    >{{ item.name }}</view>
+  </scroll-view>
+
+  <!-- 右侧商品 -->
+  <scroll-view class="goods-list" scroll-y>
+    <view wx:if="{{ !goodsList }}" class="goods-empty">暂无商品</view>
+
+    <!-- 改造：整行绑定 goDetail，卡片任意位置都能进商品详情/规格选择 -->
+    <view
+      wx:for="{{ goodsList }}"
+      wx:key="id"
+      class="goods-row"
+      data-id="{{ item.id }}"
+      bindtap="goDetail"
+      hover-class="goods-row-hover"
+      hover-stay-time="80"
+    >
+      <image
+        class="goods-pic"
+        mode="aspectFill"
+        src="{{ item.pic }}"
+      ></image>
+
+      <view class="goods-info">
+        <view class="goods-name">{{ item.name }}</view>
+        <view class="goods-desc">{{ item.characteristic }}</view>
+
+        <!-- 促销标签（对应截图 神券/立减/新客减） -->
+        <view class="goods-tags">
+          <view wx:if="{{ item.stores <= 0 }}" class="qh-tag">已售罄</view>
+          <view wx:else class="qh-tag">现烤现做</view>
+        </view>
+
+        <view class="goods-bottom">
+          <view class="goods-price">
+            <text class="symbol">¥</text>{{ item.minPrice }}
+          </view>
+          <!-- 改造：加号由「直接加购」改为「进详情/规格选择」。
+               用 catchtap 阻止冒泡，避免与整行的 goDetail 重复触发。 -->
+          <view
+            class="goods-add"
+            data-id="{{ item.id }}"
+            catchtap="goDetail"
+          >＋</view>
+        </view>
+      </view>
+    </view>
+
+    <!-- 底部占位：结算栏(≈120rpx) + 自定义 tabbar(100rpx) + 余量，
+         保证最后一项商品不被固定结算栏遮挡 -->
+    <view class="list-bottom-holder"></view>
+  </scroll-view>
+</view>
+
+<!-- ===== 底部结算栏（改造：按截图重做）=====
+     结构：左 购物袋图标 + 红色数量角标 | 中 实付金额（红）| 右 黄色胶囊「去结算」
+     金额来源：cartPrice / cartCount（由后端 cartSummary 的 price / number 派生）
+     ⚠️ 按用户确认（2026-02-14 Q1）：不做优惠提示，故此处不显示「共减 ¥x」。
+-->
+<view class="settle-bar">
+  <!-- 点击左侧区域（图标 + 金额）都打开购物车列表 -->
+  <view class="settle-left" bindtap="showCartList" hover-class="settle-left-hover" hover-stay-time="80">
+    <view class="settle-cart-wrap">
+      <image class="settle-cart-icon" mode="aspectFit" src="/images/icon-2-1-shop-cart-normal@2x.png"></image>
+      <!-- 空购物车时角标隐藏 -->
+      <view wx:if="{{ cartCount > 0 }}" class="settle-badge">{{ cartCount > 99 ? '99+' : cartCount }}</view>
+    </view>
+    <view class="settle-money">
+      <view class="settle-price"><text>¥</text>{{ cartPrice }}</view>
+      <view wx:if="{{ cartCount > 0 }}" class="settle-count">共{{ cartCount }}件</view>
+      <view wx:else class="settle-count">购物车是空的</view>
+    </view>
+  </view>
+
+  <view
+    class="settle-btn {{ cartCount > 0 ? '' : 'settle-btn-disabled' }}"
+    bindtap="onCheckout"
+    hover-class="settle-btn-hover"
+    hover-stay-time="80"
+  >去结算</view>
+</view>
+
+<!-- 购物车弹层 -->
+<van-popup
+  show="{{ showCartPop }}"
+  round
+  position="bottom"
+  safe-area-inset-bottom
+  custom-style="height: 70%"
+  bind:close="onClose">
+  <view class="shop-cart2">
+    <view class="cart-box">
+      <view class="cart">
+        <image mode='aspectFill' class='icon' src='/images/icon-2-1-shop-cart-normal@2x.png'></image>
+        <view class="txt">购物车</view>
+      </view>
+      <view class="num">{{ cartCount }}</view>
+    </view>
+    <view class="close" bindtap="hideCartList">×</view>
+  </view>
+
+  <!-- 列表头：件数 + 清空（改造新增，复用 shippingCarInfoRemoveAll） -->
+  <view class="cart-list-head">
+    <view class="cart-list-count">共 {{ cartCount }} 件商品</view>
+    <view class="cart-clear" bindtap="onClearCart">清空</view>
+  </view>
+
+  <view wx:if="{{ cartItems.length == 0 }}" class="cart-empty">购物车是空的，去挑一件吧～</view>
+
+  <view wx:for="{{ cartItems }}" wx:key="key" class="goods-box">
+    <view class="photo-box">
+      <image mode='aspectFill' class='photos' src='{{item.pic}}'></image>
+    </view>
+    <view class="content-box">
+      <view class="title1">{{item.name}}</view>
+      <!-- 改造：规格文字（由 cart.sku 映射商品详情里的规格名，无规格商品不显示此行） -->
+      <view wx:if="{{ item.specText }}" class="spec-text">{{ item.specText }}</view>
+      <view class="price-box">
+        <view class="price-left">
+          <view class="unit-price"><text>¥</text>{{item.price}}</view>
+          <view class="subtotal">小计 ¥{{ item.subtotal }}</view>
+        </view>
+        <view class="cart-ops">
+          <view class="del-btn" data-key="{{item.key}}" bindtap="onRemoveItem">删除</view>
+          <van-stepper value="{{ item.number }}" min="0" async-change input-width="48rpx" button-size="48rpx" custom-class="stepper" input-class="input" plus-class="plus" minus-class="minus" data-key="{{item.key}}" bind:change="changeNumber"/>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <view style="height:200rpx;"></view>
+  <view class="pay-bar">
+    <view class="pay-box">
+      <view class="title">总价</view>
+      <view class="price">
+        <text>¥</text>{{ cartPrice }}
+      </view>
+    </view>
+    <view class="pay-byn {{ cartCount > 0 ? '' : 'pay-byn-disabled' }}" bindtap="onCheckout">去结算</view>
+  </view>
+</van-popup>
+
+<!-- 底部导航栏 -->
+<import src="/template/tabbar/index.wxml" />
+<template is="tabbar" data="{{ tabbarActive: 1 }}" />

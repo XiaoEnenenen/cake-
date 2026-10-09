@@ -1,0 +1,209 @@
+# cloudfunctions — 云函数部署说明
+
+这个目录是**自建后端**，替代原来绑死在 api工厂 SaaS 上的数据层。
+
+---
+
+## 为什么只有一个云函数？
+
+原项目前端是通过 `apifm-wxapi` 这个 SDK「一个入口调几十个接口」的模式工作的。
+如果拆成十几个云函数，前端每个调用都要改名、改参数，改动量会大很多。
+
+所以这里用**一个云函数 + action 路由**：
+
+```
+wx.cloud.callFunction({
+  name: 'api',
+  data: { action: 'goodsList', payload: { categoryId: 'xxx' } }
+})
+```
+
+路由表在 `api/handlers.js` 末尾的 `handlers` 对象里。
+
+---
+
+## 目录结构
+
+```
+cloudfunctions/
+  api/
+    index.js        云函数入口（依赖 wx-server-sdk，只能在云端跑）
+    handlers.js     全部业务逻辑（不依赖 wx-server-sdk，可本地测试）
+    package.json    声明 wx-server-sdk 依赖
+```
+
+**这个拆分是刻意的**：业务逻辑都在 `handlers.js`，它只依赖一个注入的 `db` 对象，
+因此可以在没有 AppID、没有云环境的情况下用假数据本地跑测试。
+
+---
+
+## 已实现的接口
+
+| action | 对应原来的 | 说明 |
+|---|---|---|
+| `getUser` | `userDetail` | 当前用户资料（身份取 OPENID） |
+| `updateUser` | `modifyUserInfoV2` | 更新昵称/头像/性别/生日/手机号 |
+| `bindMobile` | `bindMobileWxappV2` | 手机号绑定（**当前返回"未接入"**，需小程序后台开通手机号快速验证） |
+| `appConfig` | `queryConfigBatch` | 店铺配置：`mallName` / `order_remark_msg` / `order_hx_uids`（2026-09-26 阶段一新增） |
+| `cmsPage` | `cmsPage` | 用户隐私协议 / 常见问题正文，内容取自 `api/shop-config.js` 的 `cms`（阶段一新增） |
+| `importData` | — | 初始化用：把种子数据（分类/商品/轮播/店铺配置）一次性写入集合。与 `cloud-data/*.jsonl` 内容一致 |
+| `banners` | `banners` | 首页轮播图 |
+| `categoryList` | `goodsCategoryV2` | 分类列表，只返回 enabled 的 |
+| `goodsList` | `goodsv2` | 商品列表，按 categoryId 过滤 |
+| `goodsDetail` | `goodsDetailV2` | 商品详情（含规格组） |
+| `cartInfo` | `shippingCarInfo` | 购物车 |
+| `cartAdd` | `shippingCarInfoAddItemV2` | 加购（同规格累加，校验库存与必选规格） |
+| `cartModifyNumber` | `shippingCarInfoModifyNumber` | 改数量（0 则删除） |
+| `cartRemoveItem` | `shippingCarInfoRemoveItem` | 删除一项 |
+| `cartRemoveAll` | `shippingCarInfoRemoveAll` | 清空 |
+| `orderCreate` | `orderCreate` | 下单（服务端重算金额、扣库存、清购物车） |
+| `orderList` | `orderList` | 订单列表 |
+| `orderDetail` | `orderDetail` | 订单详情（含 `_openid` 二次校验） |
+| `orderClose` | `orderClose` | 取消订单（回补库存） |
+| `orderDelete` | `orderDelete` | 删除订单 |
+| `orderHx` | `orderHXV2` | 核销 |
+| `wxpay` | `wxpay` | 微信支付统一下单（**当前返回"未接入"**，需先申请商户号，阶段一未接线） |
+| `fetchShops` | `fetchShops` | 单店模式兼容桩，固定返回空数组（前端已无调用方） |
+| `shopSubdetail` | `shopSubdetail` | 单店模式兼容桩，固定返回失败（`pages/current-order` 拨号取号用） |
+
+> **2026-02-14 更正（按 handlers.js 路由表实际核对）**：以下 2 个 action 已随业务模块删除，
+> 本文档此前仍在列出，现移除：
+> - `scoreLogs` —— 会员积分体系已删除（会员/积分/积分记录整体不做）
+> - `orderPay` —— 余额支付已删除（`cloudfunctions/api/handlers.js` 内有就地注释）
+
+集合清单：
+
+| 集合名 | 用途 |
+|---|---|
+| `category` | 商品分类 |
+| `goods` | 商品（字段结构见 `cloud-data/02-schema-goods.js`） |
+| `banner` | 首页轮播图（字段：`picUrl` / `link` / `sort` / `enabled`） |
+| `app_config` | **可选**。店铺配置覆盖（字段：`key` / `value`）。不存在时 `appConfig` action 会使用 `api/shop-config.js` 的默认值，不报错（2026-09-26 阶段一新增） |
+| `user` | 用户资料（按 `_openid` 隔离） |
+| `cart` | 购物车（按 `_openid` 隔离） |
+| `order` | 订单（按 `_openid` 隔离） |
+
+> **2026-02-14 更正**：`score_log`（积分记录）集合**不用建** —— 会员积分体系已整体删除。
+
+---
+
+## 前端如何接线
+
+页面**不再直接依赖 apifm-wxapi**，统一走 `utils/api-map.js`：
+
+```js
+const API = require('../../utils/api-map')   // 原来：const WXAPI = require('apifm-wxapi')
+
+const res = await API.goodsv2({ categoryId: cid })   // 原来：WXAPI.goodsv2(...)
+```
+
+`api-map` 内部按 `utils/data-source.js` 的 `useCloud` 决定走哪条通道：
+
+- `useCloud: true`（**当前生效值**）→ 调云函数 `api`
+- `useCloud: false` → 透传给原 api工厂 SDK（**备用通道**，`utils/services/legacy-apifm.js`，代码全部保留不删）
+
+**登录的差异**（重要）：
+- 云开发：身份由 `cloud.getWXContext().OPENID` 自动提供，**没有 token**，
+  `utils/auth.js` 里已按 `isCloudMode()` 分支处理
+- 原 api工厂：`code` 换 `token`，token 存 storage，会过期
+
+> **2026-02-14 更正**：本文档此前写「已接线的文件（14 个）：11 个页面 + `utils/auth.js` + `utils/tools.js` + `app.js`」。
+> 经核对，`utils/tools.js` **已不存在**（全项目无该文件），实际接线为 13 个页面 + `utils/auth.js` + `app.js`。
+>
+> `utils/pay.js` 的支付统一下单仍未接线（见文末），云开发通道会返回"未接入"文案。
+
+
+---
+
+## 部署步骤
+
+> 前提：已注册小程序并拿到 AppID，且在开发者工具里开通了云开发环境。
+
+> 2026-09-26 阶段一：`project.config.json` 已补上 `"cloudfunctionRoot": "cloudfunctions/"`，
+> 开发者工具现在应能把 `cloudfunctions/api` 识别为云函数目录（此前缺失，无法右键上传）。
+
+1. 微信开发者工具打开本项目
+2. 点顶部「**云开发**」→ 开通环境（记下环境 ID）
+3. 左侧「**云函数**」→ 右键 `cloudfunctions/api` 目录 → 「**上传并部署：云端安装依赖**」
+4. 等待部署完成，控制台应显示上传成功
+5. 在「云开发 → 数据库」建立 7 个集合：
+
+| 集合名 | 用途 | 权限建议 |
+|---|---|---|
+| `category` | 商品分类 | 所有用户可读，仅创建者可写 |
+| `goods` | 商品 | 所有用户可读，仅创建者可写 |
+| `banner` | 首页轮播图 | 所有用户可读，仅创建者可写 |
+| `app_config` | 店铺配置（可选） | 所有用户可读，仅创建者可写 |
+| `user` | 用户资料 | **仅创建者可读写** |
+| `cart` | 购物车 | **仅创建者可读写** |
+| `order` | 订单 | **仅创建者可读写** |
+
+> **2026-02-14 更正**：`score_log`（积分记录）集合**不用建** —— 会员积分体系已整体删除。
+> 完整的建库清单与权限说明以 `docs/云开发初始化清单.md` 为准。
+
+> 权限很重要：`cart` 和 `order` 必须是「仅创建者可读写」，
+> 云开发会自动按 `_openid` 隔离，顾客之间看不到彼此的购物车和订单。
+> 代码里也做了二次校验（见 `orderDetail` 的 `_openid` 比对）。
+
+6. 导入分类：用 `cloud-data/categories.jsonl`（见该目录的 README）
+7. 手动录入商品（结构见 `cloud-data/02-schema-goods.js`）
+8. 打开前端切换开关：`utils/data-source.js` 里把 `useCloud` 改为 `true`
+9. 在微信开发者工具「云开发 → 设置」里，确认云函数已能调用
+
+---
+
+## 切回原后端
+
+如果切换后出问题，把 `utils/data-source.js` 的 `useCloud` 改回 `false` 即可，
+小程序会回到原来的 api工厂 通道（数据是原店的，但能跑）。
+
+---
+
+## 本地测试
+
+业务逻辑不需要云环境就能验证。在项目根目录执行：
+
+```
+npm test
+```
+
+或单独执行：
+
+```
+node tests/test-cloud-api.js
+node tests/test-spec.js
+node tests/test-address.js
+node tests/test-delivery.js
+```
+
+`tests/test-cloud-api.js` 用内存版数据库跑完整流程：分类 → 商品 → 加购 → 下单 → 查单 → 取消 → 核销，
+覆盖价格计算、库存扣减回补、多用户隔离、防改价、错误处理等断言。
+
+> **2026-02-14 更正**：本文档此前写「`node _test-api.js`」——该文件**不存在**，正确路径是 `tests/test-cloud-api.js`；
+> 此前写的「52 项断言」也已过期。四个脚本的脚本名与断言数请以 `package.json` 的 `scripts` 与实跑结果为准
+> （实测：`test-cloud-api.js` 74 项、`test-spec.js` 27 项、`test-address.js` 33 项、`test-delivery.js` 103 项，全部通过）。
+
+---
+
+## 安全设计要点
+
+1. **服务端重算金额**：下单时不信任前端传来的 `price`/`amount`，
+   一律用数据库里的商品价格 + 规格加价重新计算（已验证：前端传 `price: 0.01` 会被忽略）。
+2. **库存校验在服务端**：加购与下单都校验库存，下单后扣减，取消后回补。
+3. **用户隔离**：购物车与订单的读写都按 `_openid` 过滤。
+4. **规格必选校验**：商品有规格组时，每组都必须选，且选项必须属于该商品。
+
+---
+
+## 第 2 阶段（拿到商户号后）
+
+支付相关代码位置已预留：
+
+- `api/index.js` 里的 `handlePayCallback()`：微信支付结果回调入口
+
+> **2026-02-14 更正**：此处此前还列了「`orderPay` action：标记订单已支付」。
+> 该 action 已随会员余额体系一并删除（`handlers.js` 内有就地注释），现移除。
+
+接入方式建议用 `cloud.cloudPay.unifiedOrder()`（云开发支付），
+可以省掉自己写签名和处理证书的部分。`utils/pay.js` 里
+`wx.requestPayment` 那段结构可以直接复用。

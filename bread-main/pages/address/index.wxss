@@ -1,0 +1,3 @@
+@import "./common.wxss";
+
+/* 列表页专属样式（通用部分见 common.wxss） */

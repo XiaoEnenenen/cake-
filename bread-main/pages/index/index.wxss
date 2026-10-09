@@ -1,0 +1,110 @@
+/* 2026-09-26 阶段二：已删除顶部积分条样式 .inc-bar / .inc-box / .myinc / .p / .slide */
+
+.focus{
+  width: 720rpx;
+  height: 480rpx;
+  margin-left: 30rpx;
+}
+.focus image {
+  width: 100%;
+  height: 100%;
+  border-radius: 8rpx;
+}
+
+.Borders-box{
+  display: flex;
+  justify-content:center;
+  padding: 10rpx 626rpx 42rpx 28rpx;
+}
+
+/* 轮播指示点：改为品牌黄（原为深灰 #3c3c3c） */
+.Borders-box .Borders{
+  width: 16rpx;
+  height: 8rpx;
+  border-radius: 4rpx;
+  border: solid 2rpx #ffd100;
+  background-color: #ffd100;
+  margin-left: 8rpx;
+}
+.Borders-box .Borders1{
+  width: 16rpx;
+  height: 8rpx;
+  border-radius: 4rpx;
+  border: solid 2rpx #ffd100;
+  background-color: #ffffff;
+  margin-left: 8rpx;
+
+}
+
+/* ===== 改造新增：本店信息卡（美团风格白卡 + 黄色主按钮）===== */
+.shop-card {
+  margin: 0 30rpx 24rpx;
+  padding: 30rpx;
+  border-radius: 20rpx;
+  background-color: #ffffff;
+  box-shadow: 0 8rpx 24rpx 0 rgba(0, 0, 0, 0.05);
+}
+
+.shop-card-head {
+  display: flex;
+  align-items: center;
+}
+
+.shop-card-name {
+  font-size: 36rpx;
+  font-weight: 600;
+  color: #1f1f1f;
+  line-height: 48rpx;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shop-card-badge {
+  margin-left: 16rpx;
+  padding: 0 12rpx;
+  height: 34rpx;
+  line-height: 34rpx;
+  font-size: 20rpx;
+  color: #1f1f1f;
+  background-color: #ffd100;
+  border-radius: 6rpx;
+  flex-shrink: 0;
+}
+
+.shop-card-hours {
+  margin-top: 12rpx;
+  font-size: 24rpx;
+  color: #8a8a8a;
+}
+
+.shop-card-addr {
+  margin-top: 10rpx;
+  font-size: 24rpx;
+  color: #8a8a8a;
+  line-height: 34rpx;
+}
+
+.shop-card-btn {
+  margin-top: 26rpx;
+  height: 84rpx;
+  line-height: 84rpx;
+  text-align: center;
+  font-size: 32rpx;
+  font-weight: 600;
+  color: #1f1f1f;
+  background-color: #ffd100;
+  border-radius: 14rpx;
+}
+
+.section-title {
+  margin: 0 36rpx 20rpx;
+  font-size: 32rpx;
+  font-weight: 600;
+  color: #1f1f1f;
+}
+
+/* 2026-09-26 阶段二：已删除以下样式
+   - 顶部积分条：.inc-bar / .inc-box / .myinc / .p / .slide（会员积分体系）
+   - 多门店遗留：.shop / .Nearby-stores / .all-stores / .shop-list /
+                .shop-logo1 / .shop-logo2 / .shop-logo / .shop-name / .distance-bar 等 */

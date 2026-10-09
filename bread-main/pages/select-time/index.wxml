@@ -1,0 +1,54 @@
+<!-- ===== 期望时间选择（重写）=====
+     日期：今天起 7 天    时段：营业时间内的整点时段
+     规则来自 config/delivery.js，页面不写死
+ -->
+<view class="st-wrap">
+  <view class="st-tip" wx:if="{{ advanceTip }}">{{ advanceTip }}</view>
+  <view class="st-tip st-tip-sub" wx:else>营业时间 {{ openingHours }}</view>
+
+  <view class="st-card">
+    <view class="st-row">
+      <view class="st-label">日期</view>
+      <picker
+        mode="selector"
+        range="{{ dates }}"
+        range-key="label"
+        value="{{ dateIndex }}"
+        bindchange="onDateChange"
+      >
+        <view class="st-picker">
+          <view class="st-value">{{ dates[dateIndex].label }}</view>
+          <view class="st-arrow"></view>
+        </view>
+      </picker>
+    </view>
+
+    <view class="st-row">
+      <view class="st-label">时间</view>
+      <picker
+        wx:if="{{ slots.length > 0 }}"
+        mode="selector"
+        range="{{ slots }}"
+        value="{{ slotIndex }}"
+        bindchange="onSlotChange"
+      >
+        <view class="st-picker">
+          <view class="st-value">{{ slots[slotIndex] }}</view>
+          <view class="st-arrow"></view>
+        </view>
+      </picker>
+      <view wx:else class="st-picker">
+        <view class="st-value st-value-empty">当天已无可选时间</view>
+      </view>
+    </view>
+  </view>
+
+  <view class="st-note">
+    提示：可选时间为营业时间 {{ openingHours }} 内的整点时段。已过期时段不会显示。
+  </view>
+</view>
+
+<view class="st-bottom">
+  <view class="st-btn st-btn-cancel" bindtap="back">取消</view>
+  <view class="st-btn st-btn-ok {{ slots.length > 0 ? '' : 'disabled' }}" bindtap="ok">完成</view>
+</view>

@@ -1,0 +1,79 @@
+/**
+ * 卿欢蛋糕 - 全局样式与设计令牌
+ * ---------------------------------------------------------------------------
+ * 改造说明（MulanPSL-2.0 变更留痕）：
+ * 原项目为「元气 Bread」面包店主题（主色橙 #fa5c01 + 棕金 #e0c078），
+ * 现参照用户提供的美团风格截图，统一为「白 + 黄」主调。
+ *
+ * 配色映射（旧 → 新）：
+ *   #fa5c01 橙色（原主色：价格/按钮/阴影） → 价格改 #ff4b33，按钮改 #ffd100
+ *   #e0c078 棕金描边                        → 促销标签描边 #ff2d2d
+ *   #fdf4e0 浅棕底（选中态）                → #fff7d6 浅黄底
+ *   #f2f3f5 灰底（未选中态）                → 保持浅灰
+ *
+ * 说明：微信小程序 wxss 不支持 CSS 变量在所有版本稳定生效，
+ *       故此处以「注释令牌 + 直接写色值」的方式统一，便于全局检索替换。
+ * ---------------------------------------------------------------------------
+ */
+
+/* ===== 设计令牌（改主题色时按此表全量替换即可）=====
+   主黄      #ffd100   选中胶囊底 / 主按钮 / 选中态高亮
+   主黄深    #f5c400   按压态
+   价格红    #ff4b33   价格数字
+   促销红    #ff2d2d   促销标签文字与描边
+   浅黄底    #fff7d6   选中分类底 / 标签底
+   文字主    #1f1f1f   标题
+   文字次    #3c3c3c   正文
+   文字弱    #8a8a8a   辅助说明
+   分割线    #ebebeb
+   页面底    #f5f5f5
+   卡片底    #ffffff
+   ================================================= */
+
+page {
+  background-color: #f5f5f5;
+}
+
+.tabbar-text {
+  font-size: 20rpx;
+  margin-top: 10rpx;
+}
+
+/* 字体：原为 LxgwWenKai（需联网加载字体，换后端后不可靠），改为系统字体栈 */
+page, view, text, navigator, button, input {
+  font-family: 'PingFang SC', 'Microsoft YaHei', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+/* ===== 全站通用：美团式黄色主按钮 ===== */
+.qh-btn-primary {
+  background-color: #ffd100;
+  color: #1f1f1f;
+  font-weight: 600;
+  border-radius: 12rpx;
+  text-align: center;
+}
+
+/* ===== 全站通用：促销描边标签（对应截图「神券/立减/新客减」）===== */
+.qh-tag {
+  display: inline-block;
+  padding: 0 10rpx;
+  height: 32rpx;
+  line-height: 30rpx;
+  font-size: 20rpx;
+  color: #ff2d2d;
+  border: 1rpx solid #ff2d2d;
+  border-radius: 6rpx;
+  background-color: #ffffff;
+}
+
+/* ===== 全站通用：价格（红）与划线原价 ===== */
+.qh-price {
+  color: #ff4b33;
+  font-weight: 600;
+}
+
+.qh-price-origin {
+  color: #b3b3b3;
+  font-size: 22rpx;
+  text-decoration: line-through;
+}

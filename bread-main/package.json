@@ -1,0 +1,20 @@
+{
+  "name": "dgd",
+  "version": "1.0.0",
+  "description": "",
+  "main": "app.js",
+  "scripts": {
+    "test": "node tests/test-cloud-api.js && node tests/test-spec.js && node tests/test-address.js && node tests/test-delivery.js",
+    "test:api": "node tests/test-cloud-api.js",
+    "test:spec": "node tests/test-spec.js",
+    "test:address": "node tests/test-address.js",
+    "test:delivery": "node tests/test-delivery.js"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@vant/weapp": "^1.11.7",
+    "apifm-wxapi": "^26.2.5",
+    "wxbarcode": "^1.0.2"
+  }
+}

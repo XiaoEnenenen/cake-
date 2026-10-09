@@ -1,0 +1,264 @@
+/* ===== 卿欢蛋糕 商品详情 / 规格选择样式 =====
+   2026-02-14 改造（按用户截图重做）：
+     新增 .detail-scroll / .spec-group / .spec-options / .spec-chip(-active) /
+          .selected-row / .detail-price-bar / .price-now / .price-from 等规则。
+     旧的下拉式规格样式（.buy-detail .select .detail / .title1 / .title2 / .add-cart1）
+     已随下拉 picker 一并移除。
+   配色令牌见 app.wxss 顶部注释（主黄 #ffd100 / 价格红 #ff4b33 / 促销红 #ff2d2d）。
+*/
+
+page {
+  background-color: #ffffff;
+  position: relative;
+}
+
+/* ===== 商品图轮播 ===== */
+.goods-details-photo {
+  width: 670rpx;
+  height: 670rpx;
+  margin: 40rpx 40rpx 0rpx 40rpx;
+}
+
+.goods-details-photo image {
+  width: 100%;
+  height: 100%;
+}
+
+.Borders-box {
+  display: flex;
+  margin-left: 332rpx;
+  margin-top: 16rpx;
+}
+
+.Borders-box .Borders {
+  width: 16rpx;
+  height: 8rpx;
+  border-radius: 4rpx;
+  border: solid 2rpx #3c3c3c;
+  background-color: #3c3c3c;
+  margin-right: 8rpx;
+}
+
+.Borders-box .Borders1 {
+  width: 16rpx;
+  height: 8rpx;
+  border-radius: 4rpx;
+  border: solid 2rpx #3c3c3c;
+  background-color: #ffffff;
+  margin-right: 8rpx;
+}
+
+/* ===== 弹层内容 ===== */
+/* 底部价格区高度：(已选规格行约 60rpx) + (价格行 150rpx) + 安全区 */
+.detail-scroll {
+  height: calc(78vh - 220rpx);
+  box-sizing: border-box;
+}
+
+/* 弹层右上角关闭按钮（新增：原来无法关闭） */
+.detail-close {
+  position: absolute;
+  top: 20rpx;
+  right: 28rpx;
+  width: 56rpx;
+  height: 56rpx;
+  line-height: 52rpx;
+  text-align: center;
+  border-radius: 50%;
+  background-color: #f5f5f5;
+  color: #8a8a8a;
+  font-size: 40rpx;
+  z-index: 20;
+}
+
+.detail-head {
+  display: flex;
+  align-items: flex-start;
+  padding: 20rpx 40rpx 0;
+}
+
+.detail-head .content {
+  flex: 1;
+  font-size: 40rpx;
+  font-weight: 600;
+  color: #1f1f1f;
+  line-height: 54rpx;
+}
+
+.detail-head .detail-stock {
+  flex-shrink: 0;
+  margin-left: 16rpx;
+  margin-top: 10rpx;
+  font-size: 22rpx;
+  color: #8a8a8a;
+}
+
+.detail-head .detail-soldout {
+  color: #ff2d2d;
+}
+
+/* ===== 规格组 ===== */
+.spec-group {
+  padding: 32rpx 40rpx 0;
+}
+
+.spec-group-title {
+  display: flex;
+  align-items: center;
+  margin-bottom: 18rpx;
+}
+
+.spec-group-name {
+  font-size: 28rpx;
+  color: #3c3c3c;
+}
+
+.spec-group-tag {
+  margin-left: 12rpx;
+  font-size: 22rpx;
+  color: #8a8a8a;
+}
+
+.spec-options {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+/* 规格标签（未选中）：浅灰底、无描边 */
+.spec-chip {
+  min-width: 140rpx;
+  padding: 0 28rpx;
+  height: 68rpx;
+  line-height: 68rpx;
+  margin: 0 20rpx 20rpx 0;
+  border-radius: 12rpx;
+  border: 2rpx solid transparent;
+  background-color: #f5f5f5;
+  color: #3c3c3c;
+  font-size: 28rpx;
+  text-align: center;
+  box-sizing: border-box;
+}
+
+/* 规格标签（选中）：浅黄底 + 黄色描边（与截图一致） */
+.spec-chip-active {
+  background-color: #fff7d6;
+  border-color: #ffd100;
+  color: #1f1f1f;
+  font-weight: 600;
+}
+
+/* ===== 商品详情富文本 ===== */
+.details {
+  margin: 20rpx 40rpx 0;
+  font-size: 26rpx;
+  line-height: 1.54;
+  text-align: justify;
+  color: #8a8a8a;
+}
+
+.detail-bottom-holder {
+  height: 40rpx;
+}
+
+/* ===== 底部固定区 ===== */
+.detail-footer {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: #ffffff;
+  box-shadow: 0 -8rpx 24rpx rgba(0, 0, 0, 0.06);
+  padding-bottom: env(safe-area-inset-bottom);
+  z-index: 10;
+}
+
+/* 已选规格汇总行 */
+.selected-row {
+  display: flex;
+  align-items: flex-start;
+  padding: 20rpx 40rpx 0;
+  font-size: 24rpx;
+  line-height: 34rpx;
+}
+
+.selected-row .selected-label {
+  flex-shrink: 0;
+  color: #8a8a8a;
+}
+
+.selected-row .selected-value {
+  flex: 1;
+  color: #1f1f1f;
+}
+
+/* 价格 + 加购 */
+.detail-price-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16rpx 40rpx 24rpx;
+}
+
+.detail-price-bar .price-left {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.detail-price-bar .price-now {
+  font-size: 48rpx;
+  font-weight: 600;
+  color: #ff4b33;
+  line-height: 56rpx;
+}
+
+.detail-price-bar .price-now text {
+  font-size: 28rpx;
+  font-weight: 600;
+  margin-right: 4rpx;
+}
+
+.detail-price-bar .price-from {
+  margin-top: 2rpx;
+  font-size: 22rpx;
+  color: #8a8a8a;
+}
+
+.detail-price-bar .price-from text {
+  font-size: 20rpx;
+  margin-right: 2rpx;
+}
+
+.detail-price-bar .add-cart {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-shrink: 0;
+  margin-left: 20rpx;
+  width: 376rpx;
+  height: 84rpx;
+  border-radius: 42rpx;
+  background-color: #ffd100;
+}
+
+.detail-price-bar .add-cart .add1 {
+  font-size: 32rpx;
+  font-weight: 600;
+  color: #1f1f1f;
+  margin: 12rpx 30rpx;
+}
+
+.detail-price-bar .add-cart .add2 {
+  width: 32rpx;
+  height: 32rpx;
+  object-fit: contain;
+  margin-right: 24rpx;
+}
+
+/* 已加购提示 */
+.buyed-tip {
+  padding: 0 40rpx 16rpx;
+  font-size: 22rpx;
+  color: #8a8a8a;
+}

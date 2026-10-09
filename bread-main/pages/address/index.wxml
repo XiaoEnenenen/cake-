@@ -1,0 +1,44 @@
+<!-- ===== 收货地址列表 =====
+     说明：本页只管理「顾客的收货地址」，与门店地址（shop-config.js）无关。
+     select 模式：从结算页跳来时（?select=1），点击卡片会返回上一页并带回所选地址。
+ -->
+<block wx:if="{{ list.length > 0 }}">
+  <view
+    wx:for="{{ list }}"
+    wx:key="id"
+    class="addr-card"
+    data-id="{{ item.id }}"
+    bindtap="onCardTap"
+  >
+    <view class="addr-card-top">
+      <view class="addr-name">{{ item.name }}</view>
+      <view class="addr-phone">{{ item.phone }}</view>
+      <view wx:if="{{ item.isDefault }}" class="addr-badge">默认</view>
+      <view wx:if="{{ item.tag }}" class="addr-tag">{{ item.tag }}</view>
+    </view>
+
+    <view class="addr-detail">{{ item.fullText }}</view>
+
+    <view class="addr-actions">
+      <view class="addr-default-toggle" catchtap="onSetDefault" data-id="{{ item.id }}">
+        <view class="addr-radio {{ item.isDefault ? 'checked' : '' }}"></view>
+        <view>{{ item.isDefault ? '默认地址' : '设为默认' }}</view>
+      </view>
+      <view>
+        <text class="addr-op" catchtap="onEdit" data-id="{{ item.id }}">编辑</text>
+        <text class="addr-op" catchtap="onDelete" data-id="{{ item.id }}">删除</text>
+      </view>
+    </view>
+  </view>
+
+  <view class="addr-list-bottom"></view>
+</block>
+
+<block wx:else>
+  <view class="addr-empty">还没有收货地址</view>
+  <view class="addr-empty-tip">添加后，下单外送时可直接选择</view>
+</block>
+
+<view class="addr-bottom">
+  <view class="addr-btn" bindtap="onAdd">新增收货地址</view>
+</view>

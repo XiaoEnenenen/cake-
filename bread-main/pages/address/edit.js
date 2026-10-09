@@ -1,0 +1,194 @@
+/**
+ * 新增 / 编辑收货地址
+ * ---------------------------------------------------------------------------
+ * ⚠️ 关于「地图选点」：
+ *   本页的「地图选点」按钮使用 wx.chooseLocation（微信原生，无需第三方插件与 key）。
+ *   但该接口要求在 app.json 的 requiredPrivateInfos 中声明 "chooseLocation"。
+ *   若不声明，点击时会失败并提示。
+ *
+ *   当前 app.json 的 requiredPrivateInfos 为 []（用户此前特意关闭了定位相关权限），
+ *   因此本页做了容错：选点失败会提示改用「手动填写」，不影响主流程。
+ *   若确定要启用选点，在 app.json 中加回声明即可，本页代码无需改动。
+ *
+ * 手动填写路径同样完整可用（省/市/区 + 详细地址）。
+ * ---------------------------------------------------------------------------
+ */
+const ADDR = require('../../utils/address')
+
+Page({
+  data: {
+    id: '',
+    name: '',
+    phone: '',
+    // 省市区（用 van-area 选择）
+    province: '',
+    city: '',
+    district: '',
+    detail: '',
+    tag: '',
+    isDefault: false,
+    latitude: 0,
+    longitude: 0,
+    tags: ['家', '公司', '学校', '其他'],
+    saving: false,
+    // 省市区选择弹层
+    showArea: false,
+    areaCode: '',
+    // 省市区展示文案（如「云南省昆明市安宁市」）
+    areaText: ''
+  },
+
+  onLoad(options) {
+    if (options && options.id) {
+      const addr = ADDR.getById(options.id)
+      if (addr) {
+        this.setData({
+          id: addr.id,
+          name: addr.name,
+          phone: addr.phone,
+          province: addr.province || '',
+          city: addr.city || '',
+          district: addr.district || '',
+          areaText: [addr.province, addr.city, addr.district].filter(Boolean).join(''),
+          detail: addr.detail,
+          tag: addr.tag || '',
+          isDefault: !!addr.isDefault,
+          latitude: addr.latitude || 0,
+          longitude: addr.longitude || 0
+        })
+        wx.setNavigationBarTitle({ title: '编辑收货地址' })
+        return
+      }
+    }
+    wx.setNavigationBarTitle({ title: '新增收货地址' })
+  },
+
+  // ===== 省市区选择 =====
+  openArea() {
+    this.setData({ showArea: true })
+  },
+  closeArea() {
+    this.setData({ showArea: false })
+  },
+  onAreaConfirm(e) {
+    // e.detail.values 形如 [{ name: '云南省' }, { name: '昆明市' }, { name: '安宁市' }]
+    const values = (e.detail && e.detail.values) || []
+    const pick = (i) => (values[i] && values[i].name) || ''
+    const province = pick(0)
+    const city = pick(1)
+    const district = pick(2)
+    this.setData({
+      province,
+      city,
+      district,
+      areaText: [province, city, district].filter(Boolean).join(''),
+      showArea: false
+    })
+  },
+
+  // 根据省市区的值刷新展示文案（编辑已有地址时用）
+  refreshAreaText() {
+    const text = [this.data.province, this.data.city, this.data.district]
+      .filter(Boolean)
+      .join('')
+    this.setData({ areaText: text })
+  },
+
+  onInput(e) {
+    const field = e.currentTarget.dataset.field
+    this.setData({ [field]: e.detail.value })
+  },
+
+  onTagTap(e) {
+    const tag = e.currentTarget.dataset.tag
+    // 再次点击同一个标签则取消选择
+    this.setData({ tag: this.data.tag === tag ? '' : tag })
+  },
+
+  onDefaultChange(e) {
+    this.setData({ isDefault: e.detail.value })
+  },
+
+  /**
+   * 地图选点
+   * 成功后会带出 latitude / longitude 与地址文字。
+   * 未声明 chooseLocation 权限时会失败 —— 这里给出明确指引而不是静默失败。
+   */
+  onChooseLocation() {
+    wx.chooseLocation({
+      success: (res) => {
+        this.setData({
+          // res.address 是完整地址，直接作为详细地址，用户可再修改门牌号
+          detail: res.address || res.name || this.data.detail,
+          latitude: res.latitude,
+          longitude: res.longitude
+        })
+      },
+      fail: (err) => {
+        console.warn('[address] chooseLocation 失败', err)
+        const msg = (err && err.errMsg) || ''
+        if (msg.indexOf('auth') >= 0 || msg.indexOf('privacy') >= 0 || msg.indexOf('permission') >= 0) {
+          wx.showModal({
+            title: '无法打开地图选点',
+            content: '当前小程序未声明 chooseLocation 权限，请手动填写地址，或联系开发者在 app.json 中开启该权限。',
+            showCancel: false
+          })
+        } else if (msg.indexOf('cancel') < 0) {
+          // 用户主动取消不提示
+          wx.showToast({ title: '打开地图失败，请手动填写', icon: 'none' })
+        }
+      }
+    })
+  },
+
+  onSave() {
+    if (this.data.saving) return
+
+    const name = (this.data.name || '').trim()
+    const phone = (this.data.phone || '').trim()
+    const detail = (this.data.detail || '').trim()
+
+    // ===== 校验 =====
+    if (!name) {
+      wx.showToast({ title: '请填写收货人姓名', icon: 'none' })
+      return
+    }
+    if (!ADDR.isValidPhone(phone)) {
+      wx.showToast({ title: '请填写正确的手机号', icon: 'none' })
+      return
+    }
+    if (!detail) {
+      wx.showToast({ title: '请填写详细地址', icon: 'none' })
+      return
+    }
+
+    this.setData({ saving: true })
+    try {
+      ADDR.save({
+        id: this.data.id || undefined,
+        name,
+        phone,
+        // 省市区（区域判断会用「太平新城」等关键词匹配拼接后的地址）
+        province: this.data.province,
+        city: this.data.city,
+        district: this.data.district,
+        detail,
+        tag: this.data.tag,
+        isDefault: this.data.isDefault,
+        latitude: this.data.latitude,
+        longitude: this.data.longitude
+      })
+      wx.showToast({ title: '已保存', icon: 'success' })
+      setTimeout(() => {
+        wx.navigateBack()
+      }, 600)
+    } catch (e) {
+      this.setData({ saving: false })
+      wx.showToast({ title: (e && e.message) || '保存失败', icon: 'none' })
+    }
+  },
+
+  onBack() {
+    wx.navigateBack()
+  }
+})

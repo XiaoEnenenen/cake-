@@ -1,0 +1,143 @@
+<!-- ===== 「我的」页面 =====
+     改造说明见 pages/my/index.js 顶部注释。
+     2026-09-26 阶段二：会员卡 / 积分 / 积分记录 / 编辑会员卡信息 已**整体删除**
+     （页面文件、app.json 路由、云函数 action、数据库集合引用均已移除）。
+
+     保留：扫码核销（商家核销用）、用户信息、订单入口、收货地址、客服、门店信息、导航、拨号
+
+     注意：门店信息全部来自 shop-config.js（用户提供的真实值），页面不写死任何门店数据。
+-->
+
+<!-- ===== 1. 用户信息区 ===== -->
+<view class="mycard"></view>
+<view class="card-bar">
+  <!-- 已登录：显示头像 + 昵称 -->
+  <block wx:if="{{ userInfo && userInfo.avatarUrl }}">
+    <view class="user-row">
+      <image class="user-avatar" mode="aspectFill" src="{{ userInfo.avatarUrl }}"></image>
+      <view class="user-meta">
+        <view class="user-nick">{{ userInfo.nick || '微信用户' }}</view>
+        <view class="user-id">用户编号: {{ userInfo.id }}</view>
+      </view>
+    </view>
+  </block>
+
+  <!-- 未登录：引导授权 -->
+  <block wx:else>
+    <view class="user-row">
+      <view class="user-avatar user-avatar-empty"></view>
+      <view class="user-meta">
+        <view class="user-nick">点击登录</view>
+        <view class="user-id">登录后查看用户信息与订单</view>
+      </view>
+    </view>
+    <button class="user-login-mask" bindtap="updateUserInfo"></button>
+  </block>
+
+  <!-- 商家核销：保留，店主核销订单用 -->
+  <view wx:if="{{ canHX }}" class="scan-entry" bindtap="scanOrderCode">
+    <image class="scan-icon" mode="aspectFit" src="/images/user-icon-login@2x.png"></image>
+    <view class="scan-text">扫码核销</view>
+  </view>
+</view>
+
+<!-- ===== 2. 订单管理区（高频入口）===== -->
+<view class="section">
+  <view class="section-head">
+    <view class="section-title">我的订单</view>
+  </view>
+  <view class="order-entries">
+    <view
+      wx:for="{{ orderEntries }}"
+      wx:key="key"
+      class="order-entry"
+      data-status="{{ item.key }}"
+      bindtap="goOrders"
+    >
+      <view class="order-entry-label">{{ item.label }}</view>
+    </view>
+  </view>
+</view>
+
+<!-- ===== 3. 常用功能 ===== -->
+<view class="section">
+  <view class="list-item" bindtap="goAddress">
+    <image class="list-icon" mode="aspectFit" src="/images/user-icon-edit@2x.png"></image>
+    <view class="list-body">
+      <view class="list-title">收货地址</view>
+      <view wx:if="{{ defaultAddressText }}" class="list-sub">{{ defaultAddressText }}</view>
+      <view wx:else class="list-sub list-sub-empty">还没有收货地址，点击添加</view>
+    </view>
+    <view class="list-arrow"></view>
+  </view>
+
+  <!-- 联系客服：微信原生客服能力（open-type="contact"），无需云开发 -->
+  <!-- 注意：需先在小程序后台「功能 → 客服」添加客服人员，否则点击无响应 -->
+  <button class="list-item list-item-btn" open-type="contact" hover-class="none">
+    <image class="list-icon" mode="aspectFit" src="/images/user-icon-contact@2x.png"></image>
+    <view class="list-body">
+      <view class="list-title">联系客服</view>
+      <view class="list-sub">在线咨询，营业时间 {{ shop.openingHours }}</view>
+    </view>
+    <view class="list-arrow"></view>
+  </button>
+
+  <view class="list-item" bindtap="callShop">
+    <image class="list-icon" mode="aspectFit" src="/images/user-icon-login@2x.png"></image>
+    <view class="list-body">
+      <view class="list-title">拨打门店电话</view>
+      <view class="list-sub">{{ shop.phone || '暂未设置电话' }}</view>
+    </view>
+    <view class="list-arrow"></view>
+  </view>
+</view>
+
+<!-- ===== 4. 门店信息 ===== -->
+<view class="section">
+  <view class="section-head">
+    <view class="section-title">门店信息</view>
+  </view>
+
+  <view class="store-block">
+    <view class="store-name">{{ shop.name }}</view>
+
+    <view class="store-row">
+      <view class="store-label">地址</view>
+      <view class="store-value">{{ shop.address || '暂未设置' }}</view>
+    </view>
+
+    <view class="store-row">
+      <view class="store-label">营业时间</view>
+      <view class="store-value">{{ shop.openingHours || '暂未设置' }}</view>
+    </view>
+
+    <view class="store-row">
+      <view class="store-label">电话</view>
+      <view class="store-value">{{ shop.phone || '暂未设置' }}</view>
+    </view>
+
+    <!-- 一键导航：wx.openLocation，只传门店坐标，不获取用户位置 -->
+    <view
+      class="store-nav-btn {{ hasLocation ? '' : 'disabled' }}"
+      bindtap="openShopLocation"
+    >
+      {{ hasLocation ? '一键导航到店' : '门店坐标未配置' }}
+    </view>
+  </view>
+</view>
+
+<!-- ===== 5. 关于我们 ===== -->
+<view class="section">
+  <view class="list-item" bindtap="goAbout">
+    <image class="list-icon" mode="aspectFit" src="/images/user-icon-about@2x.png"></image>
+    <view class="list-body">
+      <view class="list-title">关于{{ shop.name }}</view>
+    </view>
+    <view class="list-arrow"></view>
+  </view>
+</view>
+
+<view class="bottom"></view>
+<!-- 底部导航栏 -->
+<import src="/template/tabbar/index.wxml" />
+<template is="tabbar" data="{{ tabbarActive: 3 }}" />

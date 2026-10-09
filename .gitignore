@@ -1,0 +1,48 @@
+# ============================================================
+# 卿欢蛋糕店小程序 —— Git 忽略规则
+# ------------------------------------------------------------
+# 原则：只提交"源码 + 云函数 + 云库种子数据 + 配置 + 文档"，
+#       生成物（node_modules / miniprogram_npm）与回滚暂存目录不入库。
+# ============================================================
+
+# ---- 构建产物（由「构建 npm」重新生成，不入库）----
+node_modules/
+miniprogram_npm/
+**/miniprogram_npm/
+
+# ---- 本地工具（便携版 Git、下载脚本产生的中间文件）----
+.tools/
+
+# ---- 回滚暂存目录（手工拷贝式回滚的产物，不入库）----
+.trash-cleanup/
+
+# ---- 微信开发者工具本机私有产物 ----
+project.private.config.json
+.wechatide/
+**/.wechatide/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---- 依赖与日志 ----
+*.log
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.npm/
+.eslintcache
+
+# ---- 编辑器/IDE ----
+.vscode/
+.idea/
+*.swp
+*~
+
+# ---- 临时与备份文件 ----
+*.tmp
+*.bak
+*.orig
+*_backup
+*_old
+*.backup-phase2/
+.backup-phase2/

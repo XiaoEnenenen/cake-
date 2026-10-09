@@ -1,0 +1,101 @@
+<!-- ===== 新增 / 编辑收货地址 =====
+     说明：本页只管「顾客自己的收货地址」，与门店地址无关。
+     地图选点为可选能力：未声明 chooseLocation 权限时可手动填写，不影响保存。
+ -->
+<view class="form-card">
+  <view class="form-row">
+    <view class="form-label">收货人</view>
+    <input
+      class="form-input"
+      placeholder="请填写收货人姓名"
+      placeholder-class="form-placeholder"
+      value="{{ name }}"
+      data-field="name"
+      bindinput="onInput"
+      maxlength="20"
+    />
+  </view>
+
+  <view class="form-row">
+    <view class="form-label">手机号</view>
+    <input
+      class="form-input"
+      type="number"
+      placeholder="请填写收货人手机号"
+      placeholder-class="form-placeholder"
+      value="{{ phone }}"
+      data-field="phone"
+      bindinput="onInput"
+      maxlength="11"
+    />
+  </view>
+
+  <!-- 省市区：使用 Vant 的 van-area（自带行政区划数据，无需第三方地图服务） -->
+  <view class="form-row" bindtap="openArea">
+    <view class="form-label">所在地区</view>
+    <view class="form-picker {{ areaText ? '' : 'form-placeholder' }}">
+      {{ areaText || '请选择省 / 市 / 区' }}
+    </view>
+    <view class="form-arrow"></view>
+  </view>
+
+  <!-- 地图选点：微信原生 wx.chooseLocation，无需第三方地图插件与 key -->
+  <view class="form-row" bindtap="onChooseLocation">
+    <view class="form-label">地图选点</view>
+    <view class="form-picker {{ latitude ? '' : 'form-placeholder' }}">
+      {{ latitude ? '已选点，可点击重新选择' : '可选：打开地图精确选点' }}
+    </view>
+    <view class="form-arrow"></view>
+  </view>
+
+  <view class="form-row">
+    <view class="form-label">详细地址</view>
+    <input
+      class="form-input"
+      placeholder="街道、小区、门牌号等"
+      placeholder-class="form-placeholder"
+      value="{{ detail }}"
+      data-field="detail"
+      bindinput="onInput"
+      maxlength="60"
+    />
+  </view>
+</view>
+
+<view class="edit-note">
+  提示：省市区与详细地址至少填其一即可下单；「地图选点」用于精确计算配送距离，未选点则按文字判断配送范围。
+</view>
+
+<!-- 省市区选择弹层
+     说明：不传 area-list，van-area 会使用内置的行政区划数据（无需第三方地图服务与 key） -->
+<van-area
+  show="{{ showArea }}"
+  title="选择所在地区"
+  bind:confirm="onAreaConfirm"
+  bind:cancel="closeArea"
+  bind:close="closeArea"
+/>
+
+<view class="form-card">
+  <view class="tag-row">
+    <view class="form-label">标签</view>
+    <view
+      wx:for="{{ tags }}"
+      wx:key="*this"
+      class="tag-item {{ tag === item ? 'active' : '' }}"
+      data-tag="{{ item }}"
+      bindtap="onTagTap"
+    >{{ item }}</view>
+  </view>
+</view>
+
+<view class="default-row">
+  <view>设为默认地址</view>
+  <switch checked="{{ isDefault }}" color="#ffd100" bindchange="onDefaultChange" />
+</view>
+
+<view class="addr-bottom">
+  <view class="addr-btn {{ saving ? 'disabled' : '' }}" bindtap="onSave">
+    {{ saving ? '保存中…' : '保存' }}
+  </view>
+</view>

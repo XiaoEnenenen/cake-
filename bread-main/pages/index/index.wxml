@@ -1,0 +1,38 @@
+<!-- 2026-09-26 阶段二：已删除顶部积分条（会员积分体系）。
+     删除内容：{{userAmount.score}}p 积分显示 + 「下滑查看会员卡」文案。
+     对应样式 .inc-bar / .inc-box / .myinc / .p / .slide 已在 index.wxss 中一并移除。 -->
+
+<swiper class='focus' autoplay bindchange="bannerChange">
+  <swiper-item wx:for="{{banners}}" wx:key="id">
+    <image mode='aspectFill' class='focus' src='{{item.picUrl}}'></image>
+  </swiper-item>
+</swiper>
+<view class="Borders-box">
+  <view wx:for="{{banners}}" wx:key="id" class="Borders{{index == curbanner ? '':'1'}}"></view>
+</view>
+
+<!-- ===== 本店信息卡（单店固定配置，不涉及定位/地图/距离）=====
+     数据来源：shop-config.js → storage.shopInfo
+     ================================================================ -->
+<view class="shop-card">
+  <view class="shop-card-head">
+    <view class="shop-card-name">{{ shop.name || '卿欢蛋糕' }}</view>
+    <view class="shop-card-badge">自提</view>
+  </view>
+  <view class="shop-card-hours">营业时间 {{ shop.openingHours || '08:00-20:00' }}</view>
+  <view wx:if="{{ shop.address }}" class="shop-card-addr">{{ shop.address }}</view>
+  <navigator url="/pages/orders/index" hover-class="none">
+    <view class="shop-card-btn">开始点单</view>
+  </navigator>
+</view>
+
+<view class="section-title">本店上新</view>
+
+<!-- 2026-09-26 阶段二：已删除多门店遗留区块（原为 wx:if="{{false}}" 死代码）。
+     删除内容：「附近门店 / 所有门店」入口、含距离的门店卡片（{{shop.distance}}km）。
+     对应样式 .shop / .Nearby-stores / .all-stores / .shop-list / .distance-bar 等
+     已在 index.wxss 中一并移除。若将来需恢复多门店，需同时重建页面与入口。 -->
+
+<!-- 底部导航栏 -->
+<import src="/template/tabbar/index.wxml" />
+<template is="tabbar" data="{{ tabbarActive: 0 }}" />

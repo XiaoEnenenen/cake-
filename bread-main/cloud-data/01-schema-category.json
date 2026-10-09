@@ -1,0 +1,29 @@
+{
+  "collection": "category",
+  "description": "商品分类集合。字段按小程序页面实际读取的字段设计，无冗余。",
+  "source": "根据 pages/orders/index.wxml、pages/orders/index.js 的实际用法反推",
+  "usage": {
+    "读取接口": "原 WXAPI.goodsCategoryV2() → 将改为云函数或 db.collection('category').orderBy('sort','asc').get()",
+    "页面位置": "pages/orders/index.wxml 左侧分类栏 wx:for=\"{{ goodsCategory }}\"",
+    "筛选逻辑": "pages/orders/index.js 的 onCategoryClick 用分类 id 调 goodsv2({ categoryId }) 过滤商品"
+  },
+  "fields": [
+    { "name": "_id", "type": "string", "required": true, "note": "云数据库自动生成，前端不用" },
+    { "name": "name", "type": "string", "required": true, "note": "分类显示名，如「生日蛋糕」。orders 页左侧栏显示的就是它" },
+    { "name": "sort", "type": "number", "required": false, "note": "排序，越小越靠前。建议 10/20/30 递增，方便以后插新分类" },
+    { "name": "enabled", "type": "boolean", "required": false, "note": "是否显示。false 可临时下架该分类而不用删除" }
+  ],
+  "example": {
+    "_id": "auto",
+    "name": "生日蛋糕",
+    "sort": 10,
+    "enabled": true
+  },
+  "notes": [
+    "分类不含图标字段：用户在 2026-02-14 的确认中选择了「不加图标，只用文字」。",
+    "若将来要加图标，新增字段 icon（emoji 字符串或云存储 fileID）即可，前端加一行渲染。",
+    "「推荐」「折扣」这类特殊分类：原项目模板里它们是带图标的特殊入口。若本店也想要，",
+    "  建议不要混在 category 集合里，而是前端写死的固定入口，避免与真实分类混淆。",
+    "分类与商品的关联靠 goods.categoryId 指向本集合的 _id，不需要在分类里存商品列表。"
+  ]
+}

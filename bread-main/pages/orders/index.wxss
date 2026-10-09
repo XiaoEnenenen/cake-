@@ -1,0 +1,702 @@
+/* ===== 卿欢蛋糕 点单页样式（美团风格：白 + 黄）=====
+   改造说明：原为「分类胶囊 + 双列卡片」样式，现重构为「左分类栏 + 右单列商品」。
+   配色令牌见 app.wxss 顶部注释。
+
+   2026-02-14 点单页交互与结算栏优化（本次改动）：
+     - 新增 .settle-bar / .settle-left / .settle-badge / .settle-btn 等底部结算栏样式
+     - 新增 .list-bottom-holder 底部占位（防止固定结算栏遮挡最后一项）
+     - 新增购物车弹层的 .spec-text / .subtotal / .del-btn / .cart-list-head / .cart-clear
+     - 删除旧的 .shop-cart / .pay-btn 悬浮条样式（已被 .settle-bar 取代）
+*/
+
+page {
+  position: relative;
+  background-color: #f5f5f5;
+}
+
+/* ===== 店铺信息卡（仿瑞幸顶栏：品类行 + 门店行）===== */
+.shop-head {
+  background-color: #ffffff;
+  padding: 20rpx 30rpx 24rpx;
+}
+
+/* 顶行：配送方式切换（自提 / 外送）*/
+.pickup-row {
+  display: flex;
+  align-items: center;
+}
+
+.pickup-tab {
+  position: relative;
+  font-size: 34rpx;
+  color: #8a8a8a;
+  padding: 0 24rpx 14rpx;
+}
+
+.pickup-tab:first-child {
+  padding-left: 0;
+}
+
+.pickup-tab.active {
+  font-weight: 600;
+  color: #1f1f1f;
+}
+
+.pickup-tab.active::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  transform: translateX(-50%);
+  width: 40rpx;
+  height: 6rpx;
+  border-radius: 3rpx;
+  background-color: #ffd100;
+}
+
+.pickup-tab:first-child.active::after {
+  left: 0;
+  transform: none;
+}
+
+/* 门店行：图标 + 店名 + 营业中 */
+.store-row {
+  display: flex;
+  align-items: center;
+  margin-top: 20rpx;
+}
+
+.store-icon {
+  width: 32rpx;
+  height: 32rpx;
+  flex-shrink: 0;
+}
+
+.store-name {
+  flex: 1;
+  margin-left: 12rpx;
+  font-size: 32rpx;
+  font-weight: 600;
+  color: #1f1f1f;
+  line-height: 44rpx;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.store-open {
+  flex-shrink: 0;
+  margin-left: 16rpx;
+  padding: 0 12rpx;
+  height: 34rpx;
+  line-height: 34rpx;
+  font-size: 20rpx;
+  color: #ff2d2d;
+  border: 1rpx solid #ff2d2d;
+  border-radius: 6rpx;
+  background-color: #ffffff;
+}
+
+.shop-hours {
+  margin-top: 10rpx;
+  font-size: 24rpx;
+  color: #8a8a8a;
+}
+
+/* 外送模式提示（简化版外送：由商家电话确认地址） */
+.shop-delivery-tip {
+  margin-top: 10rpx;
+  font-size: 24rpx;
+  color: #ff2d2d;
+  line-height: 34rpx;
+}
+
+/* ===== 店铺公告 ===== */
+.shop-notice {
+  margin-top: 22rpx;
+  font-size: 24rpx;
+  color: #8a8a8a;
+  line-height: 34rpx;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+/* 2026-02-14 清理：原 `.blank`（16rpx 灰色间隔条）规则删除，本页 wxml 零引用。
+   注意：`pages/pay/index.wxss` 与 `pages/current-order/index.wxss` 各有自己的
+   `.blank1` / `.blank2`，与本规则无关，未改动。 */
+
+/* ===== 次栏（原为 点菜/评价/商家 三栏 + 温馨提示）=====
+   改造：已删除「评价」「商家」与温馨提示，仅保留菜单一项。
+   瑞幸次栏为左对齐多标签，此处单项也保持左对齐。
+*/
+.main-tabs {
+  display: flex;
+  background-color: #ffffff;
+  padding: 16rpx 0 0 30rpx;
+}
+
+.main-tab {
+  text-align: center;
+  font-size: 30rpx;
+  color: #8a8a8a;
+  padding: 0 8rpx 16rpx;
+  position: relative;
+}
+
+.main-tab.active {
+  color: #1f1f1f;
+  font-weight: 600;
+}
+
+.main-tab.active::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  transform: translateX(-50%);
+  width: 48rpx;
+  height: 6rpx;
+  border-radius: 3rpx;
+  background-color: #ffd100;
+}
+
+/* ===== 左分类栏 + 右商品列表 ===== */
+/* 高度计算说明：本页占高 = 店铺信息卡(约410rpx) + 菜单次栏(约90rpx)，
+   故可用高度按 100vh - 500rpx 估算；若真机上底部被裁或留白过多，调整此值即可。 */
+.menu-wrap {
+  display: flex;
+  align-items: flex-start;
+  background-color: #ffffff;
+}
+
+.side-bar {
+  width: 176rpx;
+  height: calc(100vh - 500rpx);
+  background-color: #f5f5f5;
+  flex-shrink: 0;
+}
+
+.side-item {
+  position: relative;
+  padding: 30rpx 16rpx;
+  font-size: 26rpx;
+  color: #3c3c3c;
+  text-align: center;
+  line-height: 36rpx;
+}
+
+.side-item.active {
+  background-color: #ffffff;
+  color: #1f1f1f;
+  font-weight: 600;
+}
+
+.side-item.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 8rpx;
+  height: 40rpx;
+  border-radius: 0 4rpx 4rpx 0;
+  background-color: #ffd100;
+}
+
+.goods-list {
+  flex: 1;
+  height: calc(100vh - 500rpx);
+  background-color: #ffffff;
+  padding-left: 20rpx;
+}
+
+.goods-empty {
+  margin-top: 200rpx;
+  text-align: center;
+  font-size: 26rpx;
+  color: #8a8a8a;
+}
+
+/* ===== 商品行（左图右文）=====
+   2026-02-14：整行绑定 goDetail，故补充按压反馈（原来只有图片可点）。
+   .goods-row-hover 通过 wxml 的 hover-class 生效。 */
+.goods-row {
+  display: flex;
+  padding: 24rpx 20rpx 24rpx 0;
+  border-bottom: 1rpx solid #f2f3f5;
+}
+
+.goods-row-hover {
+  background-color: #fafafa;
+}
+
+.goods-pic {
+  width: 170rpx;
+  height: 170rpx;
+  border-radius: 12rpx;
+  background-color: #f5f5f5;
+  flex-shrink: 0;
+}
+
+.goods-info {
+  flex: 1;
+  margin-left: 20rpx;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.goods-name {
+  font-size: 30rpx;
+  font-weight: 600;
+  color: #1f1f1f;
+  line-height: 40rpx;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.goods-desc {
+  margin-top: 8rpx;
+  font-size: 22rpx;
+  color: #8a8a8a;
+  line-height: 30rpx;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.goods-tags {
+  margin-top: 10rpx;
+  min-height: 32rpx;
+}
+
+.goods-bottom {
+  margin-top: auto;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+}
+
+.goods-price {
+  font-size: 34rpx;
+  font-weight: 600;
+  color: #ff4b33;
+  line-height: 40rpx;
+}
+
+.goods-price .symbol {
+  font-size: 22rpx;
+  font-weight: 600;
+  margin-right: 2rpx;
+}
+
+.goods-add {
+  width: 52rpx;
+  height: 52rpx;
+  border-radius: 50%;
+  background-color: #ffd100;
+  color: #1f1f1f;
+  font-size: 34rpx;
+  font-weight: 600;
+  text-align: center;
+  line-height: 52rpx;
+  flex-shrink: 0;
+}
+
+/* 商品列表底部占位：结算栏(约120rpx) + 自定义 tabbar(100rpx) + 安全区余量，
+   保证最后一项商品不被固定结算栏遮挡。
+   说明：不用 calc() 包 env()（部分基础库对二者嵌套支持不稳），改为两条独立声明叠加。 */
+.list-bottom-holder {
+  height: 300rpx;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* ===== 底部结算栏（2026-02-14 按截图重做）=====
+   白色底 + 上圆角 + 阴影；坐落在自定义 tabbar 之上，并让出 iPhone 安全区。
+   z-index 低于购物车弹层(van-popup)，避免遮挡弹层。 */
+.settle-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  /* 底边抬到自定义 tabbar 之上；与 tabbar 的 van-tabbar--safe 同步让出安全区
+     （vant 自身即用 calc(..., env(...)) 写法，此处保持一致） */
+  bottom: calc(100rpx + env(safe-area-inset-bottom));
+  height: 120rpx;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 32rpx;
+  box-sizing: border-box;
+  background-color: #ffffff;
+  border-radius: 24rpx 24rpx 0 0;
+  box-shadow: 0 -8rpx 24rpx rgba(0, 0, 0, 0.08);
+  z-index: 100;
+}
+
+.settle-left {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+}
+
+.settle-left-hover {
+  opacity: 0.75;
+}
+
+/* 购物袋图标 + 右上角红色圆形数量角标 */
+.settle-cart-wrap {
+  position: relative;
+  width: 64rpx;
+  height: 64rpx;
+  flex-shrink: 0;
+}
+
+.settle-cart-icon {
+  width: 64rpx;
+  height: 64rpx;
+}
+
+.settle-badge {
+  position: absolute;
+  top: -14rpx;
+  right: -18rpx;
+  min-width: 34rpx;
+  height: 34rpx;
+  padding: 0 8rpx;
+  box-sizing: border-box;
+  border-radius: 17rpx;
+  background-color: #ff2d2d;
+  color: #ffffff;
+  font-size: 22rpx;
+  line-height: 34rpx;
+  text-align: center;
+}
+
+.settle-money {
+  margin-left: 96rpx;
+  min-width: 0;
+}
+
+.settle-price {
+  font-size: 40rpx;
+  font-weight: 600;
+  color: #ff4b33;
+  line-height: 46rpx;
+}
+
+.settle-price text {
+  font-size: 26rpx;
+  font-weight: 600;
+  margin-right: 4rpx;
+}
+
+.settle-count {
+  font-size: 22rpx;
+  color: #8a8a8a;
+  line-height: 30rpx;
+}
+
+/* 右侧黄色胶囊按钮 */
+.settle-btn {
+  flex-shrink: 0;
+  margin-left: 20rpx;
+  width: 200rpx;
+  height: 80rpx;
+  border-radius: 40rpx;
+  background-color: #ffd100;
+  color: #1f1f1f;
+  font-size: 32rpx;
+  font-weight: 600;
+  text-align: center;
+  line-height: 80rpx;
+}
+
+.settle-btn-hover {
+  background-color: #f5c400;
+}
+
+/* 置灰态放最后并用 !important，确保 hover 反馈不会把置灰样式覆盖掉 */
+.settle-btn-disabled {
+  background-color: #ebebeb !important;
+  color: #b3b3b3;
+}
+
+/* ===== 购物车弹层 ===== */
+/* van-popup 内部有 text-align:center 的默认样式，这里显式声明左对齐，
+   避免小计/规格文字被居中。 */
+.shop-cart2,
+.cart-list-head,
+.goods-box {
+  text-align: left;
+}
+
+.shop-cart2 {
+  margin-top: 30rpx;
+  padding-bottom: 30rpx;
+  width: 750rpx;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.shop-cart2 .close {
+  width: 80rpx;
+  height: 80rpx;
+  background-color: #f5f5f5;
+  border-radius: 50%;
+  font-size: 48rpx;
+  text-align: center;
+  line-height: 80rpx;
+  margin-right: 40rpx;
+  color: #8a8a8a;
+}
+
+/* 弹层顶部购物车块（图标 + 文案 + 数量角标） */
+.cart-box {
+  position: relative;
+}
+
+.cart-box .cart {
+  display: flex;
+  align-items: center;
+  padding-right: 24rpx;
+  margin-left: 40rpx;
+  height: 80rpx;
+  border-radius: 40rpx;
+  box-shadow: 0 12rpx 24rpx 0 rgba(0, 0, 0, 0.06), 0 4rpx 8rpx 0 rgba(0, 0, 0, 0.06);
+  background-color: #ffffff;
+}
+
+.cart-box .cart .icon {
+  width: 32rpx;
+  height: 32rpx;
+  margin-left: 26rpx;
+}
+
+.cart-box .cart .txt {
+  font-size: 32rpx;
+  font-weight: 600;
+  text-align: center;
+  color: #3c3c3c;
+  margin: 0 26rpx;
+}
+
+.cart-box .num {
+  position: absolute;
+  top: -10rpx;
+  left: 28rpx;
+  width: 40rpx;
+  height: 40rpx;
+  line-height: 40rpx;
+  background: #ff2d2d;
+  color: #ffffff;
+  border-radius: 50%;
+  text-align: center;
+  font-size: 26rpx;
+}
+
+/* 列表头：件数 + 清空 */
+.cart-list-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 40rpx 16rpx;
+}
+
+.cart-list-head .cart-list-count {
+  font-size: 24rpx;
+  color: #8a8a8a;
+}
+
+.cart-list-head .cart-clear {
+  font-size: 24rpx;
+  color: #ff2d2d;
+  padding: 6rpx 20rpx;
+  border: 1rpx solid #ff2d2d;
+  border-radius: 24rpx;
+}
+
+.cart-empty {
+  margin-top: 120rpx;
+  text-align: center;
+  font-size: 26rpx;
+  color: #8a8a8a;
+}
+
+.goods-box {
+  display: flex;
+  margin-bottom: 10rpx;
+}
+
+.goods-box .photo-box {
+  width: 192rpx;
+  height: 192rpx;
+  background-color: #f5f5f5;
+}
+
+.goods-box .photo-box .photos {
+  width: 164rpx;
+  height: 162rpx;
+  border-radius: 10.2px;
+  margin: 14rpx;
+}
+
+.goods-box .content-box {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  background-color: #ffffff;
+}
+
+.goods-box .content-box .title1 {
+  font-size: 30rpx;
+  color: #1f1f1f;
+  margin: 20rpx 40rpx 0rpx 40rpx;
+}
+
+/* 规格文字（2026-02-14 新增） */
+.goods-box .content-box .spec-text {
+  margin: 8rpx 40rpx 0rpx 40rpx;
+  font-size: 22rpx;
+  color: #8a8a8a;
+  line-height: 30rpx;
+}
+
+.goods-box .content-box .price-box {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  background-color: #ffffff;
+  margin: 16rpx 10rpx 10rpx 40rpx;
+}
+
+.goods-box .content-box .price-left {
+  display: flex;
+  flex-direction: column;
+}
+
+.goods-box .content-box .unit-price {
+  font-size: 30rpx;
+  font-weight: 600;
+  color: #ff4b33;
+}
+
+.goods-box .content-box .unit-price text {
+  font-size: 22rpx;
+  font-weight: 600;
+  margin-right: 6rpx;
+}
+
+/* 小计（2026-02-14 新增，= 后端单价 × 数量，纯展示） */
+.goods-box .content-box .subtotal {
+  margin-top: 4rpx;
+  font-size: 22rpx;
+  color: #8a8a8a;
+}
+
+.goods-box .content-box .cart-ops {
+  display: flex;
+  align-items: center;
+}
+
+.goods-box .content-box .del-btn {
+  font-size: 22rpx;
+  color: #8a8a8a;
+  padding: 6rpx 16rpx;
+  margin-right: 12rpx;
+  border: 1rpx solid #ebebeb;
+  border-radius: 24rpx;
+}
+
+.goods-box .content-box .price-box .input {
+  font-size: 26rpx;
+  font-weight: 600;
+  text-align: center;
+  color: #1f1f1f;
+  background: #ffffff;
+}
+
+.goods-box .content-box .price-box .plus {
+  width: 48rpx;
+  height: 48rpx;
+  background-color: #ffd100;
+  border-radius: 50%;
+}
+
+.goods-box .content-box .price-box .minus {
+  width: 48rpx;
+  height: 48rpx;
+  background-color: #ebebeb;
+  border-radius: 50%;
+}
+
+/* 弹层底部结算条（在弹层内固定，故用 safe-area 内边距而不是贴死底部） */
+.pay-bar {
+  box-shadow: 0 -0.5px 0 0 rgba(0, 0, 0, 0.15);
+  background-color: #ffffff;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  position: fixed;
+  bottom: 0rpx;
+  left: 0;
+  right: 0;
+  height: calc(120rpx + env(safe-area-inset-bottom));
+  padding-bottom: env(safe-area-inset-bottom);
+  box-sizing: border-box;
+  z-index: 999;
+}
+
+.pay-bar .pay-box {
+  display: flex;
+  flex-direction: column;
+  margin-left: 40rpx;
+}
+
+.pay-bar .pay-box .title {
+  font-size: 22rpx;
+  color: #8a8a8a;
+}
+
+.pay-bar .pay-box .price {
+  font-size: 32rpx;
+  font-weight: 600;
+  color: #ff4b33;
+  line-height: 40rpx;
+}
+
+.pay-bar .pay-box .price text {
+  font-size: 22rpx;
+  font-weight: 600;
+  margin-right: 6rpx;
+}
+
+.pay-bar .pay-byn {
+  width: 320rpx;
+  height: 80rpx;
+  border-radius: 40rpx;
+  background-color: #ffd100;
+  margin-right: 40rpx;
+  font-size: 32rpx;
+  font-weight: 600;
+  text-align: center;
+  line-height: 80rpx;
+  color: #1f1f1f;
+}
+
+.pay-bar .pay-byn-disabled {
+  background-color: #ebebeb;
+  color: #b3b3b3;
+}
+
+/* 2026-02-14 清理：已删除本页无对应 DOM 的死样式
+   - .no-orders （「暂无订单记录」属 pages/current-order，本页 wxml 零引用）
+   - .blank     （本页 wxml 零引用）
+   说明：仅删样式规则，未改动任何 wxml / 交互 / 业务逻辑。 */

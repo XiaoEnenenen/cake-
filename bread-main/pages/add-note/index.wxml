@@ -1,0 +1,6 @@
+<textarea class='describe' placeholder='请输入订单备注内容' model:value="{{remark}}" maxlength="200" />
+<view class="words-num">{{remark.length}}/200</view>
+<view class="blank"></view>
+<!-- 改造：补充品牌黄配色，原 Vant 默认蓝色与白黄主题冲突 -->
+<van-button type="primary" color="#ffd100" text-color="#1f1f1f" size="normal" custom-class="update" bindtap="ok">更新备注</van-button>
+<view wx:for="{{list}}" wx:key="*this" class="memark" bindtap="msgTap" data-msg="{{item}}"><text>{{item}}</text></view>

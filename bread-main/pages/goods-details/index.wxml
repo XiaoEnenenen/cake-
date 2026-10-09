@@ -1,0 +1,96 @@
+<!-- ===== 卿欢蛋糕 商品详情 / 规格选择 =====
+     2026-02-14 改造（按用户截图重做）：
+       1. 规格由「下拉 picker」改为「标签(chip) 单选」：选中项黄底 + 红描边，未选中浅灰底。
+       2. 新增底部「已选规格」汇总行（如「400克、马路爆爆珠、马路爆爆珠」）。
+       3. 底部价格区：左侧「¥ 当前合计」+「¥ 基础价 起」，右侧黄色「加入购物车」。
+       4. 修复 onClose 缺失（原来弹层无法关闭）。
+     数据来源未改动：仍为 API.goodsDetailV2（basicInfo / pics / content / properties）。
+     ⚠️ 规格组为单选语义（与云函数 calcPrice 的按组唯一选中项计价一致）。
+     ⚠️ 截图中的「¥54 划线原价 / 新客价」在数据层不存在，故未渲染，说明见 index.js 末尾注释。
+-->
+
+<!-- 商品图轮播 -->
+<swiper class='goods-details-photo' autoplay bindchange="bannerChange">
+  <swiper-item wx:for="{{goodsDetail.pics}}" wx:key="id">
+    <!-- 兼容两种 pics 结构：字符串 URL，或 { pic: url } 对象
+         （示例数据为 [{pic: '...'}]，cloud-data/02-schema-goods.js 里写的是字符串数组） -->
+    <image mode='aspectFill' src='{{item.pic || item}}'></image>
+  </swiper-item>
+</swiper>
+<view class="Borders-box">
+  <view wx:for="{{goodsDetail.pics}}" wx:key="id" class="Borders{{index == curbanner ? '':'1'}}"></view>
+</view>
+
+<!-- 规格选择弹层（overlay 关闭，保持原有行为） -->
+<van-popup
+  show="{{ true }}"
+  overlay="{{ false }}"
+  round
+  position="bottom"
+  safe-area-inset-bottom
+  bind:close="onClose">
+
+  <!-- 可滚动内容区：底部预留固定价格栏的高度，避免被遮挡 -->
+  <scroll-view class="detail-scroll" scroll-y>
+    <view class="detail-head">
+      <view class="content">{{goodsDetail.basicInfo.name}}</view>
+      <!-- 库存状态：沿用既有数据，不新增业务规则 -->
+      <view wx:if="{{goodsDetail.basicInfo.stores > 0}}" class="detail-stock">库存 {{goodsDetail.basicInfo.stores}}</view>
+      <view wx:else class="detail-stock detail-soldout">已售罄</view>
+    </view>
+    <!-- 关闭按钮：修复原实现「弹层无遮罩且无关闭入口，只能按返回键」的问题 -->
+    <view class="detail-close" bindtap="onClose">×</view>
+
+    <!-- ===== 规格组：每组一组标签，单选 ===== -->
+    <view wx:for="{{specGroups}}" wx:key="pid" wx:for-item="group" wx:for-index="gi" class="spec-group">
+      <view class="spec-group-title">
+        <text class="spec-group-name">{{group.pname}}</text>
+        <text class="spec-group-tag">单选</text>
+      </view>
+      <view class="spec-options">
+        <view
+          wx:for="{{group.options}}"
+          wx:key="cid"
+          wx:for-item="opt"
+          wx:for-index="oi"
+          class="spec-chip {{ selectedIndices[gi] === oi ? 'spec-chip-active' : '' }}"
+          data-gi="{{gi}}"
+          data-oi="{{oi}}"
+          bindtap="onSelectOption"
+        >{{opt.cname}}</view>
+      </view>
+    </view>
+
+    <!-- 商品详情富文本 -->
+    <view wx:if="{{goodsDetail.content}}" class="details"><parser html="{{goodsDetail.content}}" /></view>
+
+    <view class="detail-bottom-holder"></view>
+  </scroll-view>
+
+  <!-- ===== 底部固定区：已选规格 + 价格 + 加入购物车 ===== -->
+  <view class="detail-footer">
+    <!-- 已选规格汇总 -->
+    <view wx:if="{{selectedText}}" class="selected-row">
+      <text class="selected-label">已选规格：</text>
+      <text class="selected-value">{{selectedText}}</text>
+    </view>
+
+    <view class="detail-price-bar">
+      <view class="price-left">
+        <view class="price-now"><text>¥</text>{{ displayPrice }}</view>
+        <!-- 起价说明：本店价格规则为「基础价 + 选中项加价」，
+             故这里显示商品起价（= basicInfo.minPrice），与云函数 calcPrice 一致 -->
+        <view class="price-from"><text>¥</text>{{ basePrice }} 起</view>
+      </view>
+
+      <view class="add-cart" bindtap="addCart">
+        <view class="add1">加入购物车</view>
+        <image mode='aspectFill' class='add2' src='/images/icon-2-1-shop-cart-normal@2x.png'></image>
+      </view>
+    </view>
+
+    <!-- 已加购提示：复用原有 checkBuyedNumber 的结果，不新增交互 -->
+    <view wx:if="{{buyedNumber > 0}}" class="buyed-tip">购物车中已有 {{buyedNumber}} 件同规格商品</view>
+  </view>
+
+</van-popup>
