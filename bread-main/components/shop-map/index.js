@@ -14,6 +14,11 @@
  *
  * 权限降级：拿不到定位时，只隐藏「距离您 X」并在下方给一条可点击的提示，
  *          地图与「一键导航到店」照常可用（openLocation 不需要定位权限）。
+ *
+ * 距离文案优先级：
+ *   页面传入的 distanceText（父页面算好的业务距离，如外送=收货地址→门店）
+ *   > 组件自己定位算的「距离您 X」。
+ *   外送场景必须传 distanceText，否则顾客看到的会是"当前位置到门店"的距离。
  * ---------------------------------------------------------------------------
  */
 const LOC = require('../../utils/location')
@@ -44,10 +49,19 @@ Component({
       type: Number,
       value: 16
     },
-    // 是否显示「距离您 X」气泡
+    // 是否显示距离气泡（文案见下面的 distanceText / locateText）
     showDistance: {
       type: Boolean,
       value: true
+    },
+    // 由页面指定的距离文案（如结算页外送时的「配送距离 1.2km」= 收货地址 → 门店）。
+    // 传了就以它为准，并且**不再申请定位**：
+    //   外送场景顾客关心的是"送到我这里多远"，显示当前位置到门店的距离会误导
+    //   （人在外面下单时，这个数字与实际配送距离完全不是一回事）。
+    // 留空 → 沿用老行为：定位成功后显示「距离您 X」。
+    distanceText: {
+      type: String,
+      value: ''
     },
     // 是否显示「一键导航到店」按钮（mini 形态使用圆形按钮，不受此开关影响）
     showNavigate: {
@@ -71,7 +85,8 @@ Component({
     longitude: 0,
     markers: [],
     navigable: false,
-    distanceText: '',
+    // 内部定位算出来的文案（「距离您 X」）；页面传入 distanceText 时不使用
+    locateText: '',
     hint: '',
     hintDenied: false,
     // 是否运行在微信开发者工具里（工具内导航可能走不通，给一行说明，不阻断操作）
@@ -81,6 +96,14 @@ Component({
   observers: {
     shop(shop) {
       this.syncShop(shop)
+    },
+    distanceText(text) {
+      // 页面把指定的距离文案清空时（如从「外送」切回「自提」），
+      // 补做一次定位，恢复「距离您 X」。
+      if (!text && this.data.navigable && !this._autoLocated) {
+        this._autoLocated = true
+        this.locate()
+      }
     }
   },
 
@@ -129,7 +152,8 @@ Component({
       // 门店信息可能是页面 onLoad/接口返回后才写入的（组件此时已 attached），
       // 因此坐标一旦就绪就补做一次定位；同一实例只自动定位一次，
       // 之后重试由用户点提示条触发。
-      if (navigable && this.data.autoLocate && !this._autoLocated) {
+      // 页面已指定距离文案（外送场景）时不需要定位，避免无谓的授权弹窗。
+      if (navigable && this.data.autoLocate && !this.data.distanceText && !this._autoLocated) {
         this._autoLocated = true
         this.locate()
       }
@@ -146,7 +170,7 @@ Component({
         this.setData({
           hint: res.errMsg || '定位失败，点击重试',
           hintDenied: !!res.denied,
-          distanceText: ''
+          locateText: ''
         })
         return
       }
@@ -155,7 +179,7 @@ Component({
       this.setData({
         hint: '',
         hintDenied: false,
-        distanceText: text ? '距离您 ' + text : ''
+        locateText: text ? '距离您 ' + text : ''
       })
       this.triggerEvent('located', { latitude: res.latitude, longitude: res.longitude, km })
     },

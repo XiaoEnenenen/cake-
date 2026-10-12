@@ -2,21 +2,17 @@
 // 2026-10-09 阶段三：统一数据层只有云开发一条通道（api 工厂降级通道已删除）。
 const API = require('../../utils/api-map')
 const AUTH = require('../../utils/auth')
-const app = getApp()
-// 2026-09-26 阶段二：已移除未使用的 @vant/weapp dialog 导入与 pay.js 引用（死引用清理）
-app.configLoadOK = () => {
-  
-}
+// 2026-10-12 阶段 5.7：删除空的 `app.configLoadOK = () => {}` 桩（api 工厂时代遗留的启动回调，
+// 本页内容由 cmsPage 直接拉取，不依赖启动配置）。
 Page({
   data: {
-
+    // 内容单页数据（cmsPage 返回 { info: { title, content } }）
+    // 2026-10-12 复核整改：wxml 读 cmsPage.info.*，按本项目约定显式声明。
+    cmsPage: null
   },
   onLoad: function (options) {
     // options.key = 'qa'
     this.cmsPage(options.key)
-  },
-  onShow: function () {
-
   },
   async cmsPage(key) {
     // https://www.yuque.com/apifm/nu0f75/utgp8i

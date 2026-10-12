@@ -35,6 +35,8 @@
  */
 const SHOP_CONFIG = require('../shop-config')
 const DR = require('./delivery-range')
+// 阶段 5.7：日志统一收敛到 utils/log.js
+const LOG = require('./log')
 
 const SCOPE = 'scope.userLocation'
 
@@ -223,7 +225,7 @@ async function getCurrent() {
       type: 'gcj02',
       success: (res) => resolve({ ok: true, latitude: res.latitude, longitude: res.longitude }),
       fail: (err) => {
-        console.warn('[location] getLocation 失败', err)
+        LOG.warn('[location] getLocation 失败', err)
         resolve({ ok: false, denied: false, errMsg: describeError(err) })
       }
     })
@@ -272,7 +274,7 @@ function openBuiltInMap(shop) {
       fail: (err) => {
         const msg = String((err && err.errMsg) || '')
         if (msg.indexOf('cancel') < 0) {
-          console.error('[location] openLocation 失败', err)
+          LOG.error('[location] openLocation 失败', err)
           wx.showToast({ title: '打开地图失败，请稍后重试', icon: 'none' })
         }
         resolve(false)
@@ -291,7 +293,7 @@ function openRoutePlan(shop) {
       url: buildRoutePlanUrl(shop),
       success: () => resolve(true),
       fail: (err) => {
-        console.warn('[location] 路线规划插件不可用，回落到微信内置地图', err)
+        LOG.warn('[location] 路线规划插件不可用，回落到微信内置地图', err)
         resolve(false)
       }
     })

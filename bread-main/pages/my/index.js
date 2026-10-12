@@ -23,22 +23,34 @@ const AUTH = require('../../utils/auth')
 const SHOP_CONFIG = require('../../shop-config')
 const ADDR = require('../../utils/address')
 const LOC = require('../../utils/location')
+const OS = require('../../utils/order-status')
+const FMT = require('../../utils/format')
+const LOG = require('../../utils/log')
 const app = getApp()
 
-// 订单入口：只做项目里真实存在的状态
-//   0 待付款 / 1 待取货（后端原叫「制作中」）/ 3 已完成 / all 全部
-// 注意：后端还存在 status=2 与 4，但含义未定义，此处不使用。
-const ORDER_ENTRIES = [
-  { key: '0', label: '待付款' },
-  { key: '1', label: '待取货' },
-  { key: '3', label: '已完成' },
-  { key: 'all', label: '全部订单' }
-]
+// 订单入口（阶段 4.1）：状态与入口定义统一放在 utils/order-status.js，
+// 本页不再自己维护一份（原来这里还写着"后端存在 status=2 与 4"的注释）。
+const ORDER_ENTRIES = OS.ORDER_ENTRIES
 
 Page({
   data: {
     // 用户信息
     userInfo: null,
+    // 用户编号（阶段 5.5 / P-12）：由 openid 派生的短编号，**不再把 OPENID 直接显示给顾客**
+    userNo: '',
+    // ===== 阶段 5.5（缺陷 P-06）：登录 / 资料编辑 =====
+    // 原实现用 wx.getUserProfile，该接口已匿名化（拿不到真实昵称头像），
+    // 于是「我的」页永远显示"点击登录"。现改为：
+    //   · 头像：<button open-type="chooseAvatar">（微信头像填写能力）
+    //   · 昵称：<input type="nickname">（微信昵称填写能力）
+    // 编辑态由 profileEditing 控制；草稿字段避免"边选边写库"。
+    profileEditing: false,
+    draftAvatarUrl: '',
+    draftNick: '',
+    // 草稿头像是本地临时路径（尚未上传成功）时为 true —— 此时不允许保存，
+    // 否则会把 wxfile:// 这种会话级路径写进用户资料，下次打开就是碎图。
+    draftAvatarIsLocal: false,
+    savingProfile: false,
     // 订单入口
     orderEntries: ORDER_ENTRIES,
     // 门店信息（来自 shop-config.js，全部为用户提供的真实值）
@@ -52,8 +64,6 @@ Page({
     },
     // 默认收货地址（展示在「收货地址」入口右侧）
     defaultAddressText: '',
-    // 商家核销权限
-    canHX: false,
     // 是否是开发版 / 体验版：用于显示「校准门店坐标」这个店主专用入口
     //（正式版为 false，顾客看不到）
     isDevEnv: false
@@ -67,15 +77,17 @@ Page({
   onShow() {
     this.loadShopConfig()
     this.loadDefaultAddress()
+    // 阶段 5.6 复核整改：AUTH.authorize() 在云函数不通时会 throw，
+    // 原来没有 .catch → 未处理的 Promise rejection（真机上还伴随一条报错）。
     AUTH.checkHasLogined().then((isLogined) => {
       if (isLogined) {
         this.userDetail()
       } else {
         AUTH.authorize().then(() => {
           this.userDetail()
-        })
+        }).catch(() => {})
       }
-    })
+    }).catch(() => {})
   },
 
   // ===== 门店配置（纯本地常量，不依赖网络）=====
@@ -105,49 +117,116 @@ Page({
   async userDetail() {
     const res = await API.userDetail(wx.getStorageSync('token'))
     if (res.code == 0) {
-      const order_hx_uids = wx.getStorageSync('order_hx_uids')
+      // 2026-10-10：扫码核销下线，本页不再需要 canHX 判定；
+      // 店主的「完成订单」入口改在订单列表页（判定逻辑见 utils/admin.js）。
+      const base = res.data.base || {}
       this.setData({
-        userInfo: res.data.base,
-        // 商家核销权限：保留原有判定逻辑，扫码核销依赖它
-        canHX: !!(order_hx_uids && order_hx_uids.indexOf(res.data.base.id) != -1)
+        userInfo: base,
+        // 阶段 5.5 / P-12：列表里显示短编号，不显示原始 OPENID
+        userNo: FMT.shortUserNo(base.id || '')
       })
     }
   },
 
-  // ===== 登录 / 更新头像昵称 =====
-  updateUserInfo() {
-    wx.getUserProfile({
-      lang: 'zh_CN',
-      desc: '用于完善用户资料',
-      success: (res) => {
-        this._updateUserInfo(res.userInfo)
-      },
-      fail: (err) => {
-        console.log(err)
-        wx.showToast({
-          title: err.errMsg,
-          icon: 'none'
-        })
-      }
+  // ===== 阶段 5.5：登录 / 更新头像昵称 =====
+  // 原实现（已删除）：
+  //   wx.getUserProfile({ success: res => this._updateUserInfo(res.userInfo) })
+  //   —— 该接口自 2022 年起返回的是匿名数据（灰色头像 + "微信用户"），
+  //      拿不到真实昵称头像，导致「我的」页永远停在"点击登录"。
+  // 现实现：进入编辑态 → 用 open-type="chooseAvatar" 选头像（会上传到云存储）、
+  //        用 <input type="nickname"> 填写昵称 → 保存时一次性写入云函数。
+  startEditProfile() {
+    const u = this.data.userInfo || {}
+    this.setData({
+      profileEditing: true,
+      draftAvatarUrl: u.avatarUrl || '',
+      draftNick: u.nick || '',
+      draftAvatarIsLocal: false
     })
   },
 
-  async _updateUserInfo(userInfo) {
-    const postData = {
-      token: wx.getStorageSync('token'),
-      nick: userInfo.nickName,
-      avatarUrl: userInfo.avatarUrl,
-      city: userInfo.city,
-      province: userInfo.province,
-      gender: userInfo.gender
+  cancelEditProfile() {
+    this.setData({
+      profileEditing: false,
+      draftAvatarUrl: '',
+      draftNick: '',
+      draftAvatarIsLocal: false
+    })
+  },
+
+  /**
+   * 选择头像（<button open-type="chooseAvatar" bind:chooseavatar>）。
+   * e.detail.avatarUrl 是**本地临时路径**，必须先上传到云存储拿到 fileID 才能持久化，
+   * 否则重启小程序后就是碎图（云函数只存字符串，不存文件）。
+   */
+  async onChooseAvatar(e) {
+    const temp = e && e.detail && e.detail.avatarUrl
+    if (!temp) return
+    // 先本地预览，让顾客立刻看到自己选的头像
+    this.setData({ draftAvatarUrl: temp, draftAvatarIsLocal: true })
+    // 阶段 5.5 复核整改：连选两次头像时，先发的上传可能后返回，
+    // 会把顾客最后选的那一张覆盖掉。用序号丢弃过期结果。
+    this._avatarSeq = (this._avatarSeq || 0) + 1
+    const seq = this._avatarSeq
+    const openid = (this.data.userInfo && this.data.userInfo.id) || wx.getStorageSync('uid') || 'anonymous'
+    const ext = (/\.(png|jpg|jpeg|webp)$/i.exec(temp) || [null, 'png'])[1].toLowerCase()
+    wx.showLoading({ title: '上传头像…' })
+    const res = await API.uploadFile(temp, 'avatars/' + openid + '_' + Date.now() + '.' + ext)
+    wx.hideLoading()
+    if (seq !== this._avatarSeq) return // 已有更新的一次选择，丢弃这次上传结果
+    if (res.code == 0 && res.fileID) {
+      this.setData({ draftAvatarUrl: res.fileID, draftAvatarIsLocal: false })
+    } else {
+      // 上传失败：保留本地预览，但标记为"未上传成功"，保存时会被拦住并提示重试
+      LOG.error('[my] 头像上传失败', res && res.msg)
+      wx.showToast({ title: '头像上传失败，请重试', icon: 'none' })
     }
-    const res = await API.modifyUserInfoV2(postData)
-    if (res.code != 0) {
-      wx.showToast({ title: res.msg, icon: 'none' })
+  },
+
+  /**
+   * 昵称输入（<input type="nickname"> 的 bindinput / bindblur / bindchange 都会带 value）
+   */
+  onNickInput(e) {
+    this.setData({ draftNick: String((e && e.detail && e.detail.value) || '') })
+  },
+
+  /**
+   * 校验昵称长度。微信昵称最长 32 字符（中文按字数），这里只做基本约束，
+   * 服务端/微信侧还有各自的限制。
+   */
+  validateNick(nick) {
+    const text = String(nick || '').trim()
+    if (!text) return { ok: false, msg: '请填写昵称' }
+    if (text.length > 20) return { ok: false, msg: '昵称最多 20 个字' }
+    return { ok: true, value: text }
+  },
+
+  async saveProfile() {
+    if (this.data.savingProfile) return // 防重复提交
+    const nickRes = this.validateNick(this.data.draftNick)
+    if (!nickRes.ok) {
+      wx.showToast({ title: nickRes.msg, icon: 'none' })
       return
     }
-    wx.showToast({ title: '登录成功' })
-    this.userDetail()
+    if (this.data.draftAvatarIsLocal) {
+      wx.showToast({ title: '头像还没上传成功，请重新选择', icon: 'none' })
+      return
+    }
+    this.setData({ savingProfile: true })
+    try {
+      const postData = { nick: nickRes.value }
+      if (this.data.draftAvatarUrl) postData.avatarUrl = this.data.draftAvatarUrl
+      const res = await API.modifyUserInfoV2(postData)
+      if (!res || res.code != 0) {
+        wx.showToast({ title: (res && res.msg) || '保存失败', icon: 'none' })
+        return
+      }
+      wx.showToast({ title: '已保存', icon: 'success' })
+      this.setData({ profileEditing: false })
+      this.userDetail()
+    } finally {
+      this.setData({ savingProfile: false })
+    }
   },
 
   // ===== 订单管理：跳转到订单页并带状态参数 =====
@@ -178,7 +257,7 @@ Page({
       fail: (err) => {
         // 用户主动取消不提示
         if (err && err.errMsg && err.errMsg.indexOf('cancel') < 0) {
-          console.error(err)
+          LOG.error('[my] makePhoneCall 失败', err)
         }
       }
     })
@@ -206,24 +285,8 @@ Page({
     })
   },
 
-  // ===== 商家核销（保留：店主核销订单用）=====
-  scanOrderCode() {
-    wx.scanCode({
-      onlyFromCamera: true,
-      success(res) {
-        wx.navigateTo({
-          url: '/pages/order-view/scan-result?hxNumber=' + res.result
-        })
-      },
-      fail(err) {
-        console.error(err)
-        wx.showToast({
-          title: err.errMsg,
-          icon: 'none'
-        })
-      }
-    })
-  },
+  // 2026-10-10：已删除 scanOrderCode（扫码核销）。
+  // 扫码核销整体下线，店主改为在「订单」列表里对取餐码、点「完成订单」。
 
   tabbarChange(e) {
     app.tabbarChange(e)

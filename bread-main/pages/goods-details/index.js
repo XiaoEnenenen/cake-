@@ -1,9 +1,6 @@
 const API = require('../../utils/api-map')
 const AUTH = require('../../utils/auth')
-const app = getApp()
-app.configLoadOK = () => {
-  
-}
+// 2026-10-12 阶段 5.7：删除空的 `app.configLoadOK = () => {}` 桩与随之无用的 getApp()。
 Page({
   data: {
     curbanner: 0,
@@ -24,7 +21,15 @@ Page({
     // 底部价格区显示的「当前合计」= 基础价 + 各选中项 priceDelta 之和
     displayPrice: 0,
     buyedNumber: 0,
-    key: undefined // 购物车的key
+    key: undefined, // 购物车的key
+    // 阶段 5.6（缺陷 P-07/P-08）：详情加载失败时页面要有明确提示，
+    // 而且此时点「加入购物车」不能再抛 TypeError（见 addCart 的守卫）。
+    loadError: false,
+    // 阶段 5.6 复核整改：区分"加载中"与"已加载"，否则慢网下规格弹层里
+    // 会先渲染一屏空的商品名 / 规格行。
+    loaded: false,
+    // 2026-10-12 复核整改：wxml 读到的字段显式声明（本项目约定）
+    goodsDetail: null
   },
   onLoad: function (options) {
     // options.id = 427682
@@ -32,9 +37,6 @@ Page({
       goodsId: options.id
     })
     this.goodsDetail()
-  },
-  onShow: function () {
-
   },
   // ===== 改造：把后端返回的规格组转换成前端可直接渲染的结构 =====
   // 每组形如：{ pid, pname, options: [{ cid, cname, priceDelta }] }
@@ -61,7 +63,9 @@ Page({
       token: wx.getStorageSync('token'),
       id: this.data.goodsId,
     })
-    if (res.code == 0) {
+    // 阶段 5.6（缺陷 P-08）：res.code == 0 但返回体缺 data/basicInfo 时，
+    // 下面几行会抛 TypeError（弱网/部署不完整时真机上就是这样白屏的）。
+    if (res.code == 0 && res.data && res.data.basicInfo) {
       // ===== 改造：原来只取 properties[0]，现在构建全部规格组 =====
       const specGroups = this.buildPropertyGroups(res.data.properties)
       this.setData({
@@ -69,10 +73,14 @@ Page({
         // 默认每组选中第 1 项（与截图一致：进入即有默认选中，规格底色为黄色）
         selectedIndices: specGroups.map(() => 0),
         goodsDetail: res.data,
-        basePrice: Number(res.data.basicInfo.minPrice) || 0
+        basePrice: Number(res.data.basicInfo.minPrice) || 0,
+        loadError: false,
+        loaded: true
       })
       this.updateSelectedText()
       this.checkBuyedNumber(res.data.basicInfo.id)
+    } else {
+      this.setData({ goodsDetail: null, loadError: true, loaded: true })
     }
   },
   bannerChange(e) {
@@ -151,6 +159,12 @@ Page({
     }
     // 2026-10-09：库存概念已整体删除，不再有「已售罄」拦截，直接加购
     // ===== 改造：原来只 push 第一组规格，现汇总全部组 =====
+    // 阶段 5.6（缺陷 P-08）：商品详情还没加载成功（或加载失败）时，
+    // 下面几行会读 this.data.goodsDetail.basicInfo.id → 抛 TypeError（弱网下真机报错且无提示）。
+    if (!this.data.goodsDetail || !this.data.goodsDetail.basicInfo) {
+      wx.showToast({ title: '商品信息还没加载好，请稍候', icon: 'none' })
+      return
+    }
     const sku = this.buildSku()
     // https://www.yuque.com/apifm/nu0f75/et6m6m
     const res = await API.shippingCarInfoAddItemV2({
@@ -187,11 +201,13 @@ Page({
   },
   async checkBuyedNumber (goodsId) {
     // ===== 改造：原来只比对 sku[0]（多规格会串位），现按整组比对 =====
+    // 阶段 5.6：详情未加载成功时不比对（否则读 goodsDetail.basicInfo 会抛 TypeError）
+    if (!this.data.goodsDetail || !this.data.goodsDetail.basicInfo) return
     const currentSku = this.buildSku()
     const token = wx.getStorageSync('token')
     // https://www.yuque.com/apifm/nu0f75/awql14
     const res = await API.shippingCarInfo(token)
-    if (res.code != 0) {
+    if (!res || res.code != 0 || !res.data) {
       this.setData({
         buyedNumber: 0,
         key: null

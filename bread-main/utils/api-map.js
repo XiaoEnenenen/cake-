@@ -24,6 +24,10 @@
  * ---------------------------------------------------------------------------
  */
 const DS = require('./data-source')
+// 阶段 5.7：日志统一收敛到 utils/log.js（本文件不再直接写 console.*）。
+// 说明：LOG.debug 内部就是判断 DS.debug，行为与原来的 `if (DS.debug) console.log(...)` 一致；
+//      LOG.warn / LOG.error 始终输出，与原来的 console.warn / console.error 一致。
+const LOG = require('./log')
 
 // ===== 云函数调用 =====
 /**
@@ -47,18 +51,20 @@ function callCloud(action, payload) {
       resolve({ code: 500, msg: '当前环境不支持云开发（请在微信开发者工具或真机中运行，并开通云开发环境）' })
       return
     }
-    if (DS.debug) console.log('[api-map] cloud →', action, payload)
+    LOG.debug('[api-map] cloud →', action, payload)
     try {
       wx.cloud.callFunction({
         name: DS.cloudFunctionName,
         data: { action, payload: payload || {} },
         success(res) {
-          if (DS.debug) console.log('[api-map] cloud ←', action, res.result)
+          LOG.debug('[api-map] cloud ←', action, res.result)
           // 云函数抛错时 res.result 可能为空
           resolve(res.result || { code: 500, msg: '云函数无返回' })
         },
         fail(err) {
-          if (DS.debug) console.error('[api-map] cloud ✗', action, err)
+          // 这次调用失败的原因会原样返回给页面（页面会提示用户），
+          // 所以这里只在 debug 开关打开时打日志，避免正式版刷屏（与收敛前一致）。
+          LOG.debug('[api-map] cloud ✗', action, err)
           // 失败即失败：不再尝试任何备用数据源（阶段三之前这里会静默降级到 api 工厂）。
           // 文案以「云函数调用失败」开头——页面会直接把这句话提示给用户，
           // 冒号后保留原始 errMsg（形如 cloud.callFunction:fail ...）便于排查云环境/部署问题。
@@ -69,7 +75,7 @@ function callCloud(action, payload) {
     } catch (e) {
       // callFunction 同步抛异常（少见，例如容器被回收）也必须 resolve，
       // 否则调用方的 await 永远不返回——没有降级兜底后就只剩"一直转圈"。
-      console.error('[api-map] cloud 调用同步异常', action, e)
+      LOG.error('[api-map] cloud 调用同步异常', action, e)
       resolve({ code: 500, msg: '云函数调用失败：' + ((e && e.message) || e) })
     }
   })
@@ -87,7 +93,7 @@ let cloudInited = false
  */
 function init() {
   if (!DS.useCloud) {
-    console.error(
+    LOG.error(
       '[api-map] 数据源未启用（utils/data-source.js 的 useCloud 为 false）。' +
       '本项目只有云开发一条通道，没有备用数据源可切。'
     )
@@ -95,11 +101,11 @@ function init() {
   }
   if (cloudInited) return true
   if (typeof wx === 'undefined' || !wx.cloud) {
-    console.error('[api-map] 当前环境不支持 wx.cloud，请确认已开通云开发并在真机/开发者工具中运行')
+    LOG.error('[api-map] 当前环境不支持 wx.cloud，请确认已开通云开发并在真机/开发者工具中运行')
     return false
   }
   if (!DS.cloudEnvId && DS.warnOnEmptyEnvId) {
-    console.warn(
+    LOG.warn(
       '[api-map] 未配置云环境 ID（utils/data-source.js 的 cloudEnvId）：' +
       '多环境下将使用开发者工具当前选中的环境，容易出现"本地与真机连到不同环境"。' +
       '请在云控制台复制环境 ID 后填入。'
@@ -111,8 +117,55 @@ function init() {
     traceUser: true
   })
   cloudInited = true
-  if (DS.debug) console.log('[api-map] 云开发已初始化', DS.cloudEnvId || '(默认环境)')
+  LOG.debug('[api-map] 云开发已初始化', DS.cloudEnvId || '(默认环境)')
   return true
+}
+
+// ===========================================================================
+// 云存储上传（2026-10-12 阶段 5.5 新增）
+// ---------------------------------------------------------------------------
+// 为什么放在这里：本项目的约定是「页面 / 组件不直接调用 wx.cloud」，
+// api-map 是唯一的 wx.cloud 出口（见文件头）。头像上传属于用户资料链路，
+// 走同一个出口，避免页面里出现第二处 wx.cloud 调用（也便于统一错误文案）。
+// ===========================================================================
+/**
+ * 上传本地临时文件到云存储。
+ * @param {string} filePath 本地临时路径（如 chooseAvatar 返回的 e.detail.avatarUrl）
+ * @param {string} cloudPath 云存储路径（形如 'avatars/xxx.png'）
+ * @returns {Promise<{code:number, fileID?:string, msg?:string}>}
+ *          code 0 = 成功，fileID 可直接用于 <image src>；
+ *          失败时 code 500 + 明确文案（不抛异常，调用方按 res.code 处理）。
+ */
+function uploadFile(filePath, cloudPath) {
+  return new Promise((resolve) => {
+    if (!filePath) {
+      resolve({ code: 500, msg: '没有可上传的文件' })
+      return
+    }
+    if (!DS.useCloud || typeof wx === 'undefined' || !wx.cloud || !wx.cloud.uploadFile) {
+      resolve({ code: 500, msg: '当前环境不支持云存储（请在微信开发者工具或真机中运行，并开通云开发环境）' })
+      return
+    }
+    try {
+      wx.cloud.uploadFile({
+        cloudPath: cloudPath,
+        filePath: filePath,
+        success(res) {
+          if (res && res.fileID) {
+            resolve({ code: 0, fileID: res.fileID })
+          } else {
+            resolve({ code: 500, msg: '上传成功但没有返回 fileID' })
+          }
+        },
+        fail(err) {
+          const detail = err && err.errMsg
+          resolve({ code: 500, msg: detail ? '上传失败：' + detail : '上传失败' })
+        }
+      })
+    } catch (e) {
+      resolve({ code: 500, msg: '上传失败：' + ((e && e.message) || e) })
+    }
+  })
 }
 
 // ===========================================================================
@@ -165,15 +218,17 @@ const API = {
     return callCloud('orderList', { statusBatch: d.statusBatch })
   },
 
-  // 沿用原 api工厂 的 (token, orderId, hxNumber) 签名
-  orderDetail: (token, orderId, hxNumber) =>
-    callCloud('orderDetail', { id: orderId, hxNumber }),
+  // 2026-10-10：扫码核销下线，orderDetail 不再需要 hxNumber 参数
+  // （原签名 (token, orderId, hxNumber) 已简化为 (token, orderId)）
+  orderDetail: (token, orderId) =>
+    callCloud('orderDetail', { id: orderId }),
 
   orderClose: (token, orderId) => callCloud('orderClose', { id: orderId }),
 
   orderDelete: (token, orderId) => callCloud('orderDelete', { id: orderId }),
 
-  orderHXV2: (data) => callCloud('orderHx', data),
+  // 2026-10-10：店主手动完成订单，取代原 orderHXV2（扫码核销）。
+  orderFinish: (token, orderId) => callCloud('orderFinish', { id: orderId }),
 
   // 2026-09-26 阶段二：已删除 orderPayV2（余额支付）与 scoreLogs（积分记录）方法。
   // 会员卡 / 积分 / 余额体系整体移除，云函数对应 action 也已删除。
@@ -196,12 +251,19 @@ const API = {
   /**
    * 更新用户资料。
    * 注意：云开发模式下不接受前端传来的 token，身份以 OPENID 为准。
+   * 可更新字段（云函数 updateUser 白名单）：nick / avatarUrl / sex / birthday / mobile。
    */
   modifyUserInfoV2(data) {
     const d = Object.assign({}, data)
     delete d.token // 云开发下 token 无意义，去掉避免混淆
     return callCloud('updateUser', d)
   },
+
+  /**
+   * 上传本地文件到云存储（头像用）。见文件上方 uploadFile 的说明。
+   * 页面用法：API.uploadFile(tempFilePath, cloudPath)
+   */
+  uploadFile: uploadFile,
 
   /**
    * 登录 / 建立用户身份。

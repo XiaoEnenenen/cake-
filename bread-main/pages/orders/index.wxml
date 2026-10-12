@@ -20,6 +20,14 @@
            选择外送后由商家按订单联络电话与顾客确认地址（文案见 shop-config.js 的 delivery.reminder）。
      距离（瑞幸显示 318m）本店不采集定位，故不显示。
 -->
+<!-- ===== 页面骨架（2026-10-12 修复「结算栏遮挡商品」）=====
+     整页固定为一屏高，中间区域（左分类栏 + 右商品列表）自动占满剩余空间。
+     原来两个 scroll-view 都写死 height: calc(100vh - 500rpx)（估算表头高度），
+     会把滚动区一直铺到屏幕最底部，而底部被固定的「结算栏 + tabbar」占着 →
+     最底部约 220rpx 的内容永远压在结算栏下面（左栏最后几个分类点不到、
+     商品价格被挡）。改用 flex 后高度不再依赖任何估算值。 -->
+<view class="page-wrap">
+
 <view class="shop-head">
   <view class="pickup-row">
     <view
@@ -37,15 +45,22 @@
 
   <view class="store-row">
     <image class="store-icon" src="/images/icon-font-solid-1@2x.png" mode="aspectFit"></image>
-    <view class="store-name">{{ shopInfo.name || '卿欢蛋糕' }}</view>
+    <!-- 2026-10-12 复核整改：去掉 `|| '卿欢蛋糕'` 字面量兜底（D-06 同族）。
+         onLoad 已把 shop-config.js 合并进 shopInfo，name 一定有值。 -->
+    <view class="store-name">{{ shopInfo.name }}</view>
     <view class="store-open">营业中</view>
   </view>
 
-  <view class="shop-hours">营业时间 {{ shopInfo.openingHours || '08:00-20:00' }}</view>
+  <!-- 2026-10-12 复核整改：删掉与配置不符的兜底字面量 '08:00-20:00'
+       （配置是 09:00-22:00）。onLoad 已把 shop-config.js 合并进 shopInfo，
+       从分享/小程序码直达本页也有值。 -->
+  <view class="shop-hours">营业时间 {{ shopInfo.openingHours }}</view>
   <view wx:if="{{ isDelivery }}" class="shop-delivery-tip">{{ deliveryReminder }}</view>
 
-  <!-- 店铺公告（来自商品购买须知，无则隐藏） -->
-  <view wx:if="{{ shopNotice }}" class="shop-notice">{{ shopNotice }}</view>
+  <!-- 2026-10-12 阶段 5.7：删除「店铺公告」死节点。
+       原为 `<view wx:if="{{ shopNotice }}">`，但全项目**没有任何 js 给 shopNotice 赋值**
+       （报告 §4.3 / P-11），所以它永远不会渲染 —— 属于"看起来有功能、实际没有"的死数据。
+       真要做店铺公告时：应走云函数 appConfig 增加一个键，而不是留一个永远为空的判断。 -->
 </view>
 
 <!-- 次栏：原为「点菜 / 评价 / 商家」三栏 + 温馨提示，现按用户要求删除「评价」「商家」。
@@ -76,8 +91,16 @@
   </scroll-view>
 
   <!-- 右侧商品 -->
-  <scroll-view class="goods-list" scroll-y>
-    <view wx:if="{{ !goodsList }}" class="goods-empty">暂无商品</view>
+  <!-- scroll-into-view + 顶部锚点：切换分类后由 resetListScroll() 把列表滚回顶部，
+       否则新分类会沿用上一个分类的滚动位置，商品少时看起来就是一片空白 -->
+  <scroll-view class="goods-list" scroll-y scroll-into-view="{{ listScrollTarget }}">
+    <view id="goods-list-top"></view>
+
+    <!-- 空状态（2026-10-12 修复缺陷 5.4）：
+         原来只判断 `!goodsList`，而「该分类没有商品」时 goodsList 是空数组 []，
+         `![]` 为 false → 既不渲染商品、也不显示「暂无商品」→ 整块白屏。
+         现在 null（加载失败/未加载）与 []（确实没有商品）都显示提示。 -->
+    <view wx:if="{{ !goodsList || goodsList.length == 0 }}" class="goods-empty">暂无商品</view>
 
     <!-- 改造：整行绑定 goDetail，卡片任意位置都能进商品详情/规格选择 -->
     <view
@@ -122,11 +145,16 @@
       </view>
     </view>
 
-    <!-- 底部占位：结算栏(≈120rpx) + 自定义 tabbar(100rpx) + 余量，
-         保证最后一项商品不被固定结算栏遮挡 -->
+    <!-- 底部占位：列表底部本来就停在结算栏上方（见 .page-wrap 的高度计算），
+         这里只留一点余量，避免最后一张卡片紧贴结算栏。
+         改造前这里是 300rpx，用来「硬撑」被结算栏挡住的 220rpx —— 属于治标；
+         2026-10-12 改成 flex 骨架后不再需要撑高度。 -->
     <view class="list-bottom-holder"></view>
   </scroll-view>
 </view>
+
+</view>
+<!-- /.page-wrap -->
 
 <!-- ===== 底部结算栏（改造：按截图重做）=====
      结构：左 购物袋图标 + 红色数量角标 | 中 实付金额（红）| 右 黄色胶囊「去结算」
@@ -194,11 +222,17 @@
       <view class="price-box">
         <view class="price-left">
           <view class="unit-price"><text>¥</text>{{item.price}}</view>
+          <!-- 阶段 5.1（缺陷 D-01）：单价已改为云函数返回的**现价**；
+               商家改过价时标一句，避免顾客按旧价预期付款。 -->
+          <view wx:if="{{ item.priceChanged }}" class="price-updated-tag">价格已更新</view>
+          <!-- 阶段 5.1 复核整改：已下架 / 规格被改动的项不可能下单成功，
+               必须在购物车里就说清楚（否则顾客会一路填到「去支付」才被拒） -->
+          <view wx:if="{{ item.unavailable }}" class="price-updated-tag unavailable-tag">{{ item.unavailableReason }}</view>
           <view class="subtotal">小计 ¥{{ item.subtotal }}</view>
         </view>
         <view class="cart-ops">
           <view class="del-btn" data-key="{{item.key}}" bindtap="onRemoveItem">删除</view>
-          <van-stepper value="{{ item.number }}" min="0" async-change input-width="48rpx" button-size="48rpx" custom-class="stepper" input-class="input" plus-class="plus" minus-class="minus" data-key="{{item.key}}" bind:change="changeNumber"/>
+          <van-stepper value="{{ item.number }}" min="0" max="99" async-change input-width="48rpx" button-size="48rpx" custom-class="stepper" input-class="input" plus-class="plus" minus-class="minus" data-key="{{item.key}}" bind:change="changeNumber"/>
         </view>
       </view>
     </view>

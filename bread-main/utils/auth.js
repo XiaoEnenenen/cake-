@@ -14,7 +14,10 @@
  */
 const DS = require('./data-source')
 const API = require('./api-map')
-import Dialog from '@vant/weapp/dialog/dialog'
+// 阶段 5.7：日志统一收敛到 utils/log.js。
+// 同时删除了一行从未被使用的 `import Dialog from '@vant/weapp/dialog/dialog'`
+// （报告 §4.3 记录的死导入；本文件是 CommonJS 模块，混用 ESM import 也容易埋坑）。
+const LOG = require('./log')
 
 /**
  * 当前是否运行在云开发模式。
@@ -83,7 +86,7 @@ async function login(page){
       })
     }
   } catch (e) {
-    console.error('[auth] 云开发登录异常', e)
+    LOG.error('[auth] 云开发登录异常', e)
   }
 }
 
@@ -120,7 +123,7 @@ async function checkAndAuthorize (scope) {
               resolve() // 无返回参数
             },
             fail(e){
-              console.error(e)
+              LOG.error('[auth] authorize 失败', e)
               // if (e.errMsg.indexof('auth deny') != -1) {
               //   wx.showToast({
               //     title: e.errMsg,
@@ -137,7 +140,7 @@ async function checkAndAuthorize (scope) {
                   wx.openSetting();
                 },
                 fail(e){
-                  console.error(e)
+                  LOG.error('[auth] openSetting 失败', e)
                   reject(e)
                 },
               })
@@ -148,7 +151,7 @@ async function checkAndAuthorize (scope) {
         }
       },
       fail(e){
-        console.error(e)
+        LOG.error('[auth] getSetting 失败', e)
         reject(e)
       }
     })

@@ -86,7 +86,7 @@
 | D-17 | P2 | `legacy-apifm.js` 自称"全项目只有这一个文件 require apifm-wxapi"，实际 3 处 | `utils/services/legacy-apifm.js:6`；`app.js:5`；`utils/auth.js:6` |
 | D-18 | P2 | `.trash-cleanup/.../ROLLBACK.md` 声称保留 `LICENSE`，`bread-main` 下无此文件 | `ROLLBACK.md` 第五节；`bread-main` 根目录清单 |
 | D-19 | P2 | `wx.getUserProfile`（已废弃）仍用于取头像昵称 → 只能拿到匿名数据 | `pages/my/index.js:117` |
-| D-20 | P3 | 项目名三处不一致：`张润航蛋糕店` / `bread-main` / `卿欢蛋糕` | `project.config.json:63`；`project.private.config.json:4`；`shop-config.js` |
+| D-20 | P3 | 项目名三处不一致：`模板遗留名` / `bread-main` / `卿欢蛋糕` | `project.config.json:63`；`project.private.config.json:4`；`shop-config.js` —— **已修复 2026-10-12** |
 | D-21 | P3 | 页面硬编码版本号 `Version 1.0 17:30:54` | `pages/about-us/index.wxml:15` |
 | D-22 | P3 | `docs/` 未加入 `packOptions.ignore`（与 `tests`/`cloud-data` 处理不一致） | `project.config.json:3-19` |
 | D-23 | P3 | `.trash-cleanup` 手工回滚方式不可靠（无校验、无历史、易漏项） | `.trash-cleanup/20260926-1945/ROLLBACK.md` |
@@ -608,7 +608,7 @@ git commit -m "fix(deps): 同步 package-lock 与实际依赖，固定版本"
 
 | ID | 问题 | 证据 | 影响 | 建议 |
 |---|---|---|---|---|
-| D-20 | 项目名三处不一致 | `project.config.json:63` = `%E5%BC%A0%E6%B6%A6%E8%88%AA%E8%9B%8B%E7%B3%95%E5%BA%97`（解码 = **张润航蛋糕店**）；`project.private.config.json:4` = **bread-main**（生效值，覆盖前者）；`shop-config.js` 的 `name` 与 `cloud-data/app-config.jsonl` 的 `mallName` = **卿欢蛋糕**；工作区目录 = `卿欢蛋糕` | 开发者工具标题与上传显示名是模板遗留名，与实际店铺品牌不符；对客无影响 | 统一为 `卿欢蛋糕`：改 `project.config.json:63` 的 `projectname`，并删掉 `project.private.config.json:4` 的覆盖 |
+| D-20 | 项目名三处不一致 | `project.config.json:63` = 一个 URL 编码的**模板遗留名**（解码后与「卿欢蛋糕」不符，是原模板店的店名）；`project.private.config.json:4` = **bread-main**（生效值，覆盖前者）；`shop-config.js` 的 `name` 与 `cloud-data/app-config.jsonl` 的 `mallName` = **卿欢蛋糕**；工作区目录 = `卿欢蛋糕` | 开发者工具标题与上传显示名是模板遗留名，与实际店铺品牌不符；对客无影响 | 统一为 `卿欢蛋糕`：改 `project.config.json:63` 的 `projectname`，并删掉 `project.private.config.json:4` 的覆盖 —— **已于 2026-10-12 按此修复**（`projectname` = `%E5%8D%BF%E6%AC%A2%E8%9B%8B%E7%B3%95`，私有配置的覆盖项已删；此后项目名唯一来源是 `project.config.json`） |
 | D-21 | 页面硬编码版本号 | `pages/about-us/index.wxml:15`：`<view class="version">Version 1.0 17:30:54</view>` | 显示的版本与时间戳是写死的，永不更新，顾客可能据此判断"应用没更新" | 改为从 `wx.getAccountInfoSync().miniProgram.version` 读取，或直接删除该行 |
 | D-22 | `docs/` 未加入 `packOptions.ignore` | `project.config.json:3-19` 排除了 `cloudfunctions`/`cloud-data`/`tests`，**唯独没有 `docs`**（8.4 KB，含 AppID/环境 ID/内部操作步骤） | 内部文档可能随包上传；与已排除的其他非运行目录处理不一致 | ignore 增加 `{ "type": "folder", "value": "docs" }`（与 D-05 一并改） |
 | D-23 | `.trash-cleanup` 手工回滚方式不可靠 | `.trash-cleanup/20260926-1945/`：`ROLLBACK.md` + `manifest.csv`（11 条）+ 手工 `Copy-Item` | ① 只覆盖"被清理时"的状态，之后的改动全丢；② 无校验和自动核对（`manifest.csv` 里有 SHA256，但回滚脚本**不校验**它）；③ `ROLLBACK.md` 第四节建议"确认后删除整个目录"→ 删了就彻底没有回滚能力；④ 已出现一项失实（D-18） | 用 `git` 取代它（D-01）；迁移完成后保留 `.trash-cleanup` 作为归档但**从工作流中移除**，并在 `ROLLBACK.md` 顶部标注"已被 git 取代，仅供历史查阅" |

@@ -1,11 +1,9 @@
 /* ===== 收货地址模块共用样式 =====
    被 pages/address/index.wxss 与 pages/address/edit.wxss 通过 @import 引入。
    配色沿用全站白黄令牌，令牌表见 app.wxss 顶部注释。
+   2026-10-12 阶段 5.7：删除与 app.wxss 重复的 `page { background-color: #f5f5f5; }`
+   （app.wxss 是全局样式，计算值不变）。
 */
-
-page {
-  background-color: #f5f5f5;
-}
 
 /* 空白提示 */
 .addr-empty {

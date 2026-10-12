@@ -2,14 +2,23 @@ const API = require('../../utils/api-map')
 const AUTH = require('../../utils/auth')
 const DELIVERY = require('../../utils/delivery')
 const SHOP_CONFIG = require('../../shop-config')
+// app 仅用于自定义 tabbar 的切换（app.tabbarChange）
 const app = getApp()
-app.configLoadOK = () => {
-  
-}
+// 2026-10-12 阶段 5.7：删除空的 `app.configLoadOK = () => {}` 桩（api 工厂时代的启动回调）。
 
 Page({
   data: {
     cid: '',
+    // 门店信息（onLoad 里由 shop-config.js + storage 合并后写入）。
+    // 2026-10-12 复核整改：显式声明，符合本项目「wxml 读到的字段必须在 data 里」的约定。
+    shopInfo: {},
+    // 商品分类（goodsCategoryV2 返回）
+    goodsCategory: [],
+    // 商品列表。null = 请求失败(700) 或尚未拿到；[] = 该分类确实没有商品。
+    // 注意：空数组与 null 在模板里要区别对待（见 index.wxml 的空状态判断）
+    goodsList: null,
+    // 右侧列表滚动锚点，见 resetListScroll()
+    listScrollTarget: '',
     showCartPop: false,
     // 改造：自提 / 外送切换状态（简化版外送，仅记录选择，不含地址与运费）
     isDelivery: false,
@@ -25,9 +34,13 @@ Page({
   },
   onLoad: function (options) {
     this.syncDeliveryMode()
-    this.setData({
-      shopInfo: wx.getStorageSync('shopInfo')
-    })
+    // 2026-10-12 复核整改（D-06 同族问题）：原来只读 storage.shopInfo，
+    // 而 shopInfo 是**首页**写入的 —— 从分享卡片 / 小程序码直达点单页时它可能为空，
+    // 页面上的店名与营业时间就会落到 wxml 里的兜底字面量（'08:00-20:00' 与配置的
+    // 09:00-22:00 不一致，顾客会看到错的营业时间）。
+    // 现在与结算页一样，先以 shop-config.js 为准，再用 storage 覆盖（保留旧版写入的坐标等）。
+    const shopInfo = Object.assign({}, SHOP_CONFIG.shop, wx.getStorageSync('shopInfo') || {})
+    this.setData({ shopInfo })
     this.goodsCategory()
     this.getGoodsList()
   },
@@ -61,31 +74,64 @@ Page({
       })
     }
   },
+  /**
+   * 切换左侧分类
+   *
+   * 修复（2026-10-12，缺陷 5.4「全部商品不刷新」）：
+   *   原实现在「全部商品」（id=0）时直接 `return`，**从不重新拉取商品**。
+   *   于是出现店主反馈的现象：先进来看到全部商品 → 点一个分类 → 再点回「全部商品」，
+   *   列表里剩的还是上一个分类的结果；若上一个分类恰好没有商品（result: []），
+   *   点回来就是一片空白，看起来像「全部商品坏了」。
+   *   现在无论点哪个分类（**含「全部商品」**）都重新拉取。
+   *
+   * 顺带修正两点：
+   *   · 用 currentTarget 取 dataset —— target 可能指向子节点，取不到 data-id
+   *   · 切换后把右侧列表滚回顶部，否则新分类沿用上次的滚动位置，同样表现为「看着是空白」
+   */
   onCategoryClick(e) {
-    var id = e.target.dataset.id;
-    if (!id || id == '0') {
-      this.setData({
-        cid: '',
-      })
-      return
-    }
-    this.setData({
-      cid: id,
-    })    
-    this.getGoodsList()
+    const dataset = (e.currentTarget && e.currentTarget.dataset) || {}
+    const id = dataset.id
+    // 「全部商品」的 data-id 是 0，空 id 也按「全部」处理 → categoryId 传空串
+    const cid = !id || id == '0' ? '' : id
+    this.setData({ cid })
+    this.resetListScroll()
+    return this.getGoodsList(cid)
   },
-  async getGoodsList() {
+
+  /**
+   * 把右侧商品列表滚回顶部。
+   * scroll-into-view 的值不变不会重复触发滚动，所以先清空再设成锚点 id。
+   */
+  resetListScroll() {
+    this.setData({ listScrollTarget: '' }, () => {
+      this.setData({ listScrollTarget: 'goods-list-top' })
+    })
+  },
+
+  /**
+   * 拉取商品列表
+   * @param {string} [categoryId] 分类 id；不传则用当前 this.data.cid
+   *   （显式传参而不是只读 this.data.cid：setData 与请求之间的时序不必依赖）
+   */
+  async getGoodsList(categoryId) {
+    const cid = categoryId === undefined ? this.data.cid : categoryId
+    // 竞态保护：快速连点分类时，先发出的请求可能后返回，
+    // 会把列表覆盖成上一个分类的商品（表现为「点了 A 却显示 B」）。
+    this._listSeq = (this._listSeq || 0) + 1
+    const seq = this._listSeq
+
     wx.showLoading({
       title: '加载中',
     })
     const shopInfo = wx.getStorageSync('shopInfo')
     // https://www.yuque.com/apifm/nu0f75/wg5t98
     const res = await API.goodsv2({
-      categoryId: this.data.cid,
+      categoryId: cid,
       shopId: shopInfo.id,
       page: 1,
       pageSize: 100000
     })
+    if (seq !== this._listSeq) return // 已有更新的请求在途，丢弃这次过期结果
     wx.hideLoading()
     if (res.code == 700) {
       this.setData({
@@ -304,7 +350,8 @@ Page({
       return
     }
     const index = e.currentTarget.dataset.index
-    const curGood = this.data.goodsList[index]
+    // goodsList 可能是 null（请求失败 700 或尚未加载），直接取下标会抛异常
+    const curGood = (this.data.goodsList || [])[index]
     if (!curGood) {
       return
     }

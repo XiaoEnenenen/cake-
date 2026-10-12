@@ -89,12 +89,18 @@ Page({
     const id = e.currentTarget.dataset.id
     const addr = ADDR.getById(id)
     if (!addr) return
-    // 把选中的地址放进上一页，由结算页读取
+    // 把选中的地址放进上一页，由结算页读取。
+    // 阶段 5.3（缺陷 P-02）：**同时**注入展示文案 addressText。
+    //   结算页 wxml 渲染的是 addressText（selectedAddress 只用于下单快照），
+    //   原来这里只注入 selectedAddress → 屏幕上仍显示上一个地址。
+    //   结算页的 onShow 也会重新同步一次（双保险，见 pages/pay/index.js 的 applyAddress 调用）。
+    const fullText = ADDR.formatFull(addr) || addr.detail || ''
     const pages = getCurrentPages()
     const prev = pages[pages.length - 2]
     if (prev && typeof prev.setData === 'function') {
       prev.setData({
-        selectedAddress: Object.assign({}, addr, { fullText: ADDR.formatFull(addr) })
+        selectedAddress: Object.assign({}, addr, { fullText }),
+        addressText: fullText
       })
     }
     wx.navigateBack()

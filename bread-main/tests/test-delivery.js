@@ -144,7 +144,7 @@ console.log('\n=== 5) 运费：区域外 ===')
   const q = DR.calcQuote({ address: outside, goodsAmount: 100, items: [] })
   check('区域外不可配送', q.deliverable === false, q)
   check('  原因 out_of_area', q.reason === 'out_of_area', q.reason)
-  check('  文案「超出配送范围」', q.freightText === CFG.area.outOfAreaTip, q.freightText)
+  check('  区域外文案与配置一致', q.freightText === CFG.area.outOfAreaTip, q.freightText)
   check('  运费为 null', q.freight === null, q.freight)
 
   // 区域外即使金额很高、距离很近也不送
@@ -337,6 +337,10 @@ console.log('\n=== 12) 配置一致性检查 ===')
   check('提前规则只适用蛋糕', CFG.advance.applyToAll === false)
   check('3km外允许下单', CFG.freight.beyondEnabled === true)
   check('3km外运费为待确认（null）', CFG.freight.beyondFee === null)
+  // 2026-10-10：区域外提示必须给出可执行指引（自提），不能再是含糊的一句话
+  check('区域外提示给出了替代方案（改选自提）',
+    String(CFG.area.outOfAreaTip).indexOf('自提') >= 0,
+    CFG.area.outOfAreaTip)
 }
 
 console.log('\n=== 13) 云函数侧副本一致性（关键：防止两端运费不一致）===')
@@ -375,6 +379,14 @@ console.log('\n=== 13) 云函数侧副本一致性（关键：防止两端运费
       cloudCfg.cake.minSizeInch === CFG.cake.minSizeInch &&
       cloudCfg.cake.overrideThreshold === CFG.cake.overrideThreshold)
     check('云函数提前小时数与主包一致', cloudCfg.advance.minHours === CFG.advance.minHours)
+    // 2026-10-10 新增：配送区域配置也必须两边一致，
+    // 否则会出现"顾客端说能送、服务端拒单"或反过来。
+    check('云函数配送区域模式与主包一致', cloudCfg.area.mode === CFG.area.mode)
+    check('云函数配送关键词与主包一致',
+      JSON.stringify(cloudCfg.area.keywords) === JSON.stringify(CFG.area.keywords),
+      { cloud: cloudCfg.area.keywords, main: CFG.area.keywords })
+    check('云函数区域外文案与主包一致', cloudCfg.area.outOfAreaTip === CFG.area.outOfAreaTip)
+    check('云函数距离兜底上限与主包一致', cloudCfg.area.maxSaneKm === CFG.area.maxSaneKm)
   }
 
   // 校验云函数侧计算逻辑可用且与主包结果一致

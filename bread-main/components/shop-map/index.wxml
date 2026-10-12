@@ -20,8 +20,9 @@
         bindtap="onMapTap"
       ></map>
 
-      <!-- 距离气泡：拿不到定位时不渲染 -->
-      <view wx:if="{{ showDistance && distanceText }}" class="shopmap-distance">{{ distanceText }}</view>
+      <!-- 距离气泡：页面指定了 distanceText 就用它（如外送时的「配送距离 X」），
+           否则用定位算出来的「距离您 X」；两者都没有时不渲染 -->
+      <view wx:if="{{ showDistance && (distanceText || locateText) }}" class="shopmap-distance">{{ distanceText || locateText }}</view>
 
       <!-- 缩略图形态：右下角圆形导航按钮 -->
       <view wx:if="{{ mini }}" class="shopmap-mini-nav" catchtap="onNavigate">

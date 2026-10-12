@@ -257,6 +257,23 @@ page {
   color: #b3b3b3;
 }
 
+/* 阶段 5.6 复核整改：购物车加载失败时的重试入口 */
+.cart-retry {
+  margin-top: 20rpx;
+  display: inline-block;
+  padding: 10rpx 36rpx;
+  font-size: 26rpx;
+  color: #1f1f1f;
+  background-color: #ffd100;
+  border-radius: 40rpx;
+}
+
+/* 阶段 5.1 复核整改：无法下单的项（已下架 / 规格被改动）在商品名后标红 */
+.goods-unavailable {
+  font-size: 24rpx;
+  color: #e64340;
+}
+
 .yen {
   font-size: 22rpx;
   margin-right: 2rpx;
@@ -360,4 +377,9 @@ page {
   color: #ffffff;
   background-color: #1f1f1f;
   border-radius: 42rpx;
+}
+
+/* 阶段 5.6（缺陷 P-10）：提交中置灰，避免连点重复下单（防抖在 js 里） */
+.pay-byn-disabled {
+  opacity: 0.6;
 }

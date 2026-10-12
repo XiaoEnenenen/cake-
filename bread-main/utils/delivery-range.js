@@ -298,7 +298,7 @@ function calcQuote(params) {
         distanceKm,
         inArea: true,
         reason: 'beyond_disabled',
-        tip: '超出配送范围'
+        tip: CFG.area.outOfAreaTip
       }
     }
     // 允许下单，运费待人工确认

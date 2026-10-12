@@ -44,7 +44,7 @@ const SURFACE = [
   'goodsCategoryV2', 'goodsv2', 'goodsDetailV2',
   'shippingCarInfo', 'shippingCarInfoAddItemV2', 'shippingCarInfoModifyNumber',
   'shippingCarInfoRemoveItem', 'shippingCarInfoRemoveAll',
-  'orderCreate', 'orderList', 'orderDetail', 'orderClose', 'orderDelete', 'orderHXV2',
+  'orderCreate', 'orderList', 'orderDetail', 'orderClose', 'orderDelete', 'orderFinish',
   'wxpay', 'userDetail', 'modifyUserInfoV2', 'login', 'bindMobile',
   'banners', 'appConfig', 'cmsPage', 'fetchShops', 'shopSubdetail'
 ]
@@ -108,16 +108,16 @@ check('wx.cloud.init 开启 traceUser', initCalls.length === 1 && initCalls[0].t
   check('shippingCarInfoRemoveAll 忽略 token', calls[0].data.action === 'cartRemoveAll')
 
   calls = []
-  await API.orderDetail('token', 'o1', 'HX1')
+  await API.orderDetail('token', 'o1')
   check(
-    'orderDetail 签名 (token,orderId,hxNumber) 不变',
-    calls[0].data.action === 'orderDetail' && JSON.stringify(calls[0].data.payload) === '{"id":"o1","hxNumber":"HX1"}',
+    'orderDetail 签名为 (token,orderId)（2026-10-10 核销下线后简化）',
+    calls[0].data.action === 'orderDetail' && JSON.stringify(calls[0].data.payload) === '{"id":"o1"}',
     calls[0].data
   )
 
   calls = []
-  await API.orderHXV2({ hxNumber: 'HX1' })
-  check('orderHXV2 → action orderHx', calls[0].data.action === 'orderHx')
+  await API.orderFinish('token', 'o1')
+  check('orderFinish → action orderFinish', calls[0].data.action === 'orderFinish' && calls[0].data.payload.id === 'o1', calls[0].data)
 
   calls = []
   r = await API.wxpay({})

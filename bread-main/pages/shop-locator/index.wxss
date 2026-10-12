@@ -1,8 +1,6 @@
-/* ===== 门店坐标拾取（店主专用）样式 ===== */
-
-page {
-  background-color: #f5f5f5;
-}
+/* ===== 门店坐标拾取（店主专用）样式 =====
+   2026-10-12 阶段 5.7：删除与 app.wxss 重复的 `page { background-color: #f5f5f5; }`
+   （app.wxss 是全局样式，计算值不变）。 */
 
 .tip {
   padding: 24rpx 30rpx;

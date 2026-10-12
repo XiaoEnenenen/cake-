@@ -111,18 +111,9 @@ page {
   line-height: 34rpx;
 }
 
-/* ===== 店铺公告 ===== */
-.shop-notice {
-  margin-top: 22rpx;
-  font-size: 24rpx;
-  color: #8a8a8a;
-  line-height: 34rpx;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-}
+/* 2026-10-12 阶段 5.7：删除 `.shop-notice` 规则。
+   配套的 wxml 死节点（`wx:if="{{ shopNotice }}"`，全项目无人赋值）已一并删除，
+   留住样式只会让下一个人以为这个功能存在。 */
 
 /* 2026-02-14 清理：原 `.blank`（16rpx 灰色间隔条）规则删除，本页 wxml 零引用。
    注意：`pages/pay/index.wxss` 与 `pages/current-order/index.wxss` 各有自己的
@@ -163,18 +154,42 @@ page {
   background-color: #ffd100;
 }
 
+/* ===== 页面骨架（2026-10-12 修复「结算栏遮挡商品」）=====
+   原来的做法：两个 scroll-view 都写 height: calc(100vh - 500rpx)，
+   即「一屏高减去一个**估算**的表头高度」。两个问题：
+     1) 表头里有「外送提示」「店铺公告」两个条件块（wx:if），真实高度会变，
+        500rpx 只是常态下的估值；
+     2) 更要命的是：不论表头多高，这个算法都把滚动区一直铺到**屏幕最底部**，
+        而底部被两条固定栏占着（结算栏 120rpx + van-tabbar 50px=100rpx
+        + 全面屏安全区）—— 于是最底下约 220rpx 的内容永远压在结算栏下面：
+          · 左分类栏没有底部占位 → 最后几个分类（推荐/折扣）永远点不到
+          · 右商品列表靠 .list-bottom-holder 硬撑，表头一高就同样被裁
+   改成 flex 列布局后，中间区域自动占满「一屏 - 底部两条固定栏」的剩余空间，
+   表头高度怎么变都不会错位（不再依赖任何估算值）。 */
+.page-wrap {
+  display: flex;
+  flex-direction: column;
+  /* 兜底：万一旧设备不认 env()，退回到不算安全区的版本（仍比原来的估算稳） */
+  height: calc(100vh - 220rpx);
+  /* 一屏 - 结算栏 120rpx - tabbar 100rpx - 全面屏底部安全区 */
+  height: calc(100vh - 220rpx - env(safe-area-inset-bottom));
+  overflow: hidden;
+}
+
 /* ===== 左分类栏 + 右商品列表 ===== */
-/* 高度计算说明：本页占高 = 店铺信息卡(约410rpx) + 菜单次栏(约90rpx)，
-   故可用高度按 100vh - 500rpx 估算；若真机上底部被裁或留白过多，调整此值即可。 */
 .menu-wrap {
   display: flex;
-  align-items: flex-start;
+  /* 撑满表头以下的剩余高度；min-height:0 是关键，
+     否则 flex 子项不会被压缩，里面的 scroll-view 拿不到确定高度、无法内部滚动 */
+  flex: 1;
+  min-height: 0;
+  align-items: stretch;
   background-color: #ffffff;
 }
 
 .side-bar {
   width: 176rpx;
-  height: calc(100vh - 500rpx);
+  height: 100%;
   background-color: #f5f5f5;
   flex-shrink: 0;
 }
@@ -208,7 +223,8 @@ page {
 
 .goods-list {
   flex: 1;
-  height: calc(100vh - 500rpx);
+  /* 高度由 .menu-wrap 的 flex 决定（见上方骨架说明），不再写死 100vh - N */
+  height: 100%;
   background-color: #ffffff;
   padding-left: 20rpx;
 }
@@ -309,12 +325,12 @@ page {
   flex-shrink: 0;
 }
 
-/* 商品列表底部占位：结算栏(约120rpx) + 自定义 tabbar(100rpx) + 安全区余量，
-   保证最后一项商品不被固定结算栏遮挡。
-   说明：不用 calc() 包 env()（部分基础库对二者嵌套支持不稳），改为两条独立声明叠加。 */
+/* 商品列表底部占位。
+   2026-10-12：原来这里是 300rpx，作用是「硬撑」被结算栏挡住的那 220rpx ——
+   属于治标（表头一变高就不够）。改成 .page-wrap 的 flex 骨架后，列表底部本身
+   就停在结算栏上方，这里只需留一点视觉余量。 */
 .list-bottom-holder {
-  height: 300rpx;
-  padding-bottom: env(safe-area-inset-bottom);
+  height: 40rpx;
 }
 
 /* ===== 底部结算栏（2026-02-14 按截图重做）=====
@@ -599,6 +615,26 @@ page {
   margin-top: 4rpx;
   font-size: 22rpx;
   color: #8a8a8a;
+}
+
+/* 价格变动标记（阶段 5.1 新增）。
+   单价一律取云函数返回的**现价**，商家改过价时这里给一句「价格已更新」，
+   与结算页顶部的提示条同一个含义（原来显示的是加购时的旧快照价）。 */
+.goods-box .content-box .price-updated-tag {
+  margin-top: 4rpx;
+  display: inline-block;
+  align-self: flex-start;
+  font-size: 20rpx;
+  color: #d46b08;
+  background-color: #fff7e6;
+  border-radius: 6rpx;
+  padding: 2rpx 10rpx;
+}
+
+/* 无法下单的项（阶段 5.1 复核整改）：已下架 / 规格被改动 —— 用错误色区分于「价格已更新」 */
+.goods-box .content-box .unavailable-tag {
+  color: #e64340;
+  background-color: #fdecec;
 }
 
 .goods-box .content-box .cart-ops {

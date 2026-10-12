@@ -257,3 +257,22 @@ page {
   font-size: 22rpx;
   color: #8a8a8a;
 }
+
+/* 阶段 5.6（缺陷 P-07）：详情加载失败时的整页提示
+   （原来是整页空白；此时规格弹层也会隐藏，见 index.wxml） */
+.detail-error {
+  padding: 260rpx 60rpx 0;
+  text-align: center;
+}
+
+.detail-error-title {
+  font-size: 32rpx;
+  font-weight: 600;
+  color: #1f1f1f;
+}
+
+.detail-error-tip {
+  margin-top: 16rpx;
+  font-size: 24rpx;
+  color: #8a8a8a;
+}

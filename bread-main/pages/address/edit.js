@@ -4,11 +4,8 @@
  * ⚠️ 关于「地图选点」：
  *   本页的「地图选点」按钮使用 wx.chooseLocation（微信原生，无需第三方插件与 key）。
  *   但该接口要求在 app.json 的 requiredPrivateInfos 中声明 "chooseLocation"。
- *   若不声明，点击时会失败并提示。
- *
- *   当前 app.json 的 requiredPrivateInfos 为 []（用户此前特意关闭了定位相关权限），
- *   因此本页做了容错：选点失败会提示改用「手动填写」，不影响主流程。
- *   若确定要启用选点，在 app.json 中加回声明即可，本页代码无需改动。
+ *   若声明缺失，点击时会失败并提示（本项目 app.json 已声明 getLocation + chooseLocation，
+ *   见 app.json 的 requiredPrivateInfos；下方失败分支是给"后台未开通接口权限"等情况兜底的）。
  *
  * 手动填写路径同样完整可用（省/市/区 + 详细地址）。
  *
@@ -19,6 +16,8 @@
  * ---------------------------------------------------------------------------
  */
 const ADDR = require('../../utils/address')
+// 阶段 5.7：日志统一收敛到 utils/log.js
+const LOG = require('../../utils/log')
 
 Page({
   data: {
@@ -88,13 +87,10 @@ Page({
     })
   },
 
-  // 根据省市区的值刷新展示文案（编辑已有地址时用）
-  refreshAreaText() {
-    const text = [this.data.province, this.data.city, this.data.district]
-      .filter(Boolean)
-      .join('')
-    this.setData({ areaText: text })
-  },
+  // 2026-10-12 阶段 5.7：删除死代码 refreshAreaText()。
+  //   它是 api 工厂时代「编辑已有地址时刷新省市区文案」的辅助函数，
+  //   但 onLoad 早已直接算出 areaText（见上面的 setData），全项目零调用。
+  //   （审计报告 §4.3 已记录该孤儿函数。）
 
   onInput(e) {
     const field = e.currentTarget.dataset.field
@@ -121,7 +117,7 @@ Page({
         })
       },
       fail: (err) => {
-        console.warn('[address] chooseLocation 失败', err)
+        LOG.warn('[address] chooseLocation 失败', err)
         const msg = (err && err.errMsg) || ''
         if (msg.indexOf('auth') >= 0 || msg.indexOf('privacy') >= 0 || msg.indexOf('permission') >= 0) {
           wx.showModal({

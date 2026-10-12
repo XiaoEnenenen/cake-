@@ -60,7 +60,7 @@
   "cloudfunctionRoot": "cloudfunctions/",
   "libVersion": "3.8.1",
   "appid": "wx5b0e027deafefc01",
-  "projectname": "%E5%BC%A0%E6%B6%A6%E8%88%AA%E8%9B%8B%E7%B3%95%E5%BA%97",
+  "projectname": "%E5%8D%BF%E6%AC%A2%E8%9B%8B%E7%B3%95",
   "simulatorType": "wechat",
   "simulatorPluginLibVersion": {},
   "condition": {

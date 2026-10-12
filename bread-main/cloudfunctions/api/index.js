@@ -19,7 +19,7 @@
  */
 
 const cloud = require('wx-server-sdk')
-const { dispatch } = require('./handlers')
+const { dispatch, cancelExpiredOrders, ORDER_STATUS, statusTextOf } = require('./handlers')
 
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV })
 
@@ -132,12 +132,26 @@ async function handlePayCallback(event) {
     await db
       .collection('order')
       .doc(order._id)
-      .update({ data: { status: 1, statusStr: '制作中', payTime: Date.now() } })
+      .update({
+        data: {
+          status: ORDER_STATUS.MAKING,
+          statusStr: statusTextOf(ORDER_STATUS.MAKING),
+          payTime: Date.now()
+        }
+      })
   }
   return { errcode: 0, errmsg: 'ok' }
 }
 
 exports.main = async (event, context) => {
+  // 定时触发器（阶段 4.2）：每 5 分钟清理超时未支付订单。
+  // 触发器事件形如 { Type: 'Timer', TriggerName: 'orderTimeoutCancel', Time: ... }，
+  // 不带 action，因此必须在 action 路由之前拦截。
+  // 配置见同目录 config.json，超时分钟数见 shop-config.js 的 orderTimeoutMinutes。
+  if (event && event.Type === 'Timer') {
+    return cancelExpiredOrders({}, { db: dbAdapter, openid: '', appid: '' })
+  }
+
   // 支付回调分支：由微信支付触发，不带 action。
   // 由 ENABLE_PAY_CALLBACK 开关保护（默认关闭），关闭时一律视为普通 action 调用，
   // 避免客户端伪造 { outTradeNo, resultCode } 把自己的订单改成"已支付"。详见上方安全警告。

@@ -1,0 +1,9 @@
+{
+  "triggers": [
+    {
+      "name": "orderTimeoutCancel",
+      "type": "timer",
+      "config": "0 */5 * * * * *"
+    }
+  ]
+}

@@ -71,6 +71,110 @@ function makeCartKey(goodsId, sku) {
 }
 
 // ===========================================================================
+// 订单号 / 取餐码生成（2026-10-10 重做）
+// ---------------------------------------------------------------------------
+// 旧实现（已废弃）：
+//   orderNo = String(Date.now()) + 4 位随机数  →  例「17916238923573806」17 位数字
+//   三个问题：
+//     1) 太长又无语义：顾客报单号、店员对单都容易看错位；
+//     2) 前 13 位就是下单的毫秒时刻，相当于把时间戳印在单号上；
+//     3) hxNumber 直接等于 orderNumber —— 订单号是公开信息，核销码因此半公开；
+//        且同毫秒有 1/9000 概率撞号（缺陷报告 D-09）。
+//
+// 新规则：
+//   订单号 orderNumber = 'QH' + yyMMdd + '-' + 4 位随机数字   例：QH261010-8342
+//   取餐码 pickupCode  = 订单号最后 4 位（自提叫号用）        例：8342
+//   订单号写入前先查重（最多重试 6 次），撞号就换一个候选值。
+//   因为订单号在「同一天内」不重复，同一天的取餐码自然也不会重复。
+//
+// 2026-10-10 二次改造：扫码核销整体下线（店主改为在订单里点「完成订单」），
+//   因此不再生成核销码 hxNumber，也没有 hxNumber 的查重与存储。
+//
+// ⚠️ 并发下单时「先查再写」仍可能同时通过查重，最终防线是云库唯一索引：
+//    在 order 集合给 orderNumber 建一条唯一索引
+//    （见《实施步骤清单》阶段 5「云库集合权限与索引配置」）。
+// ===========================================================================
+const ORDER_NO_PREFIX = 'QH'
+const ORDER_NO_TRIES = 6
+const RETRY_STEP = 7919 // 质数：重试时叠加偏移，防止随机源异常时候选值原地打转
+
+/** 数字左侧补零到指定长度（不用 padStart，避免云端 Node 版本差异） */
+function pad(num, len) {
+  let s = String(num)
+  while (s.length < len) s = '0' + s
+  return s
+}
+
+function randomInt(maxExclusive) {
+  return Math.floor(Math.random() * maxExclusive)
+}
+
+/** 订单号的日期段：yyMMdd（例：2026-10-10 → '261010'） */
+function orderNoDatePart(now) {
+  const d = new Date(now)
+  return pad(d.getFullYear() % 100, 2) + pad(d.getMonth() + 1, 2) + pad(d.getDate(), 2)
+}
+
+/**
+ * 取餐码 = 订单号最后 4 位（自提叫号用：QH261010-8342 → '8342'）
+ * 订单号已保证同一天内不重复，因此同一天的取餐码也不会重复。
+ */
+function pickupCodeOf(orderNo) {
+  return String(orderNo || '').slice(-4)
+}
+
+/**
+ * 生成一个在 order 集合里不重复的订单号。
+ * @param {object} ctx 含 db
+ * @param {string} field 字段名（当前只用于 'orderNumber'）
+ * @param {number} tries 最多尝试次数
+ * @param {(attempt:number)=>string} make 候选值工厂，attempt 从 0 开始
+ * @returns {Promise<string>} 全部撞号时返回 ''（调用方必须 fail，绝不能发放重复值）
+ */
+async function generateUniqueOrderField(ctx, field, tries, make) {
+  for (let i = 0; i < tries; i++) {
+    const candidate = make(i)
+    const dup = await ctx.db.findOne('order', { [field]: candidate })
+    if (!dup) return candidate
+  }
+  return ''
+}
+
+// ===========================================================================
+// 订单状态（阶段 4.1：状态机收敛，文案只有服务端这一份）
+// ---------------------------------------------------------------------------
+// 合法状态只有 4 个：-1 已取消 / 0 待支付 / 1 制作中 / 3 交易成功。
+// 历史上出现过 2、4 两个从未被写入过的"幽灵状态"，前端已不再查询（见
+// utils/order-status.js）。本表是状态文案的唯一出处：
+//   - 写库时用它生成 statusStr；
+//   - orderList / orderDetail 返回时也用它，覆盖库里可能过期的旧文案
+//     （老订单、或人工在控制台改过 status 的记录也能显示正确）。
+// ===========================================================================
+const ORDER_STATUS = {
+  CANCELLED: -1,
+  UNPAID: 0,
+  MAKING: 1,
+  DONE: 3
+}
+
+const ORDER_STATUS_TEXT = {
+  '-1': '已取消',
+  '0': '待支付',
+  '1': '制作中',
+  '3': '交易成功'
+}
+
+/**
+ * 状态数字 → 文案（未知状态不静默返回空串，方便排查脏数据）
+ * @param {number} status
+ * @returns {string}
+ */
+function statusTextOf(status) {
+  const text = ORDER_STATUS_TEXT[String(status)]
+  return text === undefined ? '未知状态(' + status + ')' : text
+}
+
+// ===========================================================================
 // 安全：入参校验与鉴权（2026-10-09 阶段二新增）
 // ===========================================================================
 /**
@@ -142,11 +246,11 @@ function resolveOrderSku(goods, propertyChildIds) {
 }
 
 /**
- * 当前调用者是否为商家管理员（核销等管理操作的身份校验）。
- * 白名单来源：cloudfunctions/api/shop-config.js 的 adminOpenids。
+ * 当前调用者是否为商家管理员（完成订单等店主操作的鉴权依据）。
+ * 白名单来源：cloudfunctions/api/shop-config.js 的 adminOpenids（回退 app_config.order_hx_uids）。
  *
- * ⚠️ 为什么不读前端传来的身份：前端 pages/my 的 canHX 只是"要不要显示按钮"的
- *    展示开关（依赖本地 storage，可篡改），**不能作为鉴权依据**。
+ * ⚠️ 为什么不读前端传来的身份：前端只是"要不要显示按钮"的展示开关
+ *    （依赖本地 storage，可篡改），**不能作为鉴权依据**。
  *    真正的鉴权必须在这里用云函数自动注入的 ctx.openid 判断。
  */
 function isAdmin(ctx) {
@@ -156,7 +260,7 @@ function isAdmin(ctx) {
 }
 
 function requireAdmin(ctx) {
-  if (!isAdmin(ctx)) return fail('无核销权限')
+  if (!isAdmin(ctx)) return fail('无操作权限（仅店主可执行）')
   return null
 }
 
@@ -254,18 +358,63 @@ async function goodsDetail(payload, ctx) {
 // ===========================================================================
 // 购物车
 // ===========================================================================
+/**
+ * 组装购物车视图（阶段 5.1 / 缺陷 D-01 修复）
+ * ---------------------------------------------------------------------------
+ * 原实现直接把 cart 集合里存的 `it.price`（= **加购当时的价格快照**）返回给前端，
+ * 而 orderCreate 是按**数据库现价**重算的 → 商家改价后会出现
+ * 「购物车显示 108 元、下单实付 400 元」这种顾客可见与实扣不一致的缺陷。
+ *
+ * 现在统一用商品现价重算（calcPrice，与 orderCreate 同一函数），
+ * 并额外返回 priceChanged 供前端提示「价格已变动」。
+ *
+ * ⚠️ 2026-10-12 复核整改（阶段 5.1 的边界，与 orderCreate 的拒绝条件一一对应）：
+ *   只做到"金额用现价"还不够 —— 商品**已下架**、或购物车里的**规格已被商家改动**时，
+ *   购物车会显示一个正常金额，顾客填完地址电话点「去支付」才被拒（云函数会说
+ *   「已下架」/「磅数选择有误」），结算页又没有改规格入口 = 死路。
+ *   因此这里复用 orderCreate 的 resolveOrderSku 做同一套判定，明确标出
+ *   `unavailable` + `unavailableReason`，前端据此提示并禁止提交。
+ *   （商品被删除时退回快照价，否则整个购物车都算不出价。）
+ */
 function cartItemsOf(items, goodsMap) {
-  // 组装前端需要的字段：key / goodsId / name / pic / price / number / sku
+  // 组装前端需要的字段：key / goodsId / name / pic / price / number / sku / priceChanged / unavailable
   return items.map((it) => {
     const g = goodsMap[it.goodsId]
+    const snapshotPrice = Number(it.price) || 0
+    // 现价：与 orderCreate 用同一个 calcPrice（商品不存在时才退回快照）
+    const currentPrice = g ? calcPrice(g, it.sku) : snapshotPrice
+
+    // 不可下单原因：与 orderCreate 的校验保持同一口径
+    let unavailableReason = ''
+    if (!g) {
+      unavailableReason = '商品已下架'
+    } else if (g.enabled === false) {
+      unavailableReason = '商品已下架'
+    } else {
+      const propertyChildIds = (it.sku || [])
+        .map((s) => s.optionId + ':' + s.optionValueId)
+        .join(',')
+      if (!resolveOrderSku(g, propertyChildIds).ok) {
+        unavailableReason = '规格已变更，请重新选择'
+      }
+    }
+
     return {
       key: it.key,
       goodsId: it.goodsId,
       name: g ? g.name : '（商品已下架）',
       pic: g ? g.pic : '',
-      price: it.price,
+      price: currentPrice,
+      // 加购时的价格快照：仅供前端展示「原价」/判断是否变动，不参与结算
+      snapshotPrice,
+      // 商家改过价（或规格加价被改过）时为 true。
+      // 不可下单的项不再报"改价"（真正的原因是下架/规格失效，避免误导）。
+      priceChanged: !!g && !unavailableReason && currentPrice !== snapshotPrice,
       number: it.number,
-      sku: it.sku || []
+      sku: it.sku || [],
+      // 阶段 5.1：能否下单（false 时前端必须提示并禁止提交）
+      unavailable: !!unavailableReason,
+      unavailableReason
     }
   })
 }
@@ -281,14 +430,35 @@ async function cartSummary(ctx, openid) {
   const view = cartItemsOf(items, goodsMap)
   let price = 0
   let number = 0
+  let priceChanged = false
+  let unavailable = false
+  const priceChangedNames = []
+  const unavailableNames = []
   view.forEach((v) => {
+    // 金额一律用**现价**累加（v.price 已是现价），与 orderCreate 的口径一致
     price += v.price * v.number
     number += v.number
+    if (v.priceChanged) {
+      priceChanged = true
+      // 同一商品可能有多行（不同规格），去重后给前端做提示
+      if (priceChangedNames.indexOf(v.name) < 0) priceChangedNames.push(v.name)
+    }
+    if (v.unavailable) {
+      unavailable = true
+      const label = v.name + '（' + v.unavailableReason + '）'
+      if (unavailableNames.indexOf(label) < 0) unavailableNames.push(label)
+    }
   })
   return ok({
     items: view,
     price: Math.round(price * 100) / 100,
-    number
+    number,
+    // 阶段 5.1：价格是否发生过变动（前端据此提示「以下为最新价格」）
+    priceChanged,
+    priceChangedNames,
+    // 阶段 5.1：购物车里是否存在"不可能下单成功"的项
+    unavailable,
+    unavailableNames
   })
 }
 
@@ -300,6 +470,14 @@ async function cartInfo(payload, ctx) {
  * 加入购物车
  * 前端用法：shippingCarInfoAddItemV2({ goodsId, number, sku })
  * 注意：同名同规格会累加数量，而不是新增一行
+ *
+ * ⚠️ 2026-10-12 复核整改：数量校验与 orderCreate 同口径（整数 1..MAX_ITEM_NUMBER），
+ *   并且**累加后**也要在上限内。原因：
+ *     · 原来完全不校验 → `number: "abc"` 能写进购物车，`price += price*number` 算成 NaN，
+ *       页面 `Number(price) || 0` 就显示「¥0」；
+ *     · 原来只挡下单不挡加购 → 购物车里可以有 150 件，合计 13200 元，
+ *       但 orderCreate 拒绝"单次最多购买 99 件"，这张单永远下不了。
+ *   本店仍然**没有库存概念**，这里限制的只是"单次下单件数"，与库存无关。
  */
 async function cartAdd(payload, ctx) {
   const { goodsId, number = 1, sku = [] } = payload || {}
@@ -307,7 +485,11 @@ async function cartAdd(payload, ctx) {
 
   const goods = await ctx.db.get('goods', goodsId)
   if (!goods) return fail('商品不存在')
-  // 2026-10-09：库存概念已整体删除（不再有「已售罄」与库存上限）
+  if (goods.enabled === false) return fail(goods.name + ' 已下架')
+
+  const numRes = normalizeOrderNumber(number, goods.name)
+  if (!numRes.ok) return fail(numRes.msg)
+  const addNumber = numRes.number
 
   // 规格必选校验：商品有规格组时，每组都必须选
   if (goods.properties && goods.properties.length) {
@@ -327,14 +509,19 @@ async function cartAdd(payload, ctx) {
   const existing = await ctx.db.findOne('cart', { _openid: ctx.openid, key })
   if (existing) {
     // 2026-10-09：库存概念已删除，同规格加购直接累加
-    await ctx.db.update('cart', existing._id, { number: existing.number + number })
+    // 2026-10-12：但累加后的总数必须仍在单次下单上限内，否则购物车会出现"永远下不了单"的行
+    const total = (Number(existing.number) || 0) + addNumber
+    if (total > MAX_ITEM_NUMBER) {
+      return fail(goods.name + ' 单次最多购买 ' + MAX_ITEM_NUMBER + ' 件')
+    }
+    await ctx.db.update('cart', existing._id, { number: total })
   } else {
     await ctx.db.add('cart', {
       _openid: ctx.openid,
       key,
       goodsId,
       price,
-      number,
+      number: addNumber,
       sku,
       dateAdd: Date.now()
     })
@@ -347,12 +534,25 @@ async function cartModifyNumber(payload, ctx) {
   if (!key) return fail('缺少购物车项 key')
   const item = await ctx.db.findOne('cart', { _openid: ctx.openid, key })
   if (!item) return fail('购物车项不存在')
-  if (number <= 0) {
+
+  // 数量必须是合法整数（原来 `number <= 0` 对 'abc' 为 false → 直接把字符串写进库，
+  // 之后 cartInfo 的合计变成 NaN，页面显示 ¥0）
+  const raw = typeof number === 'string' && number.trim() !== '' ? Number(number) : number
+  if (typeof raw !== 'number' || !Number.isFinite(raw) || !Number.isInteger(raw)) {
+    return fail('数量不正确')
+  }
+  // 0（或负数）= 删除该项（van-stepper 减到 0 走这条）
+  if (raw <= 0) {
     await ctx.db.remove('cart', item._id)
     return cartSummary(ctx, ctx.openid)
   }
+  // 与 orderCreate 同口径：单次最多 MAX_ITEM_NUMBER 件
+  if (raw > MAX_ITEM_NUMBER) {
+    const g = await ctx.db.get('goods', item.goodsId)
+    return fail(((g && g.name) || '商品') + ' 单次最多购买 ' + MAX_ITEM_NUMBER + ' 件')
+  }
   // 2026-10-09：库存概念已删除，修改数量只校验数量本身
-  await ctx.db.update('cart', item._id, { number })
+  await ctx.db.update('cart', item._id, { number: raw })
   return cartSummary(ctx, ctx.openid)
 }
 
@@ -445,23 +645,28 @@ async function banners(payload, ctx) {
  * 三个键的用途：
  *   mallName          店铺名（前台导航标题）
  *   order_remark_msg  下单备注快捷短语，pages/add-note 按 \n 拆分成列表
- *   order_hx_uids     商家核销白名单 openid，pages/my 据此决定是否显示"扫码核销"
+ *   order_hx_uids     店主 openid 白名单（键名沿用旧的核销配置，避免动云库数据），
+ *                     前端据此决定「完成订单」按钮显不显示
  *
  * 数据来源优先级：
  *   1) 云数据库 app_config 集合（key/value 结构）
- *   2) 本地配置兜底（shop-config.js：门店名；adminOpenids：核销白名单）
+ *   2) 本地配置兜底（shop-config.js：门店名；adminOpenids：店主白名单）
  *
  * 返回结构与 api 工厂 一致：res.code === 0 时 res.data 为 [{ key, value }]
  */
 async function appConfig(payload, ctx) {
   const SHOP = require('./shop-config')
+  // 门店名的唯一出处是 shop-config.js（根目录 + 云函数副本，两者一致性由测试守着）。
+  // 阶段 5.2（缺陷 D-06）：这里原来写的是 `... || '卿欢蛋糕'` 的字面量兜底，
+  // 副本里没有 name 时永远走兜底分支 → 改根目录配置首页标题不变，且"门店名三个来源互不同步"。
+  // 现在不再有字面量：副本漏填 name 会被 tests/test-stage5.js 直接测出来。
   const defaults = {
-    mallName: (SHOP.shop && SHOP.shop.name) || '卿欢蛋糕',
+    mallName: (SHOP.shop && SHOP.shop.name) || '',
     // 下单备注快捷短语：当前为空（业务方第一版不提供，保留用户手动输入备注）。
     // 补充方式：改 cloudfunctions/api/shop-config.js 的 orderRemarkMsg，或写 app_config 集合覆盖。
     order_remark_msg: SHOP.orderRemarkMsg || '',
-    // 商家核销白名单：当前为空（待管理员账号确定后填入 shop-config.js 的 adminOpenids）。
-    // 留空时 pages/my 的「扫码核销」入口不显示。
+    // 店主白名单：当前为空（待管理员账号确定后填入 shop-config.js 的 adminOpenids）。
+    // 留空时前端不显示「完成订单」按钮（服务端也会拒绝调用）。
     order_hx_uids: (SHOP.adminOpenids || []).join(',')
   }
 
@@ -573,7 +778,7 @@ async function shopSubdetail(payload, ctx) {
  *   2) 服务端校验入参：数量（正整数、单行上限）、规格（每组必选 + 选项合法）、商品必须上架
  *      —— 2026-10-09 阶段二新增，见下方"阶段二安全修复"注释
  *   3) 同一请求内 goodsId + 规格 去重合并，再校验总数量上限（防止拆成多行绕过单行上限）
- *   4) 生成核销码 hxNumber
+ *   4) 生成订单号（QH+日期+4位随机）并派生出取餐码，写入前查重
  *   5) 清空购物车
  *
  * 2026-10-09：**本店没有库存概念**，下单不再校验库存、也不再扣减/回补库存
@@ -584,7 +789,6 @@ async function orderCreate(payload, ctx) {
     goodsJsonStr,
     remark = '',
     extJsonStr,
-    isCanHx = true,
     shopIdZt,
     shopNameZt
   } = payload || {}
@@ -703,7 +907,8 @@ async function orderCreate(payload, ctx) {
       items: items.map((it) => ({ goods: it._goodsForQuote || it, sku: it.sku }))
     })
     if (!quote.deliverable) {
-      return fail(quote.freightText || '超出配送范围')
+      // 兜底文案与配置同源，避免这里残留旧说法（quote.freightText 正常都有值）
+      return fail(quote.freightText || require('./delivery-config').area.outOfAreaTip)
     }
     freight = quote.freight === null ? 0 : quote.freight
 
@@ -725,15 +930,22 @@ async function orderCreate(payload, ctx) {
   // 现在下单只生成订单，不再读写任何库存字段。
 
   const now = Date.now()
-  const orderNo =
-    String(now) + String(Math.floor(Math.random() * 9000) + 1000)
+
+  // 订单号：QH + 年月日 + '-' + 4 位随机数字（例 QH261010-8342）
+  const orderNo = await generateUniqueOrderField(ctx, 'orderNumber', ORDER_NO_TRIES, (i) =>
+    ORDER_NO_PREFIX + orderNoDatePart(now) + '-' + pad((randomInt(10000) + i * RETRY_STEP) % 10000, 4)
+  )
+  if (!orderNo) return fail('订单号生成失败，请稍后重试')
+
+  // 取餐码 = 订单号最后 4 位（自提叫号用，例 8342）
+  const pickupCode = pickupCodeOf(orderNo)
 
   const order = {
     _openid: ctx.openid,
     orderNumber: orderNo,
     dateAdd: now,
-    status: 0, // 0 待支付
-    statusStr: '待支付',
+    status: ORDER_STATUS.UNPAID,
+    statusStr: statusTextOf(ORDER_STATUS.UNPAID),
     // amountReal = 商品金额 + 配送费（服务端重算后的最终应付金额）
     amountReal: totalAmount,
     goodsAmount: amount,
@@ -751,8 +963,8 @@ async function orderCreate(payload, ctx) {
     remark,
     extJson,
     goods: items,
-    isCanHx,
-    hxNumber: isCanHx ? orderNo : '',
+    // 取餐码：自提订单叫号用（= 订单号后 4 位）；外送订单不展示，但字段照样存
+    pickupCode: pickupCode,
     shopIdZt: shopIdZt || '',
     shopNameZt: shopNameZt || ''
   }
@@ -765,18 +977,23 @@ async function orderCreate(payload, ctx) {
   return ok({
     id: res._id,
     orderNumber: orderNo,
+    pickupCode: pickupCode,
     amountReal: totalAmount,
     goodsAmount: amount,
     freight: freight,
     freightText: quote ? quote.freightText : '免配送费',
     distanceKm: quote ? quote.distanceKm : null,
-    hxNumber: order.hxNumber,
     status: order.status
   })
 }
 
 async function orderList(payload, ctx) {
   const { statusBatch } = payload || {}
+  // 2026-10-12：读取兜底 —— 先把该顾客超时未支付的订单取消掉，再查列表。
+  // 这样即使定时触发器没建/没生效，顾客打开订单页也不会看到"永远挂着"的待支付订单。
+  const now = Date.now()
+  await expireUnpaidForViewer(ctx, now)
+
   const all = await ctx.db.find('order', { _openid: ctx.openid }, { sort: -1, field: 'dateAdd' })
   let list = all
   if (statusBatch) {
@@ -789,46 +1006,71 @@ async function orderList(payload, ctx) {
   list.forEach((o) => {
     goodsMap[o._id] = o.goods || []
   })
+  const timeoutMs = orderTimeoutMs()
   return ok({
     orderList: list.map((o) => ({
       id: o._id,
       orderNumber: o.orderNumber,
+      // 取餐码：老订单没有 pickupCode 字段，回退用「订单号后 4 位」现算
+      pickupCode: o.pickupCode || pickupCodeOf(o.orderNumber),
+      deliveryMode: o.deliveryMode || 'pickup',
       dateAdd: o.dateAdd,
       status: o.status,
-      statusStr: o.statusStr,
+      // 阶段 4.1：文案统一由服务端按 status 现算，不直接回传库里可能过期的 statusStr
+      statusStr: statusTextOf(o.status),
       amountReal: o.amountReal,
       goodsNumber: o.goodsNumber,
+      // 2026-10-12：待支付订单的自动取消时刻（时间戳）。
+      // 由服务端下发、前端只做倒计时展示，避免把 15 分钟这个数字硬编码到页面上。
+      autoCancelAt: o.status === ORDER_STATUS.UNPAID && Number(o.dateAdd) > 0
+        ? Number(o.dateAdd) + timeoutMs
+        : null,
       shopIdZt: o.shopIdZt,
       shopNameZt: o.shopNameZt
     })),
     goodsMap,
-    logisticsMap: {}
+    logisticsMap: {},
+    // 前端用「服务端时间」和本机时间的差值对齐倒计时，避免顾客手机时钟不准
+    serverNow: now
   })
 }
 
 async function orderDetail(payload, ctx) {
   const id = payload && payload.id
   if (!id) return fail('缺少订单 id')
+  // 2026-10-12：读取兜底（同 orderList）—— 顾客打开详情页时，超时的待支付订单先被取消
+  const now = Date.now()
+  await expireUnpaidForViewer(ctx, now)
+
   const o = await ctx.db.get('order', id)
   if (!o) return fail('订单不存在')
   if (o._openid !== ctx.openid) return fail('无权查看该订单')
+  const timeoutMs = orderTimeoutMs()
   return ok({
     orderInfo: {
       id: o._id,
       orderNumber: o.orderNumber,
+      // 取餐码：老订单没有 pickupCode 字段，回退用「订单号后 4 位」现算
+      pickupCode: o.pickupCode || pickupCodeOf(o.orderNumber),
+      deliveryMode: o.deliveryMode || 'pickup',
       dateAdd: o.dateAdd,
       status: o.status,
-      statusStr: o.statusStr,
+      // 阶段 4.1：文案统一由服务端按 status 现算
+      statusStr: statusTextOf(o.status),
       amountReal: o.amountReal,
       goodsNumber: o.goodsNumber,
+      // 2026-10-12：待支付订单的自动取消时刻（同 orderList）
+      autoCancelAt: o.status === ORDER_STATUS.UNPAID && Number(o.dateAdd) > 0
+        ? Number(o.dateAdd) + timeoutMs
+        : null,
       remark: o.remark,
-      hxNumber: o.hxNumber,
       shopIdZt: o.shopIdZt,
       shopNameZt: o.shopNameZt
     },
     goods: o.goods || [],
     extJson: o.extJson || {},
-    user: { avatarUrl: '', nick: '' }
+    user: { avatarUrl: '', nick: '' },
+    serverNow: now
   })
 }
 
@@ -837,8 +1079,11 @@ async function orderClose(payload, ctx) {
   const o = await ctx.db.get('order', id)
   if (!o) return fail('订单不存在')
   if (o._openid !== ctx.openid) return fail('无权操作该订单')
-  if (o.status !== 0) return fail('当前状态不可取消')
-  await ctx.db.update('order', o._id, { status: -1, statusStr: '已取消' })
+  if (o.status !== ORDER_STATUS.UNPAID) return fail('当前状态不可取消')
+  await ctx.db.update('order', o._id, {
+    status: ORDER_STATUS.CANCELLED,
+    statusStr: statusTextOf(ORDER_STATUS.CANCELLED)
+  })
   // 2026-10-09：库存概念已删除，取消订单不再回补库存
   return ok({ id })
 }
@@ -867,9 +1112,9 @@ async function orderDelete(payload, ctx) {
   if (!o) return fail('订单不存在')
   if (o._openid !== ctx.openid) return fail('无权操作该订单')
   // 待支付订单请先走「取消订单」，保持状态流转清晰
-  if (o.status === 0) return fail('待支付订单请先取消，不能直接删除')
-  // 只允许删除终态订单
-  if (o.status !== -1 && o.status !== 3) {
+  if (o.status === ORDER_STATUS.UNPAID) return fail('待支付订单请先取消，不能直接删除')
+  // 只允许删除终态订单（已取消 / 交易成功）
+  if (o.status !== ORDER_STATUS.CANCELLED && o.status !== ORDER_STATUS.DONE) {
     return fail('该订单当前不可删除')
   }
   console.log('[orderDelete] openid=' + ctx.openid + ' 删除订单 ' + id +
@@ -879,38 +1124,156 @@ async function orderDelete(payload, ctx) {
 }
 
 /**
- * 核销（商家扫码核销订单）
+ * 完成订单（店主在订单里点「完成订单」：顾客已取餐 / 已送达）
  * ---------------------------------------------------------------------------
- * 2026-10-09 阶段二安全修复（原来有 3 个问题）：
- *   1) 无鉴权：任何人知道 hxNumber 就能核销他人订单。前端 pages/my 的 canHX 只是
- *      "要不要显示按钮"的展示开关（依赖本地 storage，可篡改），不是权限控制。
- *      → 现在服务端用 ctx.openid 校验 shop-config.js 的 adminOpenids 白名单。
- *   2) 不校验订单状态：status=0（待支付）、-1（已取消）都能被核销成"交易成功"。
- *      → 现在只允许 status === 1（已支付/制作中）的订单被核销。
- *   3) hxNumber 就是订单号（时间戳+4位随机数），可猜。
- *      → 阶段 7 接入支付时改为独立随机串；当前至少保证只有白名单能调用。
- * 另外写入 hxBy / hxTime 审计字段，便于追溯"谁在什么时候核销的"。
+ * 2026-10-10：扫码核销整体下线，本 action 取代原 orderHx。
+ *   背景：原来 status 1 → 3（交易成功）只有「商家扫码核销」一个入口，
+ *         撤掉扫码后必须给店主留一个手动完成的入口，否则订单会永远停在
+ *         「制作中」，而「历史订单」只查 -1/3/4 → 历史订单永远为空。
+ *   安全：
+ *     1) 服务端用 ctx.openid 校验 shop-config.js 的 adminOpenids 白名单
+ *        （前端只负责决定按钮显不显示，绝不能作为鉴权依据）；
+ *     2) 只允许 status === 1（已支付/制作中）→ 3，待支付、已取消、已完成的
+ *        订单都不能被"完成"，避免刷状态；
+ *     3) 写入 finishBy / finishTime 审计字段，可追溯"谁在什么时候完成的"。
  */
-async function orderHx(payload, ctx) {
+async function orderFinish(payload, ctx) {
   const denied = requireAdmin(ctx)
   if (denied) return denied
 
-  const hxNumber = payload && payload.hxNumber
-  if (!hxNumber) return fail('缺少核销码')
-  const o = await ctx.db.findOne('order', { hxNumber })
-  if (!o) return fail('核销码无效')
-  if (o.status === 3) return fail('该订单已核销')
-  if (o.status !== 1) {
-    return fail('该订单当前不可核销（仅已支付订单可核销，当前状态：' + (o.statusStr || o.status) + '）')
+  const id = payload && payload.id
+  if (!id) return fail('缺少订单 id')
+  const o = await ctx.db.get('order', id)
+  if (!o) return fail('订单不存在')
+  if (o.status === ORDER_STATUS.DONE) return fail('该订单已完成')
+  if (o.status !== ORDER_STATUS.MAKING) {
+    return fail('该订单当前不可完成（仅已付款/制作中的订单可完成，当前状态：' +
+      statusTextOf(o.status) + '）')
   }
   await ctx.db.update('order', o._id, {
-    status: 3,
-    statusStr: '交易成功',
-    hxBy: ctx.openid,
-    hxTime: Date.now()
+    status: ORDER_STATUS.DONE,
+    statusStr: statusTextOf(ORDER_STATUS.DONE),
+    finishBy: ctx.openid,
+    finishTime: Date.now()
   })
   return ok({ id: o._id, orderNumber: o.orderNumber })
 }
+
+// ===========================================================================
+// 超时未支付订单自动取消（阶段 4.2）
+// ---------------------------------------------------------------------------
+// 两条触发链路，共用下面的 cancelExpiredCore：
+//   1) 定时触发器：云函数入口 index.js 拦截 event.Type === 'Timer' 后调用
+//      cancelExpiredOrders（每 5 分钟一次，见 cloudfunctions/api/config.json）。
+//   2) **读取兜底**：顾客打开订单列表 / 订单详情时，expireUnpaidForViewer 先把
+//      该顾客自己已超时的待支付订单取消掉。
+//      为什么必须有第 2 条：定时触发器需要在云开发控制台里真正创建出来才生效，
+//      只上传云函数代码、没建触发器时订单会永远挂在「待支付」
+//      （店主 2026-10-12 反馈的现象）。第 2 条不依赖任何触发器配置，
+//      顾客只要打开订单页就一定能看到超时订单已取消。
+//
+// 规则：status === 0（待支付）且下单时间超过 orderTimeoutMinutes 分钟 → -1 已取消。
+//
+// 实现说明：
+//   1) dbAdapter 只暴露等值查询（没有 db.command 的比较操作符），所以先按
+//      status 拉取，再在 JS 里按 dateAdd 过滤 —— 与本文件 orderList 同一做法，
+//      单店订单量完全够用，且 handlers 保持"不依赖 wx-server-sdk"、
+//      本地测试可以用内存 db 直接跑。
+//   2) 比较的是时间戳差值，与定时触发器的时区（UTC）无关。
+//   3) 单次最多处理 MAX_PER_RUN 条，避免异常数据导致一次跑太久。
+//
+// ⚠️ 这两个函数都**不放进 handlers 路由表**：前端不可调用（与 importData 同样处理），
+//    只由 exports.main 的 Timer 分支、orderList / orderDetail 内部或本地测试调用。
+// ===========================================================================
+const DEFAULT_ORDER_TIMEOUT_MINUTES = 15
+const CANCEL_MAX_PER_RUN = 200
+
+/**
+ * 超时时间（毫秒）：唯一出处是 shop-config.js 的 orderTimeoutMinutes
+ * 配置缺失或非法时回退到 DEFAULT_ORDER_TIMEOUT_MINUTES。
+ * @returns {number}
+ */
+function orderTimeoutMs() {
+  const SHOP = require('./shop-config')
+  const minutes = Number(SHOP.orderTimeoutMinutes)
+  const safe = minutes > 0 ? minutes : DEFAULT_ORDER_TIMEOUT_MINUTES
+  return safe * 60 * 1000
+}
+
+/**
+ * 扫描并取消超时未支付订单（两条链路共用的核心）
+ * @param {object} ctx 含 db
+ * @param {object} opts { now, minutes, openid }
+ *        now      当前时间戳，默认 Date.now()（测试可注入）
+ *        minutes  超时分钟数，默认取 shop-config
+ *        openid   非空时只处理该顾客的订单（读取兜底用）；为空 = 全表（定时器用）
+ * @returns {Promise<{scanned:number, cancelled:number, minutes:number}>}
+ */
+async function cancelExpiredCore(ctx, opts = {}) {
+  const minutes = Number(opts.minutes) > 0 ? Number(opts.minutes) : orderTimeoutMs() / 60000
+  const now = opts.now || Date.now()
+  const cutoff = now - minutes * 60 * 1000
+
+  const where = { status: ORDER_STATUS.UNPAID }
+  if (opts.openid) where._openid = opts.openid
+
+  const pending = await ctx.db.find('order', where)
+  const expired = pending
+    .filter((o) => Number(o.dateAdd) > 0 && Number(o.dateAdd) <= cutoff)
+    .slice(0, CANCEL_MAX_PER_RUN)
+
+  for (const o of expired) {
+    await ctx.db.update('order', o._id, {
+      status: ORDER_STATUS.CANCELLED,
+      statusStr: statusTextOf(ORDER_STATUS.CANCELLED),
+      // 审计：区分"顾客主动取消"（无 cancelReason）与"超时自动取消"
+      cancelReason: 'timeout',
+      cancelTime: now
+    })
+    console.log('[cancelExpiredOrders] 超时未支付自动取消 openid=' + o._openid +
+      ' 订单号=' + o.orderNumber + ' 下单时间=' + o.dateAdd)
+  }
+
+  return { scanned: pending.length, cancelled: expired.length, minutes }
+}
+
+/**
+ * 顾客在读自己的订单前，先把该顾客超时未支付的订单取消掉（读取兜底）
+ * @param {object} ctx 含 db / openid
+ * @param {number} now 当前时间戳（与本次读接口共用，避免同一响应里时间不一致）
+ * @returns {Promise<{scanned:number, cancelled:number, minutes:number}>}
+ */
+async function expireUnpaidForViewer(ctx, now) {
+  if (!ctx || !ctx.openid) return { scanned: 0, cancelled: 0, minutes: 0 }
+  try {
+    return await cancelExpiredCore(ctx, { now, openid: ctx.openid })
+  } catch (e) {
+    // 兜底逻辑失败不能连累顾客看订单：记日志后按"没取消任何单"继续
+    console.error('[expireUnpaidForViewer] 读取兜底取消失败：' + (e && e.message))
+    return { scanned: 0, cancelled: 0, minutes: 0 }
+  }
+}
+
+/**
+ * 定时触发器入口：扫描并取消全部超时未支付订单
+ * @param {object} payload 可注入 { now, timeoutMinutes, openid } 便于测试
+ * @param {object} ctx 含 db
+ * @returns {Promise<{code:number,data:{scanned:number,cancelled:number,timeoutMinutes:number}}>}
+ */
+async function cancelExpiredOrders(payload, ctx) {
+  const p = payload || {}
+  const r = await cancelExpiredCore(ctx, {
+    now: p.now,
+    minutes: p.timeoutMinutes,
+    openid: p.openid || ''
+  })
+  return ok({
+    scanned: r.scanned,
+    cancelled: r.cancelled,
+    timeoutMinutes: r.minutes
+  })
+}
+
 
 // 2026-09-26 阶段二：已删除 orderPay（余额支付 / 标记已支付）action。
 // 会员余额体系整体移除，不再需要"用余额支付"这条链路。
@@ -975,8 +1338,11 @@ async function importData(payload, ctx) {
     { _id: 'b2', picUrl: '/images/rectangle@2x.png', link: '', sort: 20, enabled: true }
   ]
 
+  // 阶段 5.2（缺陷 D-06）：mallName 的种子值同样取自 shop-config.js（不再写字面量），
+  // 与 cloud-data/app-config.jsonl、shop-config.js 保持一致；
+  // 改店名时只需改 shop-config.js + 重新部署云函数。
   const APP_CONFIG = [
-    { key: 'mallName', value: '卿欢蛋糕' },
+    { key: 'mallName', value: (require('./shop-config').shop || {}).name || '' },
     { key: 'order_remark_msg', value: '' },
     { key: 'order_hx_uids', value: '' }
   ]
@@ -1165,7 +1531,8 @@ const handlers = {
   orderDetail,
   orderClose,
   orderDelete,
-  orderHx,
+  // 店主手动完成订单（取代原扫码核销 orderHx）
+  orderFinish,
   // 支付统一下单（当前返回"未接入"，不伪造支付成功）
   wxpay
 }
@@ -1200,5 +1567,14 @@ module.exports = {
   MAX_ITEM_NUMBER,
   normalizeOrderNumber,
   resolveOrderSku,
-  isAdmin
+  isAdmin,
+  // 阶段 4.1 状态机：供 cloudfunctions/api/index.js（支付回调）复用同一份文案
+  ORDER_STATUS,
+  statusTextOf,
+  // 阶段 4.2 超时未支付自动取消：故意不放进 handlers 路由表
+  // （前端不可调用；只由云函数定时触发器或本地测试直接调用）
+  cancelExpiredOrders,
+  // 2026-10-12：读取兜底取消与超时时间读取器，同样不放进路由表，仅供测试/内部调用
+  expireUnpaidForViewer,
+  orderTimeoutMs
 }

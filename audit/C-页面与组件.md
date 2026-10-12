@@ -79,7 +79,7 @@
 |---|---|---|---|
 | C-P0-1 | P0 | 云开发模式下无支付通道，订单永久停留在「待支付」 | `utils/pay.js:32-74`、`cloudfunctions/api/handlers.js:449-451`、`pages/pay/index.js:373` |
 | C-P0-2 | P0 | 核销闭环不可用（入口白名单为空 + 核销码画布绘制时机错误） | `cloudfunctions/api/shop-config.js:36`、`pages/my/index.js:106-110`、`pages/order-view/index.js:51-55` |
-| C-P1-1 | P1 | 点单页「全部商品」不刷新商品列表 | `pages/orders/index.js:64-76` |
+| C-P1-1 | P1 | 点单页「全部商品」不刷新商品列表 | `pages/orders/index.js:64-76` —— **已修复 2026-10-12** |
 | C-P1-2 | P1 | 选完收货地址后结算页「详细地址」不同步（显示旧地址/空白） | `pages/address/index.js:93-100`、`pages/pay/index.js:74-79`、`pages/pay/index.wxml:45-47` |
 | C-P1-3 | P1 | 自提订单不校验自取时间，蛋糕提前 3 小时规则在自提路径失效 | `pages/pay/index.js:244-276`、`:306` |
 | C-P1-4 | P1 | 时段列表无条件要求「现在 + 3 小时」，非蛋糕订单也选不到近期时段 | `utils/delivery-range.js:445-467` |

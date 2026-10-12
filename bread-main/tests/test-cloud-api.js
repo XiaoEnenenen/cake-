@@ -223,12 +223,31 @@ async function main() {
   check('新行单价 = 54', r.data.items.find((i) => i.price === 54) !== undefined)
 
   // 2026-10-09：库存概念整体删除 —— 原先这里断言「售罄商品不能加购」「超库存时报错」，
-  // 现在改为：无规格商品可以正常加购，且加购数量没有库存上限。
+  // 现在改为：无规格商品可以正常加购，且加购数量没有**库存**上限。
+  // ⚠️ 2026-10-12 阶段 5.1 复核整改：加购数量现在与下单同口径（单次最多 99 件），
+  //    原因不是库存，而是"购物车里不该出现永远下不了单的金额"
+  //    （原来能加到 150 件 → 合计 13200 元，但 orderCreate 拒绝"最多 99 件"）。
   r = await dispatch('cartAdd', { goodsId: 'g_plain', number: 1, sku: [] }, ctx)
   check('无规格商品可以加购（原「已售罄」拦截已删除）', r.code === 0, r)
 
   r = await dispatch('cartAdd', { goodsId: 'g_plain', number: 500, sku: [] }, ctx)
-  check('加购数量没有库存上限（库存概念已删除）', r.code === 0 && r.data.number >= 501, r.data.number)
+  check('★ 单次加购超过 99 件被拒（与下单同口径，不是库存限制）',
+    r.code !== 0 && /最多购买 99 件/.test(r.msg), r)
+
+  r = await dispatch('cartAdd', { goodsId: 'g_plain', number: 98, sku: [] }, ctx)
+  check('累加到 99 件可以加购（本店仍无库存概念）',
+    r.code === 0 && r.data.items.some((i) => i.goodsId === 'g_plain' && i.number === 99), r.data)
+
+  r = await dispatch('cartAdd', { goodsId: 'g_plain', number: 1, sku: [] }, ctx)
+  check('★ 累加超过 99 件被拒（否则购物车里会出现下不了单的行）',
+    r.code !== 0 && /最多购买 99 件/.test(r.msg), r)
+
+  r = await dispatch('cartAdd', { goodsId: 'g_plain', number: 'abc', sku: [] }, ctx)
+  check('★ 非数字数量被拒（原来会把购物车合计算成 NaN → 页面显示 ¥0）',
+    r.code !== 0, r)
+
+  r = await dispatch('cartModifyNumber', { key: 'no_such_key', number: 'abc' }, ctx)
+  check('改数量时 key 不存在仍先报"购物车项不存在"', r.code !== 0, r)
 
   r = await dispatch('cartAdd', { goodsId: 'g_musi', number: 1, sku: [{ optionId: 'size', optionValueId: 's6' }] }, ctx)
   check('缺规格组时报错（应为请选择口味）', r.code !== 0 && /口味/.test(r.msg), r)
@@ -264,7 +283,7 @@ async function main() {
   }, ctx)
   check('下单成功', r.code === 0, r)
   check('金额服务端重算 = 98*2 = 196', r.data.amountReal === 196, r.data)
-  check('生成核销码', !!r.data.hxNumber, r.data)
+  check('生成取餐码（订单号后 4 位）', /^\d{4}$/.test(r.data.pickupCode), r.data)
   const orderId = r.data.id
 
   r = await dispatch('goodsDetail', { id: 'g_musi' }, ctx)
@@ -296,37 +315,36 @@ async function main() {
   r = await dispatch('orderDetail', { id: orderId }, ctx)
   check('订单状态为已取消', r.data.orderInfo.status === -1, r.data.orderInfo)
 
-  // ---- 核销 ----
-  // 2026-10-09 阶段二安全修复：核销现在要求「调用者在商家白名单」且「订单已支付(status=1)」。
-  // 原来这里是直接用下单用户核销未支付订单 —— 那正是被修掉的漏洞（任何人可核销他人订单）。
-  // 新的边界用例见 tests/test-security.js 的 SEC-2 小节。
-  console.log('\n=== 10) 核销（阶段二后需管理员 + 已支付）===')
+  // ---- 完成订单（2026-10-10 取代原扫码核销）----
+  // 原第 10 节用下单用户直接核销未支付订单 —— 那正是被修掉的漏洞（任何人可核销他人订单）。
+  // 现在：只有店主白名单能完成订单，且只允许 status 1 → 3。
+  // 边界用例见 tests/test-security.js 的 SEC-2 小节。
+  console.log('\n=== 10) 完成订单（需店主 + 已付款）===')
   r = await dispatch('orderCreate', {
     goodsJsonStr: JSON.stringify([{ goodsId: 'g_ice', number: 1, propertyChildIds: '' }]),
     extJsonStr: '{}', shopIdZt: 0, shopNameZt: '卿欢蛋糕'
   }, ctx)
-  const hx = r.data.hxNumber
-  const hxOrderId = r.data.id
+  const finishOrderId = r.data.id
   const SHOP_CFG = require('../cloudfunctions/api/shop-config')
 
-  // (1) 普通用户核销 → 必须被拒（白名单为空）
-  r = await dispatch('orderHx', { hxNumber: hx }, ctx)
-  check('普通用户核销被拒（无核销权限）', r.code !== 0, r)
+  // (1) 普通用户完成 → 必须被拒（白名单为空）
+  r = await dispatch('orderFinish', { id: finishOrderId }, ctx)
+  check('普通用户完成订单被拒（无权限）', r.code !== 0, r)
 
   // (2) 加入白名单，但订单仍为「待支付」→ 仍必须被拒
   SHOP_CFG.adminOpenids.push(ctx.openid)
-  r = await dispatch('orderHx', { hxNumber: hx }, ctx)
-  check('未支付订单不可核销', r.code !== 0, r)
+  r = await dispatch('orderFinish', { id: finishOrderId }, ctx)
+  check('未支付订单不可完成', r.code !== 0, r)
 
-  // (3) 模拟支付成功（status=1）后核销 → 成功
-  const hxDoc = db._store.order.find((o) => o._id === hxOrderId)
-  hxDoc.status = 1
-  hxDoc.statusStr = '制作中'
-  r = await dispatch('orderHx', { hxNumber: hx }, ctx)
-  check('已支付订单核销成功', r.code === 0, r)
-  check('  记录核销人 hxBy', hxDoc.hxBy === ctx.openid, hxDoc.hxBy)
-  r = await dispatch('orderHx', { hxNumber: hx }, ctx)
-  check('重复核销被拒', r.code !== 0 && /已核销/.test(r.msg), r)
+  // (3) 模拟支付成功（status=1）后完成 → 成功
+  const finishDoc = db._store.order.find((o) => o._id === finishOrderId)
+  finishDoc.status = 1
+  finishDoc.statusStr = '制作中'
+  r = await dispatch('orderFinish', { id: finishOrderId }, ctx)
+  check('已支付订单完成成功', r.code === 0, r)
+  check('  记录完成人 finishBy', finishDoc.finishBy === ctx.openid, finishDoc.finishBy)
+  r = await dispatch('orderFinish', { id: finishOrderId }, ctx)
+  check('重复完成被拒', r.code !== 0 && /已完成/.test(r.msg), r)
   // 收尾：把白名单还原，避免影响后续小节
   SHOP_CFG.adminOpenids.length = 0
 
@@ -422,7 +440,11 @@ async function main() {
       shopIdZt: 0, shopNameZt: '卿欢蛋糕'
     }, ctxD4)
     check('区域外拒绝外送下单', rd.code !== 0, rd)
-    check('  提示超出配送范围', /超出配送范围/.test(rd.msg), rd.msg)
+    // 2026-10-10：提示文案由配置决定（原来是含糊的「超出配送范围」），
+    // 用配置值比对，改文案时不会false失败。
+    check('  提示与配置的区域外文案一致',
+      rd.msg === require('../cloudfunctions/api/delivery-config').area.outOfAreaTip,
+      { msg: rd.msg })
 
     // (5) 外送但缺地址 → 拒绝
     const dbD5 = createMockDb(seedData())

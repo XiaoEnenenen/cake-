@@ -4,7 +4,10 @@
  * ★ 本文件是【纯函数】模块，不依赖 wx 与任何小程序 API。
  *   因此前端、云函数、Node 测试三处都能用同一份逻辑，避免规则漂移。
  *
- * ⚠️ 与 cloudfunctions/api/delivery-calc.js 是两份副本，改动需同步。
+ * ⚠️ 与主包的 `utils/delivery-range.js` 是两份副本，改动需同步
+ *    （`tests/test-delivery.js` 会比对两边的配置与关键计算）。
+ *    （2026-10-12 阶段 5.7 修正：这里原先写的是「与 cloudfunctions/api/delivery-calc.js
+ *      是两份副本」—— 自己指自己，报告 §4.3 已记录。）
  *
  * 规则来源见 config/delivery.js
  * ---------------------------------------------------------------------------
@@ -298,7 +301,7 @@ function calcQuote(params) {
         distanceKm,
         inArea: true,
         reason: 'beyond_disabled',
-        tip: '超出配送范围'
+        tip: CFG.area.outOfAreaTip
       }
     }
     // 允许下单，运费待人工确认

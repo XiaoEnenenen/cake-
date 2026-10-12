@@ -1,0 +1,39 @@
+{
+  "_说明": "这是示例文件，抄一份改成 goods-real.source.json 即可。以 _ 开头的字段会被忽略。",
+  "_imageBase说明": "图片托管开关。留空 = 图片打进小程序包（/images/goods/，受主包 2MB 限制，改图要重新提审）；填 'cloud://<环境ID>.<bucket>/goods/' = 图片放云存储（不受主包限制，改图不用重新提审）。切换只需改这一行，下面的商品条目一个字都不用动。",
+  "imageBase": "",
+  "goods": [
+    {
+      "id": "g_real_demo_strawberry",
+      "name": "草莓奶油蛋糕",
+      "category": "水果蛋糕",
+      "images": ["demo-strawberry-1.jpg", "demo-strawberry-2.jpg"],
+      "characteristic": "动物奶油 / 当季草莓",
+      "content": "第一段详情文字。\n\n第二段详情文字（空行分段，会自动转成 <p> 富文本）。",
+      "sizes": [
+        { "name": "6寸", "price": 128 },
+        { "name": "8寸", "price": 188 },
+        { "name": "10寸", "price": 268 }
+      ],
+      "flavors": [
+        { "name": "原味", "delta": 0 },
+        { "name": "巧克力", "delta": 10 }
+      ],
+      "unit": "个",
+      "purchaseNotes": "蛋糕需冷藏，建议 2 小时内食用。",
+      "sort": 10
+    },
+    {
+      "id": "g_real_demo_pizza",
+      "name": "手工现烤披萨",
+      "category": "现烤手工披萨",
+      "images": ["demo-pizza-1.jpg"],
+      "characteristic": "现点现烤",
+      "content": "现烤手工披萨，出炉即送。",
+      "price": 68,
+      "unit": "份",
+      "isCake": false,
+      "sort": 20
+    }
+  ]
+}

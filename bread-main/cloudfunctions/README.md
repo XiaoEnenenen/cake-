@@ -39,6 +39,10 @@ cloudfunctions/
 
 ## 已实现的接口
 
+> **路由表实际可调用的 action 共 23 个**（`handlers.js` 的 `handlers` 导出对象，
+> 由 `tests/test-stage5.js` 断言数量与本文档一致）。下表多出的 `importData`
+> 已不在路由表里，仅通过 `module.exports` 暴露给云控制台/本地测试。
+
 | action | 对应原来的 | 说明 |
 |---|---|---|
 | `getUser` | `userDetail` | 当前用户资料（身份取 OPENID） |
@@ -46,7 +50,7 @@ cloudfunctions/
 | `bindMobile` | `bindMobileWxappV2` | 手机号绑定（**当前返回"未接入"**，需小程序后台开通手机号快速验证） |
 | `appConfig` | `queryConfigBatch` | 店铺配置：`mallName` / `order_remark_msg` / `order_hx_uids`（2026-09-26 阶段一新增） |
 | `cmsPage` | `cmsPage` | 用户隐私协议 / 常见问题正文，内容取自 `api/shop-config.js` 的 `cms`（阶段一新增） |
-| `importData` | — | 初始化用：把种子数据（分类/商品/轮播/店铺配置）一次性写入集合。与 `cloud-data/*.jsonl` 内容一致 |
+| `importData` | — | 初始化用：把种子数据（分类/商品/轮播/店铺配置）一次性写入集合。与 `cloud-data/*.jsonl` 内容一致。**⚠️ 2026-10-09 阶段二起已从公开路由移除**：只能在云开发控制台「云函数 → 云端测试」或本地测试脚本里调用，`callFunction` 拿不到（见下方路由表处注释） |
 | `banners` | `banners` | 首页轮播图 |
 | `categoryList` | `goodsCategoryV2` | 分类列表，只返回 enabled 的 |
 | `goodsList` | `goodsv2` | 商品列表，按 categoryId 过滤 |
@@ -61,7 +65,7 @@ cloudfunctions/
 | `orderDetail` | `orderDetail` | 订单详情（含 `_openid` 二次校验） |
 | `orderClose` | `orderClose` | 取消订单 |
 | `orderDelete` | `orderDelete` | 删除订单 |
-| `orderHx` | `orderHXV2` | 核销 |
+| `orderFinish` | `orderFinish` | 完成订单（店主手动，取代原 `orderHx` 扫码核销） |
 | `wxpay` | `wxpay` | 微信支付统一下单（**当前返回"未接入"**，需先申请商户号，阶段一未接线） |
 | `fetchShops` | `fetchShops` | 单店模式兼容桩，固定返回空数组（前端已无调用方） |
 | `shopSubdetail` | `shopSubdetail` | 单店模式兼容桩，固定返回失败（`pages/current-order` 拨号取号用） |
@@ -112,7 +116,12 @@ const res = await API.goodsv2({ categoryId: cid })   // 原来：WXAPI.goodsv2(.
 > 「云函数调用失败：…」，不会静默换源。
 
 > **2026-02-14 更正**：本文档此前写「已接线的文件（14 个）：11 个页面 + `utils/auth.js` + `utils/tools.js` + `app.js`」。
-> 经核对，`utils/tools.js` **已不存在**（全项目无该文件），实际接线为 13 个页面 + `utils/auth.js` + `app.js`。
+> 经核对，`utils/tools.js` **已不存在**（全项目无该文件）。
+>
+> **2026-10-12 阶段 5.7 再次核对**（`tests/test-stage5.js` 会重新数一遍并断言本文档的数字）：
+> 实际接线为 **8 个页面** + `utils/auth.js` + `utils/pay.js` + `utils/admin.js` + `components/bind-mobile` + `app.js`。
+> 8 个页面是：`about-us/detail`、`current-order`、`goods-details`、`index`、`my`、`order-view`、`orders`、`pay`。
+> （此前这里写的「13 个页面」是 api 工厂时代的数字，从未复核过；报告 E-07 已记录该文档与代码不符。）
 >
 > `utils/pay.js` 的支付统一下单仍未接线（见文末），云开发通道会返回"未接入"文案。
 
@@ -154,6 +163,15 @@ const res = await API.goodsv2({ categoryId: cid })   // 原来：WXAPI.goodsv2(.
 8. 确认 `utils/data-source.js` 的 `cloudEnvId` 与本步骤 2 记下的环境 ID 一致
    （阶段三起数据源只有云开发一条，**没有开关需要打开**；`useCloud` 保持 `true` 即可）
 9. 在微信开发者工具「云开发 → 设置」里，确认云函数已能调用
+10. **（2026-10-12 新增）确认「定时触发器」真的建出来了**：
+    `cloudfunctions/api/config.json` 里声明了触发器 `orderTimeoutCancel`
+    （每 5 分钟跑一次，把 **15 分钟**未支付的订单自动置为「已取消」）。
+    ⚠️ 上传云函数**不一定会**把触发器一起建出来，请到
+    「云开发 → 云函数 → api → 定时触发器」确认它已出现；没有就手动新建 / 重新上传触发器。
+    超时分钟数在 `cloudfunctions/api/shop-config.js` 的 `orderTimeoutMinutes`（改完要重新部署）。
+    > **兜底（2026-10-12）**：即使触发器没建、或比预期晚跑，顾客一打开订单列表/详情，
+    > 云函数也会先把该顾客已超时的待支付订单取消掉（`handlers.js` 的 `expireUnpaidForViewer`），
+    > 所以不会再出现"待支付订单永远挂在列表里"。
 
 ---
 

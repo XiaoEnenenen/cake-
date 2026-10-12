@@ -33,15 +33,40 @@
   text-align: center;
   color: #1f1f1f;
 }
+/* 阶段 5.6：错误态的重试入口（原来接口失败时页面只有一个"暂无订单记录"） */
+.no-orders-retry{
+  margin-top: 24rpx;
+  display: inline-block;
+  padding: 12rpx 40rpx;
+  font-size: 26rpx;
+  font-weight: 400;
+  color: #1f1f1f;
+  background-color: #ffd100;
+  border-radius: 40rpx;
+}
 .order-details-bar{
+  /* 2026-10-10：整张卡片改成 <navigator>（整卡可点进详情），显式声明块级，
+     避免依赖 navigator 的默认 display 行为。 */
+  display: block;
   margin-left:40rpx ;
   margin-top: 40rpx;
   padding-top: 30rpx;
+  /* 2026-10-12：底部留白与顶部/左右对齐（都是 30rpx）。
+     加了「剩余 xx:xx 自动取消」一行后卡片变高，原来底部只靠按钮行自身的
+     margin-bottom: 20rpx，按钮会贴着卡片下边缘，显得局促。
+     现在底部留白由卡片自己的 padding-bottom 负责，按钮行不再自带下边距。 */
+  padding-bottom: 30rpx;
   width: 670rpx;
-  height: 416rpx;
+  /* 2026-10-10：原为固定 height（加了「取餐码」一行会顶出卡片），改为 min-height，
+     内容变高时卡片自动撑开。 */
+  min-height: 416rpx;
   border-radius: 12rpx;
   box-shadow: 0 4rpx 8rpx 0 rgba(0, 0, 0, 0.06), 0 12rpx 32rpx 0 rgba(0, 0, 0, 0.06);
   background-color: #ffffff;
+}
+/* 整卡可点后的按压反馈（必须写在 .order-details-bar 之后才盖得住白色底） */
+.order-card-hover{
+  background-color: #f7f7f7;
 }
 .order-details-bar .shops-tatle-box{
   display: flex;
@@ -94,6 +119,31 @@
   margin-top: 10rpx;
   margin-left:30rpx ;
 }
+/* 2026-10-12：待支付订单自动取消倒计时（15 分钟未支付自动取消）。
+   用醒目但不刺眼的红字，让顾客一眼看到"这单会过期"。 */
+.order-details-bar .auto-cancel-tip{
+  margin-top: 10rpx;
+  margin-left: 30rpx;
+  font-size: 24rpx;
+  color: #e64340;
+}
+/* 2026-10-10：取餐码（自提订单叫号用，= 订单号后 4 位） */
+.order-details-bar .pickup-code{
+  font-size: 24rpx;
+  color: #3c3c3c;
+  margin-top: 10rpx;
+  margin-left: 30rpx;
+}
+.order-details-bar .pickup-code .pickup-code-num{
+  display: inline-block;
+  padding: 0 14rpx;
+  border-radius: 6rpx;
+  background-color: #ffd100;
+  font-size: 28rpx;
+  font-weight: 600;
+  letter-spacing: 4rpx;
+  color: #1f1f1f;
+}
 .order-details-bar .goods-photo{
   display: flex;
   margin: 20rpx 0rpx 20rpx 30rpx;
@@ -118,7 +168,9 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin:20rpx 30rpx  ;
+  /* 2026-10-12：下边距交给卡片的 padding-bottom（30rpx），这里只留与分割线的间距，
+     避免「20rpx 按钮下边距 + 卡片 padding」叠成过大的空白。 */
+  margin:20rpx 30rpx 0  ;
 }
 .order-details-bar .botton-bar .price{
   display: flex;

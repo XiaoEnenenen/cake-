@@ -4,19 +4,29 @@
   "description": "",
   "main": "app.js",
   "scripts": {
-    "test": "node tests/test-cloud-api.js && node tests/test-spec.js && node tests/test-address.js && node tests/test-delivery.js && node tests/test-security.js && node tests/test-location.js && node tests/test-data-source.js",
+    "test": "node tests/test-cloud-api.js && node tests/test-spec.js && node tests/test-address.js && node tests/test-delivery.js && node tests/test-security.js && node tests/test-location.js && node tests/test-data-source.js && node tests/test-format.js && node tests/test-order-no.js && node tests/test-stage4.js && node tests/test-distance-display.js && node tests/test-page-interaction.js && node tests/test-order-countdown.js && node tests/test-orders-category.js && node tests/test-orders-layout.js && node tests/test-stage5.js && node tests/test-stage5-page.js && node tests/test-cleanup.js",
     "test:api": "node tests/test-cloud-api.js",
     "test:spec": "node tests/test-spec.js",
     "test:address": "node tests/test-address.js",
     "test:delivery": "node tests/test-delivery.js",
     "test:security": "node tests/test-security.js",
     "test:location": "node tests/test-location.js",
-    "test:datasource": "node tests/test-data-source.js"
+    "test:datasource": "node tests/test-data-source.js",
+    "test:format": "node tests/test-format.js",
+    "test:orderno": "node tests/test-order-no.js",
+    "test:stage4": "node tests/test-stage4.js",
+    "test:distance": "node tests/test-distance-display.js",
+    "test:interaction": "node tests/test-page-interaction.js",
+    "test:countdown": "node tests/test-order-countdown.js",
+    "test:category": "node tests/test-orders-category.js",
+    "test:layout": "node tests/test-orders-layout.js",
+    "test:stage5": "node tests/test-stage5.js",
+    "test:stage5page": "node tests/test-stage5-page.js",
+    "test:cleanup": "node tests/test-cleanup.js"
   },
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@vant/weapp": "1.11.7",
-    "wxbarcode": "^1.0.2"
+    "@vant/weapp": "1.11.7"
   }
 }

@@ -7,21 +7,50 @@
   <view class="previous-orders1" data-index="1" bindtap="changeTab">历史订单</view>
 </view>
 
-<view wx:if="{{!orderList}}" class="no-orders">暂无订单记录</view>
+<!-- 空态 / 错误态（阶段 5.6 / 缺陷 P-07）：
+     原来只判断 `!orderList`：确实没有订单时后端返回空数组 []，`![]` 为 false
+     → 既不渲染卡片也没有任何提示（整页白屏）；接口失败时又谎称"暂无订单记录"。
+     现在三种状态分开：加载失败（可重试） / 已加载但为空 / 有数据。 -->
+<view wx:if="{{ loadError }}" class="no-orders">
+  <view>订单加载失败，请检查网络后重试</view>
+  <view class="no-orders-retry" bindtap="retryLoad">点击重试</view>
+</view>
+<view wx:elif="{{ loaded && (!orderList || orderList.length == 0) }}" class="no-orders">暂无订单记录</view>
 
-<view wx:for="{{orderList}}" wx:key="id" class="order-details-bar">
-  <navigator url="/pages/order-view/index?id={{item.id}}" hover-class="none">
-    <view class="shops-tatle-box">
-      <view class="shop-tatle">{{item.shopNameZt}}</view>
-      <view class="unpaid-bar">
-        <view class="unpaid ">{{item.statusStr}}</view>
-        <image mode='aspectFill' class='go' src='/images/icon-font-solid-2@2x.png'></image>
-      </view>
+<!-- 2026-10-10：整张订单卡片都可点击进订单详情。
+     改造前 navigator 只包住顶部「店名 + 状态 + 箭头」那一行，顾客必须精准点到那一小块
+     （实测反馈：以为只有箭头能点）。
+     ⚠️ 卡片内的操作按钮必须用 catchtap 阻止事件冒泡 —— 否则点「取消订单」/「完成订单」
+        会先执行按钮逻辑、再跳到详情页，等于一次点击触发两个动作。 -->
+<navigator
+  wx:for="{{orderList}}"
+  wx:key="id"
+  class="order-details-bar"
+  url="/pages/order-view/index?id={{item.id}}"
+  hover-class="order-card-hover"
+  hover-stay-time="80"
+>
+  <view class="shops-tatle-box">
+    <view class="shop-tatle">{{item.shopNameZt}}</view>
+    <view class="unpaid-bar">
+      <view class="unpaid ">{{item.statusStr}}</view>
+      <image mode='aspectFill' class='go' src='/images/icon-font-solid-2@2x.png'></image>
     </view>
-  </navigator>
+  </view>
 
   <view class="order-number">订单编号：{{item.orderNumber}}</view>
-  <view class="order-time">下单时间：{{item.dateAdd}}</view>
+  <view class="order-time">下单时间：{{item.dateAddText}}</view>
+  <!-- 2026-10-12：待支付订单的自动取消倒计时（15 分钟未支付自动取消）。
+       剩余时间由服务端下发的 autoCancelAt 现算，前端不硬编码分钟数；
+       到点后页面会自动重新拉列表，服务端那时已把订单置为「已取消」。 -->
+  <view wx:if="{{item.status == ST.UNPAID && item.cancelActive}}" class="auto-cancel-tip">
+    剩余 {{item.cancelRemainText}} 自动取消，请尽快付款
+  </view>
+  <!-- 2026-10-10：扫码核销下线，自提订单显示「取餐码」（= 订单号后 4 位），
+       顾客取餐时报这个号，店主对号。外送订单不需要。 -->
+  <view wx:if="{{item.deliveryMode != 'delivery'}}" class="pickup-code">
+    取餐码：<text class="pickup-code-num">{{item.pickupCode}}</text>
+  </view>
   <view class="goods-photo">
     <image wx:for="{{goodsMap[item.id]}}" wx:key="id" wx:for-item="goods" mode='aspectFill' class='goods' src='{{goods.pic}}'></image>
   </view>
@@ -31,13 +60,18 @@
     <text>¥</text>{{item.amountReal}}
     </view>
     <view class="botton-box">
-      <view wx:if="{{item.status == 0}}" class="botton" data-id="{{item.id}}" bindtap="cancelOrderTap">取消订单</view>
-      <view wx:if="{{item.status == 3 || item.status == 4}}" class="botton" data-id="{{item.id}}" bindtap="deleteorder">删除订单</view>
-      <view class="botton" data-id="{{item.shopIdZt}}" bindtap="callShop">联系门店</view>
-      <view wx:if="{{item.status == 0}}" class="botton1" bindtap="toPayTap" data-id="{{item.id}}" data-money="{{item.amountReal}}">再次支付</view>
+      <view wx:if="{{item.status == ST.UNPAID}}" class="botton" data-id="{{item.id}}" catchtap="cancelOrderTap">取消订单</view>
+      <!-- 阶段 4.1：终态（已取消 / 交易成功）都可以删单，与服务端 orderDelete 规则一致。
+           原来写的是 status == 3 || == 4，其中 4 是幽灵状态，而已取消(-1)反而删不掉。 -->
+      <view wx:if="{{item.status == ST.CANCELLED || item.status == ST.DONE}}" class="botton" data-id="{{item.id}}" catchtap="deleteorder">删除订单</view>
+      <view class="botton" data-id="{{item.shopIdZt}}" catchtap="callShop">联系门店</view>
+      <view wx:if="{{item.status == ST.UNPAID}}" class="botton1" catchtap="toPayTap" data-id="{{item.id}}" data-money="{{item.amountReal}}">再次支付</view>
+      <!-- 2026-10-10：店主专用。取代原扫码核销：顾客取餐/送达后由店主点这里完成订单。
+           前端只是「显不显示」的判断，真正鉴权在云函数（requireAdmin 校验白名单）。 -->
+      <view wx:if="{{isShopAdmin && item.status == ST.MAKING}}" class="botton1" catchtap="finishOrderTap" data-id="{{item.id}}">完成订单</view>
     </view>
   </view>
-</view>
+</navigator>
 <view class="bottom"></view>
 <!-- 底部导航栏 -->
 <import src="/template/tabbar/index.wxml" />

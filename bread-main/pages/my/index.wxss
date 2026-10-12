@@ -1,11 +1,9 @@
 /* ===== 「我的」页面样式 =====
    改造说明：原样式围绕「会员卡 + 积分」设计（含绝对定位的白卡、82rpx 左缩进等），
    现按新版结构重写为分区卡片式布局。配色沿用全站白黄令牌（见 app.wxss）。
+   2026-10-12 阶段 5.7：删除本文件里与 app.wxss 完全重复的 `page { background-color: #f5f5f5; }`
+   （app.wxss 是全局样式，页面再写一遍同样声明不会改变任何计算值，只是重复）。
 */
-
-page {
-  background-color: #f5f5f5;
-}
 
 /* ===== 顶部黄色装饰带 ===== */
 .mycard {
@@ -66,36 +64,82 @@ page {
   white-space: nowrap;
 }
 
-/* 未登录时覆盖整卡的透明按钮（复用原有做法） */
-.user-login-mask {
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: 100%;
-  height: 100%;
-  opacity: 0;
-  z-index: 9;
+/* ===== 阶段 5.5：资料编辑（chooseAvatar + nickname）===== */
+
+/* 右侧「编辑 / 去填写」入口 */
+.user-edit {
+  flex-shrink: 0;
+  margin-left: 16rpx;
+  padding: 10rpx 24rpx;
+  font-size: 24rpx;
+  color: #8a6d00;
+  background-color: #fff7d6;
+  border-radius: 28rpx;
 }
 
-/* 扫码核销入口 */
-.scan-entry {
+/* 头像选择按钮：去掉 button 默认样式（边框/背景/内边距），
+   否则 110rpx 的圆头像外面会多出一圈灰框 */
+.user-avatar-btn {
+  padding: 0;
+  margin: 0;
+  width: 110rpx;
+  height: 110rpx;
+  line-height: 1;
+  background-color: transparent;
+  border: none;
+  border-radius: 50%;
+  flex-shrink: 0;
+  overflow: visible;
+}
+.user-avatar-btn::after {
+  border: none;
+}
+
+/* 昵称输入框 */
+.user-nick-input {
+  font-size: 32rpx;
+  font-weight: 600;
+  color: #1f1f1f;
+  height: 56rpx;
+  line-height: 56rpx;
+  border-bottom: 2rpx solid #f0f0f0;
+}
+
+/* 头像未上传成功时的提示（此时不允许保存，见 pages/my/index.js 的 saveProfile） */
+.user-avatar-warn {
+  margin-top: 8rpx;
+  font-size: 22rpx;
+  color: #ff4b33;
+}
+
+.user-actions {
   display: flex;
+  justify-content: flex-end;
   align-items: center;
-  justify-content: center;
-  margin-top: 26rpx;
-  padding-top: 24rpx;
-  border-top: 1rpx solid #f2f3f5;
+  margin-top: 24rpx;
 }
 
-.scan-icon {
-  width: 36rpx;
-  height: 36rpx;
-}
-
-.scan-text {
-  margin-left: 12rpx;
+.user-btn {
+  min-width: 140rpx;
+  text-align: center;
+  padding: 14rpx 0;
   font-size: 28rpx;
-  color: #3c3c3c;
+  border-radius: 40rpx;
+}
+
+.user-btn-ghost {
+  color: #666666;
+  background-color: #f5f5f5;
+  margin-right: 16rpx;
+}
+
+.user-btn-primary {
+  color: #1f1f1f;
+  background-color: #ffd100;
+}
+
+.user-btn-disabled {
+  opacity: 0.6;
 }
 
 /* ===== 通用分区 ===== */

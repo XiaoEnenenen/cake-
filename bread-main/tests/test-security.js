@@ -358,10 +358,10 @@ function orderPayload(rows, extra) {
   }
 
   // =========================================================================
-  section('SEC-2 核销鉴权 + 状态校验')
+  section('SEC-2 完成订单鉴权 + 状态校验（2026-10-10 取代原扫码核销）')
   // =========================================================================
   {
-    // 白名单暂时置空：任何人都不能核销
+    // 白名单暂时置空：任何人都不能完成订单
     SHOP_CONFIG.adminOpenids.length = 0
 
     const db = createMockDb(seedData())
@@ -371,39 +371,53 @@ function orderPayload(rows, extra) {
       orderPayload([{ goodsId: 'g_plain', number: 1 }]),
       buyer
     )
-    const hxNumber = r0.data.hxNumber
-    check('（前置）下单成功并生成核销码', !!hxNumber, r0)
+    const orderId = r0.data.id
+    check('（前置）下单成功', r0.code === 0 && !!orderId, r0)
 
-    let r = await dispatch('orderHx', { hxNumber }, ctxOf(db, STRANGER_OPENID))
-    check('白名单为空时陌生人核销被拒', r.code !== 0, r)
+    let r = await dispatch('orderFinish', { id: orderId }, ctxOf(db, STRANGER_OPENID))
+    check('白名单为空时陌生人完成订单被拒', r.code !== 0, r)
     let order = db._store.order[0]
     check('  订单状态未被改成 3（交易成功）', order.status === 0, order.status)
 
     // 白名单加入店主
     SHOP_CONFIG.adminOpenids.push(ADMIN_OPENID)
 
-    // 仍不允许核销未支付订单（status = 0）
-    r = await dispatch('orderHx', { hxNumber }, ctxOf(db, ADMIN_OPENID))
-    check('店主核销【未支付】订单被拒', r.code !== 0, r)
+    // 仍不允许完成未支付订单（status = 0）
+    r = await dispatch('orderFinish', { id: orderId }, ctxOf(db, ADMIN_OPENID))
+    check('店主完成【未支付】订单被拒', r.code !== 0, r)
     order = db._store.order[0]
     check('  订单状态仍为 0', order.status === 0, order.status)
 
     // 非管理员即使白名单非空也被拒
-    r = await dispatch('orderHx', { hxNumber }, ctxOf(db, STRANGER_OPENID))
-    check('非管理员核销被拒（白名单非空时）', r.code !== 0, r)
+    r = await dispatch('orderFinish', { id: orderId }, ctxOf(db, STRANGER_OPENID))
+    check('非管理员完成订单被拒（白名单非空时）', r.code !== 0, r)
 
-    // 模拟"已支付"（status=1）后，店主可以核销
+    // 模拟"已支付"（status=1）后，店主可以完成
     order.status = 1
     order.statusStr = '制作中'
-    r = await dispatch('orderHx', { hxNumber }, ctxOf(db, ADMIN_OPENID))
-    check('店主核销【已支付】订单成功', r.code === 0, r)
+    r = await dispatch('orderFinish', { id: orderId }, ctxOf(db, ADMIN_OPENID))
+    check('店主完成【已支付】订单成功', r.code === 0, r)
     order = db._store.order[0]
     check('  状态变为 3（交易成功）', order.status === 3, order.status)
-    check('  写入核销人 hxBy 审计字段', order.hxBy === ADMIN_OPENID, order.hxBy)
+    check('  写入完成人 finishBy 审计字段', order.finishBy === ADMIN_OPENID, order.finishBy)
 
-    // 重复核销
-    r = await dispatch('orderHx', { hxNumber }, ctxOf(db, ADMIN_OPENID))
-    check('重复核销被拒', r.code !== 0, r)
+    // 重复完成
+    r = await dispatch('orderFinish', { id: orderId }, ctxOf(db, ADMIN_OPENID))
+    check('重复完成被拒', r.code !== 0, r)
+
+    // 已取消（-1）的订单也不能被"完成"
+    const r2 = await dispatch(
+      'orderCreate',
+      orderPayload([{ goodsId: 'g_plain', number: 1 }]),
+      buyer
+    )
+    const cancelledId = r2.data.id
+    await dispatch('orderClose', { id: cancelledId }, buyer)
+    const cancelledDoc = db._store.order.find((o) => o._id === cancelledId)
+    check('（前置）第二单已取消', cancelledDoc.status === -1, cancelledDoc.status)
+    r = await dispatch('orderFinish', { id: cancelledId }, ctxOf(db, ADMIN_OPENID))
+    check('已取消订单不能被完成', r.code !== 0, r)
+    check('  状态仍为 -1', cancelledDoc.status === -1, cancelledDoc.status)
   }
 
   // =========================================================================
@@ -412,7 +426,7 @@ function orderPayload(rows, extra) {
   //   status 0（待支付）→ 只能「取消订单」，不能直接删除
   //   status -1（已取消）→ 可以删除
   //   status 1（已支付/制作中）→ 不可删除（阶段 4 补"申请取消"路径）
-  //   status 3（已完成/已核销）→ 可以删除（沿用原有前端按钮规则）
+  //   status 3（已完成）→ 可以删除（沿用原有前端按钮规则）
   // 2026-10-09：库存概念已删除，「删单会吃掉库存」这条风险不复存在，
   //             状态约束保留是为了让订单状态流转清晰。
   // =========================================================================
@@ -462,9 +476,9 @@ function orderPayload(rows, extra) {
     r = await dispatch('orderDelete', { id: paidId }, ctx)
     check('已支付(制作中)订单不可删除', r.code !== 0, r)
 
-    // 店主核销 → status=3 → 允许删除（沿用前端原有按钮规则）
-    const hxRes = await dispatch('orderHx', { hxNumber: paidDoc.hxNumber }, ctxOf(db, ADMIN_OPENID))
-    check('（前置）店主核销成功，状态变为 3', hxRes.code === 0 && paidDoc.status === 3, { hxRes, status: paidDoc.status })
+    // 店主完成订单 → status=3 → 允许删除（沿用前端原有按钮规则）
+    const finishRes = await dispatch('orderFinish', { id: paidId }, ctxOf(db, ADMIN_OPENID))
+    check('（前置）店主完成订单，状态变为 3', finishRes.code === 0 && paidDoc.status === 3, { finishRes, status: paidDoc.status })
 
     r = await dispatch('orderDelete', { id: paidId }, ctx)
     check('已完成订单可以删除（与原前端按钮规则一致）', r.code === 0, r)

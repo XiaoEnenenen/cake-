@@ -2,8 +2,9 @@
      2026-10-09 改版（按店主提供的参考图重做，仅调整布局与视觉，不加任何新业务字段）：
        1. 顶部「自提 / 外送」改为分段式（灰底滑槽 + 白底选中块），替换原来的下划线 Tab。
        2. 新增门店卡片：左侧店名 / 门店地址 / 营业时间，右侧门店地图缩略图
-          （map 组件画固定门店坐标，不再需要第三方 key）+ 「距离您 X」气泡 + 导航按钮。
-          距离来自 wx.getLocation（用户定位授权），未授权或未申请接口权限时不显示，不影响下单。
+          （map 组件画固定门店坐标，不再需要第三方 key）+ 距离气泡 + 导航按钮。
+          距离气泡（2026-10-10 修正）：外送显示「配送距离 X」= 收货地址到门店（与运费同源，
+          由页面算好传入组件）；自提才显示「距离您 X」= 当前位置到门店。
        3. 商品列表改为卡片：图片 + 名称 + 价格 + 数量。
        4. 联络电话由「自动填写」按钮改为**直接手填**。
           改因：当前主体未开通「手机号快速验证」，点自动填写会弹 getPhoneNumber:fail no permission，
@@ -19,6 +20,31 @@
   custom-class="notice-bar"
   background-color="#f5f5f5"
   text="{{purchaseNotes}}"
+/>
+
+<!-- ===== 阶段 5.1（缺陷 D-01）：商家改价提示 =====
+     购物车与结算金额现在都以云函数返回的**现价**为准（与下单实付同源），
+     商家在顾客加购之后调过价时，这里明确告知"看到的就是最新价格"，
+     避免出现"屏幕显示 108 元、实际扣 400 元"这种顾客不可预期的扣款。
+     ⚠️ 若顾客在结算页停留期间商家又改了价，下单那一刻还会再做一次金额二次确认
+        （见 pages/pay/index.js 的 _createOrder）。 -->
+<van-notice-bar
+  wx:if="{{priceChangedTip}}"
+  custom-class="notice-bar"
+  background-color="#fff7e6"
+  color="#d46b08"
+  text="{{priceChangedTip}}"
+/>
+
+<!-- ===== 阶段 5.1 复核整改：购物车里有无法下单的项（已下架 / 规格被改动）=====
+     原来这种项在购物车里显示正常金额，顾客填完地址电话点「去支付」才被拒，
+     而结算页没有改规格的入口 = 死路。现在提前说清原因并禁止提交。 -->
+<van-notice-bar
+  wx:if="{{cartUnavailableTip}}"
+  custom-class="notice-bar"
+  background-color="#fdecec"
+  color="#e64340"
+  text="{{cartUnavailableTip}}"
 />
 
 <!-- ===== 配送方式：分段控件 =====
@@ -43,14 +69,17 @@
 <!-- ===== 门店卡片（含地图缩略图与距离） ===== -->
 <view class="card store-card" bindtap="openShopLocation">
   <view class="store-left">
-    <view class="store-name">{{ shopInfo.name || '卿欢蛋糕' }}</view>
+    <!-- 2026-10-12 复核整改：去掉 `|| '卿欢蛋糕'` 字面量兜底（D-06 同族）。
+         onLoad 已把 shop-config.js 合并进 shopInfo，name 一定有值。 -->
+    <view class="store-name">{{ shopInfo.name }}</view>
     <view class="store-addr">{{ shopInfo.address }}</view>
     <view class="store-hours">营业时间 {{ shopInfo.openHoursText }}</view>
   </view>
 
   <!-- 门店地图板块（components/shop-map，mini 形态）：
-       地图 + 门店标记 + 用户位置蓝点 + 「距离您 X」气泡 + 圆形导航按钮。
-       定位授权与降级提示都在组件内处理。 -->
+       地图 + 门店标记 + 用户位置蓝点 + 距离气泡 + 圆形导航按钮。
+       距离气泡（2026-10-10）：外送显示「配送距离 X」（= 收货地址到门店，与运费同源），
+       自提显示「距离您 X」（当前位置到门店）；定位授权与降级提示都在组件内处理。 -->
   <view class="store-map-wrap">
     <shop-map
       shop="{{ shopInfo }}"
@@ -58,6 +87,7 @@
       scale="{{ 14 }}"
       mini="{{ true }}"
       show-distance="{{ true }}"
+      distance-text="{{ mapDistanceText }}"
     />
   </view>
 </view>
@@ -84,13 +114,23 @@
 <view class="card">
   <view wx:for="{{ shippingCarInfo.items }}" wx:key="key" class="goods-item">
     <image class="goods-pic" mode="aspectFill" src="{{ item.pic }}"></image>
-    <view class="goods-name">{{ item.name }}</view>
+    <!-- 阶段 5.1 复核整改：无法下单的项（已下架 / 规格被改动）直接在商品名后标出原因 -->
+    <view class="goods-name">
+      {{ item.name }}
+      <text wx:if="{{ item.unavailable }}" class="goods-unavailable">（{{ item.unavailableReason }}）</text>
+    </view>
     <view class="goods-right">
       <view class="goods-price"><text class="yen">¥</text>{{ item.price }}</view>
       <view class="goods-num">x{{ item.number }}个</view>
     </view>
   </view>
-  <view wx:if="{{ !shippingCarInfo }}" class="goods-empty">购物车加载中…</view>
+  <!-- 阶段 5.6 复核整改：三种状态分开 —— 加载失败（可重试） / 加载中 / 确实为空。
+       原来只有「!shippingCarInfo → 购物车加载中…」，接口失败时会永远停在这一句。 -->
+  <view wx:if="{{ cartLoadError }}" class="goods-empty">
+    <view>购物车加载失败，请检查网络后重试</view>
+    <view class="cart-retry" bindtap="retryCart">点击重试</view>
+  </view>
+  <view wx:elif="{{ !cartLoaded }}" class="goods-empty">购物车加载中…</view>
   <view wx:elif="{{ cartEmpty }}" class="goods-empty">购物车是空的</view>
 </view>
 
@@ -128,8 +168,10 @@
   </navigator>
 </view>
 
-<!-- ===== 费用 ===== -->
-<view class="card">
+<!-- ===== 费用 =====
+     2026-10-12 复核整改：购物车还没加载成功（或加载失败）时不渲染金额，
+     否则首帧会出现「共  件商品 / ¥」这种半截文案（看起来像 ¥0）。 -->
+<view wx:if="{{ cartLoaded && !cartLoadError }}" class="card">
   <view class="fee-row">
     <view class="fee-label">共 {{ shippingCarInfo.number }} 件商品</view>
     <view class="fee-value"><text class="yen">¥</text>{{ shippingCarInfo.price }}</view>
@@ -145,7 +187,7 @@
 <!-- 底部固定栏占位（避免最后一张卡片被遮挡） -->
 <view class="bottom-holder"></view>
 
-<view class="pay-bar">
+<view wx:if="{{ cartLoaded && !cartLoadError }}" class="pay-bar">
   <view class="pay-box">
     <view class="pay-total">
       <text class="pay-label">合计</text>
@@ -153,5 +195,9 @@
     </view>
     <view class="pay-sub">共 {{ shippingCarInfo.number }} 件商品</view>
   </view>
-  <view class="pay-byn" bindtap="createorder">去支付</view>
+  <!-- 阶段 5.6（缺陷 P-10）：提交中置灰并换文案 —— 防抖见 pages/pay/index.js 的 createorder -->
+  <view
+    class="pay-byn {{ submitting ? 'pay-byn-disabled' : '' }}"
+    bindtap="createorder"
+  >{{ submitting ? '提交中…' : '去支付' }}</view>
 </view>

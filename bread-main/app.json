@@ -9,7 +9,6 @@
     "pages/goods-details/index",
     "pages/current-order/index",
     "pages/order-view/index",
-    "pages/order-view/scan-result",
     "pages/about-us/index",
     "pages/about-us/detail",
     "pages/address/index",
@@ -36,9 +35,7 @@
     "van-icon": "@vant/weapp/icon/index",
     "van-popup": "@vant/weapp/popup/index",
     "van-stepper": "@vant/weapp/stepper/index",
-    "van-notice-bar": "@vant/weapp/notice-bar/index",
-    "van-dialog": "@vant/weapp/dialog/index",
-    "van-datetime-picker": "@vant/weapp/datetime-picker/index"
+    "van-notice-bar": "@vant/weapp/notice-bar/index"
   },
   "permission": {
     "scope.userLocation": {

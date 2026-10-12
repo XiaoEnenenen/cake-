@@ -1,8 +1,36 @@
+<!-- ===== 订单详情页（正在加载 / 加载失败 / 正常）=====
+     2026-10-12 阶段 5.6（缺陷 P-07）：整页包一层状态判断。
+       原实现无论加载成功与否都渲染下面的区块，接口失败时只剩一堆空标题行，
+       顾客看到的是"白屏"，既不知道出了什么事也没有重试入口。
+     2026-10-12 复核整改：再加一层「加载中」——
+       只判断"失败/非失败"的话，慢网下首帧仍会渲染一屏空标题行。
+-->
+<view wx:if="{{ loadError }}" class="order-error">
+  <view class="order-error-title">订单详情加载失败</view>
+  <view class="order-error-tip">请检查网络后重试；若一直失败，可回到订单列表下拉重进</view>
+  <view class="order-error-retry" bindtap="retryLoad">点击重试</view>
+</view>
+
+<view wx:elif="{{ !loaded }}" class="order-error">
+  <view class="order-error-title">订单加载中…</view>
+</view>
+
+<block wx:else>
 <view class="order-status-bar">
   <view class="order-status">
     <view class="title">订单状态</view>
     <view class="order-number">订单编号：{{ orderDetail.orderInfo.orderNumber }}</view>
-    <view class="order-time">下单时间：{{ orderDetail.orderInfo.dateAdd }}</view>
+    <view class="order-time">下单时间：{{ orderDetail.orderInfo.dateAddText }}</view>
+    <!-- 2026-10-12：待支付订单的自动取消倒计时（15 分钟未支付自动取消）。
+         剩余时间由服务端下发的 autoCancelAt 现算，前端不硬编码分钟数。 -->
+    <view wx:if="{{ orderDetail.orderInfo.status == ST.UNPAID && cancelRemainText }}" class="auto-cancel-tip">
+      剩余 {{ cancelRemainText }} 自动取消，请尽快付款
+    </view>
+    <!-- 2026-10-10：扫码核销下线，自提订单改为展示「取餐码」（订单号后 4 位）。
+         外送订单不需要取餐码。 -->
+    <view wx:if="{{ orderDetail.orderInfo.deliveryMode != 'delivery' }}" class="pickup-code">
+      取餐码：<text class="pickup-code-num">{{ orderDetail.orderInfo.pickupCode }}</text>
+    </view>
   </view>
   <view class="paid">{{ orderDetail.orderInfo.statusStr }}</view>
 </view>
@@ -24,8 +52,10 @@
 
 <!-- ===== 改造：显示本店位置（固定坐标 + 标记点）=====
      2026-10-09：改用 components/shop-map 组件，与结算页 / 我的 共用同一份实现。
-       地图 + 门店标记（含店名气泡）+ 用户定位蓝点 + 「距离您 X」+ 一键导航到店。
+       地图 + 门店标记（含店名气泡）+ 用户定位蓝点 + 距离气泡 + 一键导航到店。
        坐标来自 shop-config.js；定位授权失败只影响距离显示，不影响导航。
+     2026-10-10：外送订单的气泡改为订单快照里的「配送距离」（收货地址 → 门店，
+       见 orderDetail.orderInfo.mapDistanceText），自提订单仍是「距离您 X」。
 -->
 <view class="shops-bar">
   <view class="shops-box">
@@ -40,6 +70,7 @@
     height="400rpx"
     show-address="{{ true }}"
     show-navigate="{{ true }}"
+    distance-text="{{ orderDetail.orderInfo.mapDistanceText }}"
   />
 </view>
 <view class="shops-bar">
@@ -150,17 +181,9 @@
 </view>
 <view class="blank1"></view>
 
-<block wx:if="{{orderDetail.orderInfo.hxNumber && orderDetail.orderInfo.status > 0 && orderDetail.orderInfo.status < 3}}">
-  <view class="shops-bar">
-    <view class="shops-box">
-      <view class="content">
-        <view class="titles">核销码</view>
-      </view>
-      <view class="text"><canvas class="hx-canvas" canvas-id="qrcode" /></view>
-    </view>
-  </view>
-  <view class="blank1"></view>
-</block>
+<!-- 2026-10-10：核销二维码区块已删除（扫码核销不需要了），
+     自提订单改在顶部展示「取餐码」。 -->
+
 <!-- <view class="pay-bar">
   <view class="pay-box">
     <view class="title">总价</view>
@@ -170,3 +193,4 @@
   </view>
   <view class="pay-byn">结算</view>
 </view> -->
+</block>

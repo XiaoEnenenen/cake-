@@ -17,6 +17,8 @@
  */
 const LOC = require('../../utils/location')
 const SHOP_CONFIG = require('../../shop-config')
+// 阶段 5.7：日志统一收敛到 utils/log.js
+const LOG = require('../../utils/log')
 
 /** 紧凑坐标文案：24.9195, 102.484（便于人眼核对） */
 function compact(latitude, longitude) {
@@ -84,7 +86,7 @@ Page({
     ctx.getCenterLocation({
       success: (res) => this.applyPicked(res.latitude, res.longitude),
       fail: (err) => {
-        console.error('[shop-locator] getCenterLocation 失败', err)
+        LOG.error('[shop-locator] getCenterLocation 失败', err)
         wx.showToast({ title: '读取失败，请稍后重试', icon: 'none' })
       }
     })
@@ -104,7 +106,7 @@ Page({
       fail: (err) => {
         const msg = String((err && err.errMsg) || '')
         if (msg.indexOf('cancel') >= 0) return
-        console.warn('[shop-locator] chooseLocation 失败', err)
+        LOG.warn('[shop-locator] chooseLocation 失败', err)
         wx.showModal({
           title: '无法打开地图选点',
           content:

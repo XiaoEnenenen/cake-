@@ -43,6 +43,12 @@
 //   价格规则（用户确认）：选项是「加价」，最终价 = 商品 minPrice + 各选中项 priceDelta 之和
 //   例：minPrice 54，选 6寸(priceDelta 34) + 巧克力(priceDelta 10) → 98
 //   （服务端同一规则见 cloudfunctions/api/handlers.js 的 calcPrice）
+//
+// ⚠️ 2026-10-12 阶段 5.7 修正（审计报告 E-07）：
+//   下面 example_goods 的规格选项原来写的是 `price`（那是 api 工厂时代的字段名），
+//   而全项目**实际生效、且前后端都只认**的字段是 `priceDelta`。
+//   照旧示例录入会导致每个选项的加价都按 0 处理 → 所有尺寸同价。
+//   已改为 priceDelta，数值与 handlers.js 的一键导入种子数据保持一致。
 // ===========================================================================
 
 module.exports = {
@@ -85,19 +91,22 @@ module.exports = {
       {
         id: 'size',
         name: '磅数',
+        // ⚠️ 2026-10-12 阶段 5.7 修正：这里原来写的是 `price`，而**实际生效的字段是 `priceDelta`**。
+        //    照旧示例录入 → 每个选项的加价都被当成 0 → 所有尺寸同价（54 元），
+        //    属于"照文档做就错"（审计报告 E-07）。
         childsCurGoods: [
-          { id: 'size_4', name: '4寸', price: 54 },
-          { id: 'size_6', name: '6寸', price: 88 },
-          { id: 'size_8', name: '8寸', price: 128 }
+          { id: 'size_4', name: '4寸', priceDelta: 0 },
+          { id: 'size_6', name: '6寸', priceDelta: 34 },
+          { id: 'size_8', name: '8寸', priceDelta: 74 }
         ]
       },
       {
         id: 'flavor',
         name: '口味',
         childsCurGoods: [
-          { id: 'flavor_strawberry', name: '草莓', price: 0 },
-          { id: 'flavor_mango', name: '芒果', price: 0 },
-          { id: 'flavor_chocolate', name: '巧克力', price: 10 }
+          { id: 'flavor_strawberry', name: '草莓', priceDelta: 0 },
+          { id: 'flavor_mango', name: '芒果', priceDelta: 0 },
+          { id: 'flavor_chocolate', name: '巧克力', priceDelta: 10 }
         ]
       }
     ]
