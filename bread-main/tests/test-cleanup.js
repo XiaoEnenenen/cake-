@@ -383,6 +383,29 @@ function main() {
   check('★ wxml 用到的顶层 data 字段都在 data 里声明',
     missingFields.length === 0, missingFields)
 
+  // =========================================================================
+  console.log('\n=== 8) 云端导入数据：.json 与 .jsonl 必须一致 ===')
+  // =========================================================================
+  // 背景：cloud-data/ 下的种子数据同时放 `.jsonl`（原始/生成格式）与 `.json`（同内容副本）——
+  // 项目里 `goods-real.json` 一直是这个惯例，用来兼容"导入选择框按类型筛选只列 .json"的情况。
+  // 两份一旦不一致，就会出现"改了 .jsonl 但导入的是旧 .json"这种极难发现的问题，
+  // 因此这里逐字节比对（忽略行尾差异）。
+  const jsonlFiles = walk('cloud-data', []).filter((f) => f.endsWith('.jsonl'))
+  const twinProblems = []
+  for (const jl of jsonlFiles) {
+    const twin = jl.replace(/\.jsonl$/, '.json')
+    if (!exists(twin)) {
+      twinProblems.push(jl + ' 缺少同内容的 ' + twin)
+      continue
+    }
+    const a = src(jl).replace(/\r\n/g, '\n')
+    const b = src(twin).replace(/\r\n/g, '\n')
+    if (a !== b) twinProblems.push(jl + ' 与 ' + twin + ' 内容不一致')
+  }
+  check('★ 每份 .jsonl 都有内容一致的 .json 副本（' + jsonlFiles.length + ' 对）',
+    twinProblems.length === 0, twinProblems)
+  check('扫到的 .jsonl 数量合理（防止扫描写坏导致恒真）', jsonlFiles.length >= 4, jsonlFiles.length)
+
   console.log('\n' + '='.repeat(60))
   console.log((fail === 0 ? '全部通过' : '存在失败') + '：' + pass + ' 通过 / ' + fail + ' 失败')
   process.exit(fail === 0 ? 0 : 1)

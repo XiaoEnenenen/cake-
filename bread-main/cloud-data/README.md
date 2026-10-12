@@ -13,12 +13,25 @@
 |---|---|
 | `01-schema-category.json` | 分类集合（`category`）的字段设计说明 |
 | `02-schema-goods.js` | 商品集合（`goods`）的字段设计说明 + 一个完整示例商品 |
-| `categories.jsonl` | **26 个分类的导入模板**，可直接导入云数据库 |
-| `goods-sample.jsonl` | **5 个测试商品**，可直接导入（先跑通流程用） |
-| `banner.jsonl` | **2 条轮播图**，可直接导入 |
-| `app-config.jsonl` | **3 条店铺配置**（`mallName` 等），可选导入 |
+| `categories.jsonl` / `categories.json` | **26 个分类的导入模板** |
+| `goods-sample.jsonl` / `goods-sample.json` | **5 个测试商品**（先跑通流程用） |
+| `banner.jsonl` / `banner.json` | **2 条轮播图** |
+| `app-config.jsonl` / `app-config.json` | **3 条店铺配置**（`mallName` 等），可选导入 |
+| `goods-real.jsonl` / `goods-real.json` | **真实商品**（由 `tools/build-goods.js` 生成，见 tools/README） |
+| `goods-real.source.json` | 真实商品的**人写源文件**（改商品只改这个，再跑脚本） |
 
-> 格式说明：`.jsonl` = 每行一条 JSON 记录，**微信云开发控制台的「导入」功能要求这种格式**。
+> **格式说明**：内容是「每行一条 JSON 记录」（JSONL）。
+>
+> 每份数据都放了**两个扩展名**的副本：`.jsonl` 与 `.json`，**内容完全相同**，任选其一都能导入：
+> - `.json` —— 控制台的导入选择框若按文件类型筛选，**可能只列出 `.json`**；
+>   这时就用这份（项目里的 `goods-real.json` 一直就是这么用的）。
+> - `.jsonl` —— 原始/生成格式（`tools/*.js` 的产物，便于 diff 与脚本处理）。
+>   如果向导里找不到它，也可以在选择框的「文件名」里**直接粘贴完整路径**再回车。
+> - ⚠️ 两份是**同一份数据**：改了一处必须同步另一处。
+>   `tests/test-cleanup.js` 有一条断言会逐字节比对这两种副本，改漏了会测试变红。
+> - 💡 如果你在资源管理器里"看不到某个文件"，**先按 F5 刷新**或换个窗口再确认
+>   （2026-10-12 店主就遇到过：窗口没刷新，`banner.jsonl` 其实一直在）。
+>
 > 集合的完整建库步骤与权限设置见 `docs/云开发初始化清单.md`。
 
 字段设计都是从页面实际读取的字段反推的（见文件内注释），没有凭空造字段。
@@ -34,7 +47,8 @@
    （可选免费的按量付费套餐，个人也能开）
 2. 进入「数据库」→ 点「**+**」新建集合，集合名填 `category`
 3. 在 `category` 集合里点「**导入**」
-4. 选择本目录的 `categories.jsonl`
+4. 选择本目录的 `categories.json`（内容与 `categories.jsonl` 相同；
+   **选择框里只会出现 `.json` 那份**，找不到 `.jsonl` 是正常的）
 5. 冲突处理方式选「**insert**」（首次导入，集合为空）
 6. 导入完成后检查：应该有 **26 条**记录
 

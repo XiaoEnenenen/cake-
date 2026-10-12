@@ -1,11 +1,16 @@
 # cloud-data/tools — 真实商品录入工具
 
-把**人写的商品源文件**转成**微信云开发控制台能直接导入的 `goods-real.jsonl`**。
+把**人写的商品源文件**转成**微信云开发控制台能直接导入的 `goods-real.json`**。
 
 ```
-goods-real.source.json   ──[node build-goods.js]──►   ../goods-real.jsonl
-（分类写名字、尺寸写绝对价）                          （每行一条 JSON，控制台「导入」用）
+goods-real.source.json   ──[node build-goods.js]──►   ../goods-real.jsonl  +  ../goods-real.json
+（分类写名字、尺寸写绝对价）                          （两份内容相同；导入时选 .json 那份）
 ```
+
+> 💡 **导入时 `.json` 与 `.jsonl` 任选**（两份内容完全相同，脚本同时生成）。
+> 控制台的导入选择框若按类型筛选、只列出 `.json`，就用 `goods-real.json` 那份；
+> 只看得到一种时别以为文件丢了，先按 **F5 刷新**窗口，或在「文件名」里直接粘贴完整路径。
+> 两份的一致性由 `tests/test-cleanup.js` 逐字节守着。
 
 ## 为什么不是直接手写 jsonl
 
@@ -101,7 +106,7 @@ node cloud-data/tools/verify-goods.js
 
 ## 导入到云库
 
-云开发控制台 → 数据库 → `goods` 集合 → 「导入」→ 选 `cloud-data/goods-real.jsonl`
+云开发控制台 → 数据库 → `goods` 集合 → 「导入」→ 选 `cloud-data/goods-real.json`（或 `.jsonl`，同内容）
 → 冲突处理选 **upsert**。
 
 > `upsert` 的意义：用同一份 `_id` 反复导入就是**更新**。改了价格重跑脚本再导一次即可，
