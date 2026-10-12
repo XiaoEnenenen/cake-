@@ -1333,9 +1333,13 @@ async function importData(payload, ctx) {
     { _id: 'cat_discount', name: '折扣', sort: 250, enabled: true }
   ]
 
+  // 2026-10-12：换成店主提供的两张实拍图（首页轮播）。
+  // 图已预裁成 3:2（与 pages/index 的 .focus = 720rpx x 480rpx 一致），
+  // 见 images/banner/ 与 cloud-data/tools/README.md「图片托管」一节。
+  // ⚠️ 与 cloud-data/banner.jsonl 必须保持一致（两处是同一份数据的两种投递方式）。
   const BANNERS = [
-    { _id: 'b1', picUrl: '/images/logo@2x.png', link: '', sort: 10, enabled: true },
-    { _id: 'b2', picUrl: '/images/rectangle@2x.png', link: '', sort: 20, enabled: true }
+    { _id: 'b1', picUrl: '/images/banner/birthday-flower-cake.jpg', link: '', sort: 10, enabled: true },
+    { _id: 'b2', picUrl: '/images/banner/mango-roll.jpg', link: '', sort: 20, enabled: true }
   ]
 
   // 阶段 5.2（缺陷 D-06）：mallName 的种子值同样取自 shop-config.js（不再写字面量），

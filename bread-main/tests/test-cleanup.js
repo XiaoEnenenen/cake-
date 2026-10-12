@@ -152,13 +152,38 @@ function main() {
   // =========================================================================
   check('零引用的 icon-font-solid.png 已归档', !exists('images/icon-font-solid.png'))
   check('零引用的 icon-font-solid@2x.png 已归档', !exists('images/icon-font-solid@2x.png'))
-  check('🎯 仍被种子数据引用的 logo@2x.png 没有被误删（报告该条是错的）',
+  check('轮播图换新后零引用的 rectangle@2x.png 已归档',
+    !exists('images/rectangle@2x.png'))
+  check('🎯 仍被种子数据/兜底引用的 logo@2x.png 没有被误删',
     exists('images/logo@2x.png'))
-  check('🎯 仍被种子数据引用的 rectangle@2x.png 没有被误删',
-    exists('images/rectangle@2x.png'))
   check('已归档图片保留在 .trash-cleanup 里（可 1:1 还原）',
     fs.existsSync(path.join(ROOT, '..', '.trash-cleanup/20261012-1930/01__icon-font-solid.png')) &&
-    fs.existsSync(path.join(ROOT, '..', '.trash-cleanup/20261012-1930/ROLLBACK.md')))
+    fs.existsSync(path.join(ROOT, '..', '.trash-cleanup/20261012-1930/ROLLBACK.md')) &&
+    fs.existsSync(path.join(ROOT, '..', '.trash-cleanup/20261012-2100/01__rectangle@2x.png')) &&
+    fs.existsSync(path.join(ROOT, '..', '.trash-cleanup/20261012-2100/ROLLBACK.md')))
+
+  // ★ 通用守卫：images/ 下每个文件都必须被别处引用
+  //   为什么要有这条：报告 §4.3 的"未引用图片"就是这样产生的 —— 图片一旦失去最后一个引用方
+  //   就只会白占主包体积（2 MB 上限），而没有任何报错。原来的断言只盯着两三个文件名，
+  //   换一次轮播图就漏掉了 rectangle@2x.png，因此改成机械全量扫描。
+  const imgFiles = []
+  ;(function collectImgs(d) {
+    if (!fs.existsSync(d)) return
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      const p = path.join(d, e.name)
+      if (e.isDirectory()) collectImgs(p)
+      else imgFiles.push(path.relative(ROOT, p).replace(/\\/g, '/'))
+    }
+  })('images')
+  const texFiles = walk('.', []).filter((f) => /\.(js|json|jsonl|wxml|wxss|md)$/.test(f) && !/^tests\//.test(f))
+  const texAll = texFiles.map((f) => src(f)).join('\n')
+  const deadImages = imgFiles.filter((p) => {
+    if (/README/i.test(p)) return false
+    return texAll.indexOf(path.basename(p)) < 0
+  })
+  check('★ images/ 下每个图片都被引用（' + (imgFiles.length - 1) + ' 张，零引用即失败）',
+    deadImages.length === 0, deadImages)
+  check('被扫描的文本文件数量合理（防止扫描写坏导致恒真）', texFiles.length >= 40, texFiles.length)
 
   // =========================================================================
   console.log('\n=== 5) 样式：不再重复 app.wxss 的 page 声明 ===')
