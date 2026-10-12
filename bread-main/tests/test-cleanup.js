@@ -185,6 +185,27 @@ function main() {
     deadImages.length === 0, deadImages)
   check('被扫描的文本文件数量合理（防止扫描写坏导致恒真）', texFiles.length >= 40, texFiles.length)
 
+  // ★ 反向守卫：代码/数据里引用的每个 /images/... 路径都必须真实存在
+  //   为什么要有这条：图片是"路径字符串"，写错、或动了数据忘了补图，都不会报错 ——
+  //   只会在顾客那边显示成裂图。2026-10-12 归档 rectangle@2x.png 时就属于这种风险点
+  //   （旧 banner 数据仍指向它）—— 因此必须有机械检查，别靠人记。
+  //   只扫 js/json/jsonl/wxml/wxss（文档里会出现 `/images/xxx.png` 这类占位示例，不算错）。
+  const refFiles = walk('.', []).filter((f) => /\.(js|json|jsonl|wxml|wxss)$/.test(f) && !/^tests\//.test(f))
+  const refRe = /\/images\/[A-Za-z0-9_@./-]+\.(png|jpg|jpeg|webp|gif)/g
+  const brokenRefs = []
+  for (const f of refFiles) {
+    let m
+    const re = new RegExp(refRe.source, 'g')
+    const t = src(f)
+    while ((m = re.exec(t))) {
+      const p = m[0].replace(/^\//, '')
+      if (!fs.existsSync(path.join(ROOT, p))) brokenRefs.push(f + ' → ' + m[0])
+    }
+  }
+  check('★ 代码/数据里引用的 /images/ 路径都真实存在（不会裂图）',
+    brokenRefs.length === 0, brokenRefs.slice(0, 8))
+  check('被扫描的引用文件数量合理（防止扫描写坏导致恒真）', refFiles.length >= 40, refFiles.length)
+
   // =========================================================================
   console.log('\n=== 5) 样式：不再重复 app.wxss 的 page 声明 ===')
   // =========================================================================
