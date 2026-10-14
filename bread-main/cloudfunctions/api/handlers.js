@@ -1122,6 +1122,117 @@ async function orderCreate(payload, ctx) {
   })
 }
 
+/**
+ * 店主视角订单列表（T-3，阶段 10 第一块，2026-10-14）
+ * ---------------------------------------------------------------------------
+ * 为什么必须要有它：`orderList` 按 `_openid` 隔离，**店主在小程序里根本看不到顾客下的单** ——
+ * 「取餐码对号」「完成订单」「自己送 / 叫跑腿」（店主 10-12 说的 R-04）这条链路全都走不通。
+ *
+ * 与 orderList 的三点区别：
+ *   1) **鉴权**：`requireAdmin(ctx)` —— 服务端用 ctx.openid 校验白名单，前端改不掉；
+ *   2) **范围**：跨顾客查询，可按状态过滤、分页，并附各状态数量（前端做筛选标签）；
+ *   3) **接单要用的信息**：收货人 / 电话 / 地址（含经纬度，供导航）/ 期望时间 / 备注 /
+ *      商品明细 / 取餐码。**不返回 `_openid`**（店主不需要，少一份可泄露的标识）。
+ *
+ * 参数：{ statusBatch?: '0,1', page?: 1, pageSize?: 20 }
+ * 返回：{ orderList, total, page, pageSize, statusCounts, serverNow }
+ */
+const ADMIN_PAGE_SIZE_DEFAULT = 20
+const ADMIN_PAGE_SIZE_MAX = 50
+
+function adminOrderView(o) {
+  const ext = o.extJson || {}
+  const addr = o.address || null
+  const goods = o.goods || []
+  const addressText = ext['收货地址'] ||
+    (addr ? [addr.province, addr.city, addr.district, addr.detail].filter(Boolean).join('') : '')
+  return {
+    id: o._id,
+    orderNumber: o.orderNumber,
+    // 取餐码：老订单没有 pickupCode 字段，回退用「订单号后 4 位」现算
+    pickupCode: o.pickupCode || pickupCodeOf(o.orderNumber),
+    status: o.status,
+    // 阶段 4.1：文案统一由服务端按 status 现算
+    statusStr: statusTextOf(o.status),
+    deliveryMode: o.deliveryMode || 'pickup',
+    dateAdd: o.dateAdd,
+    // 期望时间：外送写「期望送达时间」，自提写「自取时间」（都存绝对时间）
+    expectTime: ext['期望送达时间'] || ext['自取时间'] || '',
+    amountReal: o.amountReal,
+    goodsAmount: o.goodsAmount,
+    packingFee: o.packingFee || 0,
+    freight: o.freight,
+    goodsNumber: o.goodsNumber,
+    // ===== 接单要用的联系信息 =====
+    contactName: ext['收货人'] || '',
+    contactPhone: ext['收货电话'] || ext['联络电话'] || '',
+    addressText,
+    // 结构化地址（含经纬度）：店主端可直接「一键导航」
+    address: addr,
+    distanceText: ext['配送距离'] || '',
+    remark: o.remark || '',
+    goods: goods.map((g) => ({
+      goodsName: g.goodsName,
+      property: g.property,
+      number: g.number,
+      price: g.price
+    })),
+    // 一行摘要，列表页直接显示（避免前端拼字符串）
+    goodsSummary: goods
+      .map((g) => g.goodsName + (g.property ? '（' + g.property + '）' : '') + '×' + g.number)
+      .join('、')
+  }
+}
+
+async function orderAdminList(payload, ctx) {
+  const denied = requireAdmin(ctx)
+  if (denied) return denied
+
+  const p = payload || {}
+  const now = Date.now()
+  // 店主视角也做"读取兜底"：先把**所有顾客**超时未支付的单取消掉（等同定时触发器的逻辑），
+  // 否则定时触发器没建出来时，店主会一直看到挂在"待支付"的单。
+  await expireUnpaidForViewer(ctx, now, { all: true })
+
+  const all = await ctx.db.find('order', {}, { sort: -1, field: 'dateAdd' })
+
+  // 各状态数量（不受筛选影响，供前端做筛选标签）
+  const statusCounts = {}
+  all.forEach((o) => {
+    const k = String(o.status)
+    statusCounts[k] = (statusCounts[k] || 0) + 1
+  })
+
+  let list = all
+  if (p.statusBatch !== undefined && p.statusBatch !== null && String(p.statusBatch) !== '') {
+    const allow = String(p.statusBatch)
+      .split(',')
+      .map((s) => Number(s.trim()))
+    list = all.filter((o) => allow.indexOf(Number(o.status)) >= 0)
+  }
+
+  const pageSizeRaw = Number(p.pageSize)
+  const pageSize = Number.isFinite(pageSizeRaw) && pageSizeRaw > 0
+    ? Math.min(Math.floor(pageSizeRaw), ADMIN_PAGE_SIZE_MAX)
+    : ADMIN_PAGE_SIZE_DEFAULT
+  const pageRaw = Number(p.page)
+  const page = Number.isFinite(pageRaw) && pageRaw > 0 ? Math.floor(pageRaw) : 1
+
+  const total = list.length
+  const start = (page - 1) * pageSize
+  const pageList = list.slice(start, start + pageSize)
+
+  return ok({
+    orderList: pageList.map(adminOrderView),
+    total,
+    page,
+    pageSize,
+    statusCounts,
+    // 前端用「服务端时间」和本机时间的差值对齐倒计时
+    serverNow: now
+  })
+}
+
 async function orderList(payload, ctx) {
   const { statusBatch } = payload || {}
   // 2026-10-12：读取兜底 —— 先把该顾客超时未支付的订单取消掉，再查列表。
@@ -1378,10 +1489,13 @@ async function cancelExpiredCore(ctx, opts = {}) {
  * @param {number} now 当前时间戳（与本次读接口共用，避免同一响应里时间不一致）
  * @returns {Promise<{scanned:number, cancelled:number, minutes:number}>}
  */
-async function expireUnpaidForViewer(ctx, now) {
-  if (!ctx || !ctx.openid) return { scanned: 0, cancelled: 0, minutes: 0 }
+async function expireUnpaidForViewer(ctx, now, opts) {
+  if (!ctx) return { scanned: 0, cancelled: 0, minutes: 0 }
+  // opts.all = true：店主视角要扫**所有顾客**的超时单（等同于定时触发器的范围）
+  const all = !!(opts && opts.all)
+  if (!all && !ctx.openid) return { scanned: 0, cancelled: 0, minutes: 0 }
   try {
-    return await cancelExpiredCore(ctx, { now, openid: ctx.openid })
+    return await cancelExpiredCore(ctx, { now, openid: all ? '' : ctx.openid })
   } catch (e) {
     // 兜底逻辑失败不能连累顾客看订单：记日志后按"没取消任何单"继续
     console.error('[expireUnpaidForViewer] 读取兜底取消失败：' + (e && e.message))
@@ -1670,6 +1784,8 @@ const handlers = {
   orderDetail,
   orderClose,
   orderDelete,
+  // 店主视角订单列表（T-3，阶段 10）：跨顾客查询 + requireAdmin
+  orderAdminList,
   // 店主手动完成订单（取代原扫码核销 orderHx）
   orderFinish,
   // 支付统一下单（当前返回"未接入"，不伪造支付成功）

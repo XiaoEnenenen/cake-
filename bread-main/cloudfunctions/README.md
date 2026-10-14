@@ -39,7 +39,7 @@ cloudfunctions/
 
 ## 已实现的接口
 
-> **路由表实际可调用的 action 共 23 个**（`handlers.js` 的 `handlers` 导出对象，
+> **路由表实际可调用的 action 共 24 个**（`handlers.js` 的 `handlers` 导出对象，
 > 由 `tests/test-stage5.js` 断言数量与本文档一致）。下表多出的 `importData`
 > 已不在路由表里，仅通过 `module.exports` 暴露给云控制台/本地测试。
 
@@ -66,6 +66,7 @@ cloudfunctions/
 | `orderClose` | `orderClose` | 取消订单 |
 | `orderDelete` | `orderDelete` | 删除订单 |
 | `orderFinish` | `orderFinish` | 完成订单（店主手动，取代原 `orderHx` 扫码核销） |
+| `orderAdminList` | `orderAdminList` | **店主视角订单列表**（2026-10-14 新增，T-3）：跨顾客查询 + `requireAdmin` 鉴权，带收货人/电话/地址/期望时间；**不返回 `_openid`** |
 | `wxpay` | `wxpay` | 微信支付统一下单（**当前返回"未接入"**，需先申请商户号，阶段一未接线） |
 | `fetchShops` | `fetchShops` | 单店模式兼容桩，固定返回空数组（前端已无调用方） |
 | `shopSubdetail` | `shopSubdetail` | 单店模式兼容桩，固定返回失败（`pages/current-order` 拨号取号用） |

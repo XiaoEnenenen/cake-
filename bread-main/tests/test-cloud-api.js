@@ -752,6 +752,106 @@ async function main() {
       H.packingFeeOf({ packingFee: -1 }) === 0 && H.minBuyNumberOf({ minBuyNumber: 0 }) === 1)
   }
 
+  // ---- 阶段 10 第一块：店主视角订单列表（T-3）----
+  console.log('\n=== 17) 店主视角订单列表（orderAdminList）===')
+  {
+    const SHOP = require('../shop-config').shop
+    const SHOP_CFG = require('../cloudfunctions/api/shop-config')
+    const db = createMockDb(seedData())
+    const goodsJson = JSON.stringify([{ goodsId: 'g_ice', number: 1, propertyChildIds: '' }])
+    const nearAddr = {
+      name: '张三', phone: '13800138000',
+      province: '云南省', city: '昆明市', district: '安宁市',
+      detail: '太平新城某小区1栋101',
+      latitude: SHOP.latitude + 1 / 111.19, longitude: SHOP.longitude
+    }
+    const extDelivery = JSON.stringify({
+      配送方式: '外送', 收货人: '张三', 收货电话: '13800138000',
+      收货地址: '云南省昆明市安宁市太平新城某小区1栋101',
+      期望送达时间: '2026-10-15 15:00', 配送距离: '1公里', 运费: '免配送费'
+    })
+    const extPickup = JSON.stringify({
+      配送方式: '自提', 自提门店: '卿欢蛋糕', 联络电话: '13900139000', 自取时间: '2026-10-15 16:00'
+    })
+
+    // 顾客 A：外送单；顾客 B：自提单
+    const ra = await dispatch('orderCreate', {
+      goodsJsonStr: goodsJson, extJsonStr: extDelivery,
+      deliveryMode: 'delivery', address: nearAddr, shopIdZt: 0, shopNameZt: '卿欢蛋糕'
+    }, { db, openid: 'user_cust_A' })
+    check('前置：顾客 A 外送下单成功', ra.code === 0, ra)
+    const rb = await dispatch('orderCreate', {
+      goodsJsonStr: goodsJson, extJsonStr: extPickup,
+      deliveryMode: 'pickup', shopIdZt: 0, shopNameZt: '卿欢蛋糕'
+    }, { db, openid: 'user_cust_B' })
+    check('前置：顾客 B 自提下单成功', rb.code === 0, rb)
+
+    // (1) 普通用户 → 拒绝（白名单为空）
+    const ctxShop = { db, openid: 'user_shop_owner' }
+    let r = await dispatch('orderAdminList', {}, ctxShop)
+    check('★ 非店主调用被拒（服务端鉴权）', r.code !== 0, r)
+    r = await dispatch('orderAdminList', {}, { db, openid: 'user_cust_A' })
+    check('  顾客自己也不能用这个接口看别人的单', r.code !== 0, r)
+
+    // (2) 加入白名单后：能看到**所有顾客**的订单
+    SHOP_CFG.adminOpenids.push('user_shop_owner')
+    r = await dispatch('orderAdminList', {}, ctxShop)
+    check('★ 店主能看到全部顾客订单（2 单）', r.code === 0 && r.data.total === 2, r.data && r.data.total)
+    const dates = r.data.orderList.map((o) => o.dateAdd)
+    check('  按时间倒序（dateAdd 非递增；同一毫秒下顺序不保证）',
+      dates.every((d, i) => i === 0 || dates[i - 1] >= d), dates)
+
+    const deliv = r.data.orderList.find((o) => o.deliveryMode === 'delivery')
+    const pick = r.data.orderList.find((o) => o.deliveryMode === 'pickup')
+    check('★ 外送单带上收货人/电话/地址（店主才能送或叫跑腿）',
+      deliv.contactName === '张三' && deliv.contactPhone === '13800138000' &&
+      deliv.addressText.indexOf('太平新城') >= 0, deliv)
+    check('  外送单带上结构化地址（含经纬度，供一键导航）',
+      !!deliv.address && typeof deliv.address.latitude === 'number', deliv.address)
+    check('★ 自提单回退用联络电话，且期望时间取自「自取时间」',
+      pick.contactPhone === '13900139000' && pick.expectTime === '2026-10-15 16:00', pick)
+    check('  带上取餐码与状态文案', !!pick.pickupCode && pick.statusStr === '待支付', pick)
+    check('  带上商品摘要（列表页一行显示）', !!pick.goodsSummary && pick.goodsSummary.indexOf('×1') >= 0, pick.goodsSummary)
+    check('  金额字段齐全（实付/商品/打包费/运费）',
+      typeof pick.amountReal === 'number' && typeof pick.goodsAmount === 'number' &&
+      typeof pick.packingFee === 'number' && typeof pick.freight === 'number', pick)
+    check('★ 不返回顾客 _openid（店主不需要，少一份可泄露标识）',
+      pick._openid === undefined && deliv._openid === undefined)
+    check('  各状态数量（statusCounts）随列表一起返回',
+      r.data.statusCounts && r.data.statusCounts['0'] === 2, r.data.statusCounts)
+
+    // (3) 状态过滤
+    const paidOrder = db._store.order.find((o) => o.orderNumber === rb.data.orderNumber)
+    paidOrder.status = 1
+    paidOrder.statusStr = '制作中'
+    r = await dispatch('orderAdminList', { statusBatch: '1' }, ctxShop)
+    check('★ 按状态过滤（只看制作中）', r.data.total === 1 && r.data.orderList[0].status === 1, r.data.total)
+    check('  状态文案由服务端现算（不信任库里的 statusStr）', r.data.orderList[0].statusStr === '制作中')
+    r = await dispatch('orderAdminList', { statusBatch: '0,1' }, ctxShop)
+    check('  多状态过滤', r.data.total === 2, r.data.total)
+
+    // (4) 分页与上限
+    r = await dispatch('orderAdminList', { pageSize: 1 }, ctxShop)
+    check('★ 分页：pageSize=1 → 返回 1 条但 total=2',
+      r.data.orderList.length === 1 && r.data.total === 2, r.data)
+    r = await dispatch('orderAdminList', { pageSize: 1, page: 2 }, ctxShop)
+    check('  第 2 页返回剩下的 1 条', r.data.orderList.length === 1 && r.data.page === 2, r.data.page)
+    r = await dispatch('orderAdminList', { pageSize: 999 }, ctxShop)
+    check('★ pageSize 上限 50（防止一次拉爆）', r.data.pageSize === 50, r.data.pageSize)
+
+    // (5) 读取兜底：店主视角会把**别人**超时未支付的单也取消掉
+    const staleOrder = db._store.order.find((o) => o.deliveryMode === 'pickup')
+    staleOrder.dateAdd = Date.now() - 60 * 60 * 1000 // 1 小时前
+    staleOrder.status = 0
+    r = await dispatch('orderAdminList', {}, ctxShop)
+    check('★ 店主打开列表时，超时未支付的顾客订单被自动取消（不依赖定时触发器）',
+      db._store.order.find((o) => o._id === staleOrder._id).status === -1,
+      db._store.order.map((o) => o.status))
+
+    // 收尾：还原白名单，避免影响后续小节
+    SHOP_CFG.adminOpenids.length = 0
+  }
+
   console.log('\n=== 汇总 ===')
   console.log('  通过 ' + pass + ' / 失败 ' + fail)
   if (fail) process.exitCode = 1
