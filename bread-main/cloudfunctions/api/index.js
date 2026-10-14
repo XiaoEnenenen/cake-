@@ -88,12 +88,47 @@ const dbAdapter = {
       await db.collection(collection).doc(d._id).remove()
     }
     return { removed: docs.length }
+  },
+
+  /**
+   * 原子自增一个数字字段（并发安全）
+   * ---------------------------------------------------------------------------
+   * 2026-10-14 新增（backlog：并发/幂等）。
+   * 为什么必须有它：`cartAdd` 原来是"先 findOne 读出旧数量 → 再 update 覆盖写"，
+   *   两次操作之间没有原子性 —— 并发加购（双击、弱网重试、多端）会**丢数量**：
+   *   两个请求都读到 3，各自算成 4 写回，最终只有 4（正确应为 5）。
+   * 云开发的 `db.command.inc` 是数据库端的原子操作，读改写一次完成，不存在这个窗口。
+   *
+   * @param {string} collection 集合名
+   * @param {object} where 等值条件（如 { _id, _openid }，防越权改到别人的行）
+   * @param {string} field 要自增的字段（number）
+   * @param {number} delta 增量（必须是非 0 的有限数；负数即自减）
+   * @param {object} [opts] { min, max }：**自增之后**必须落在 [min, max] 内。
+   *        不满足时条件不匹配 → 一条都不改（数据库端判断，不是先读后判）。
+   * @returns {Promise<{updated:number}>} updated=1 表示改到了；0 = 条件不满足/行不存在
+   */
+  async incField(collection, where, field, delta, opts = {}) {
+    const _ = db.command
+    const cond = Object.assign({}, where)
+    // 边界换算成"自增前"的值域：inc 后 ≤ max  ⇔  当前 ≤ max - delta
+    const lo = opts.min === undefined ? null : opts.min - delta
+    const hi = opts.max === undefined ? null : opts.max - delta
+    if (lo !== null && hi !== null) cond[field] = _.gte(lo).and(_.lte(hi))
+    else if (lo !== null) cond[field] = _.gte(lo)
+    else if (hi !== null) cond[field] = _.lte(hi)
+
+    const res = await db.collection(collection).where(cond).update({
+      data: { [field]: _.inc(delta) }
+    })
+    const updated =
+      (res && res.stats && res.stats.updated) || (res && res.updated) || 0
+    return { updated }
   }
 
-  // 2026-10-09：库存概念整体删除。
-  // 删除内容：原先的 decStores（条件更新 + command.inc 原子扣减）与
-  //          incStores（原子回补）两个适配方法，以及配套的 command 引用。
-  // 本店不记库存：下单只生成订单，不再读写任何库存字段。
+  // 2026-10-09：库存概念整体删除（原 decStores / incStores 两个适配方法一并删除）。
+  // 本店不记库存：下单只生成订单，不读写任何库存字段。
+  // 2026-10-14：上面新增的 incField 与库存无关 —— 它服务的是**购物车数量累加**
+  //             （并发不丢数量），见 handlers.js 的 cartAdd / incCartNumber。
 }
 
 /**

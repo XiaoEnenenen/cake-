@@ -40,6 +40,11 @@ function createMockDb(seed) {
     async add(col, data) {
       const doc = Object.assign({ _id: nextId() }, data)
       if (!store[col]) store[col] = []
+      // 与真实云库一致：_id 是主键，**重复插入必须报错**
+      // （2026-10-14 的并发/幂等保护正是靠它挡掉第二行/第二张单，见 stableDocId 注释）
+      if (store[col].some((r) => r._id === doc._id)) {
+        throw new Error('duplicate key error: _id=' + doc._id)
+      }
       store[col].push(doc)
       return JSON.parse(JSON.stringify(doc))
     },
@@ -58,6 +63,24 @@ function createMockDb(seed) {
         (r) => !Object.keys(where).every((k) => r[k] === where[k])
       )
       return { removed: before - store[col].length }
+    },
+    // 2026-10-14（backlog：并发/幂等）：原子自增。
+    // 真实实现见 cloudfunctions/api/index.js 的 incField（用 db.command.inc 在数据库端完成）。
+    // 这里函数体内**没有 await**，在 node 事件循环里就是原子的 —— 因此并发用例
+    // （Promise.all 同时发两个 cartAdd）能真实暴露原来"先读后写"的丢数量问题。
+    async incField(col, where, field, delta, opts) {
+      const o = opts || {}
+      const row = (store[col] || []).find((r) =>
+        Object.keys(where).every((k) => r[k] === where[k])
+      )
+      if (!row) return { updated: 0 }
+      const cur = Number(row[field])
+      if (!Number.isFinite(cur)) return { updated: 0 }
+      const next = cur + delta
+      if (o.min !== undefined && next < o.min) return { updated: 0 }
+      if (o.max !== undefined && next > o.max) return { updated: 0 }
+      row[field] = next
+      return { updated: 1 }
     }
   }
 }
@@ -976,6 +999,175 @@ async function main() {
     r = await dispatch('orderCreate', { goodsJsonStr: '{"length":2}' }, { db: createMockDb(seedData()), openid: 'u' })
     check('★ 非法结构（非数组）→ 业务错误，且不泄露实现细节',
       r.code !== 0 && r.msg.indexOf('iterable') < 0 && r.msg.indexOf('商品数据') >= 0, r)
+  }
+
+  // ---- 2026-10-14 backlog：并发加购不丢数量 + 下单幂等（弱网重试不出两张单）----
+  console.log('\n=== 19) 并发与幂等（backlog：原子加购 / clientOrderToken）===')
+  {
+    const H = require('../cloudfunctions/api/handlers')
+    const tomorrowNoon = (() => {
+      const d = new Date(Date.now() + 24 * 3600 * 1000)
+      d.setHours(12, 0, 0, 0)
+      const p = (n) => (n < 10 ? '0' + n : '' + n)
+      return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' 12:00'
+    })()
+    const sku = [{ optionId: 'size', optionValueId: 's6' }, { optionId: 'flavor', optionValueId: 'f_choco' }]
+    // 下单载荷工厂：默认带幂等键，便于逐条覆盖
+    const mkOrder = (token, extra) => Object.assign({
+      goodsJsonStr: JSON.stringify([{ goodsId: 'g_musi', number: 1, propertyChildIds: 'size:s6,flavor:f_choco' }]),
+      extJsonStr: '{}',
+      deliveryMode: 'pickup',
+      expectTime: tomorrowNoon,
+      clientOrderToken: token
+    }, extra || {})
+
+    // ===== (1) 并发加购：空车两路同时（原来是"两个请求都读到没有 → 各插一行"）=====
+    const dbC = createMockDb(seedData())
+    const ctxC = { db: dbC, openid: 'user_conc' }
+    const conc = await Promise.all([
+      dispatch('cartAdd', { goodsId: 'g_musi', number: 1, sku }, ctxC),
+      dispatch('cartAdd', { goodsId: 'g_musi', number: 1, sku }, ctxC)
+    ])
+    check('并发加购：两个请求都返回成功', conc[0].code === 0 && conc[1].code === 0, conc)
+    check('★ 并发加购不丢数量：只有一行、数量 = 2（原来会插出两行）',
+      dbC._store.cart.length === 1 && dbC._store.cart[0].number === 2,
+      dbC._store.cart.map((c) => ({ id: c._id, n: c.number })))
+    check('★ 购物车行的 _id 由 (openid,key) 稳定生成（并发插入才挡得住第二行）',
+      /^c[0-9a-f]{24}$/.test(String(dbC._store.cart[0]._id)), dbC._store.cart[0]._id)
+
+    // ===== (2) 行已存在时并发累加（原来是"都读到 2、各自写 3"）=====
+    const inc2 = await Promise.all([
+      dispatch('cartAdd', { goodsId: 'g_musi', number: 1, sku }, ctxC),
+      dispatch('cartAdd', { goodsId: 'g_musi', number: 1, sku }, ctxC)
+    ])
+    check('★ 行已存在时并发累加不丢数量：2 + 1 + 1 = 4（不是 3）',
+      inc2[0].code === 0 && inc2[1].code === 0 &&
+      dbC._store.cart.length === 1 && dbC._store.cart[0].number === 4,
+      dbC._store.cart.map((c) => c.number))
+
+    // ===== (3) 并发下不得越过单次上限 99 =====
+    const dbMax = createMockDb(seedData())
+    const ctxMax = { db: dbMax, openid: 'user_max' }
+    await dispatch('cartAdd', { goodsId: 'g_plain', number: 98, sku: [] }, ctxMax)
+    const maxRes = await Promise.all([
+      dispatch('cartAdd', { goodsId: 'g_plain', number: 1, sku: [] }, ctxMax),
+      dispatch('cartAdd', { goodsId: 'g_plain', number: 1, sku: [] }, ctxMax)
+    ])
+    check('★ 并发下不会超上限：一个成功、一个被拒，最终正好 99',
+      (maxRes[0].code === 0) !== (maxRes[1].code === 0) && dbMax._store.cart[0].number === 99,
+      { codes: maxRes.map((x) => x.code), msgs: maxRes.map((x) => x.msg), n: dbMax._store.cart[0].number })
+
+    // ===== (4) 历史行（自动 _id）仍走原子累加，不新增行 =====
+    const dbLegacy = createMockDb(seedData())
+    const legacyKey = H.makeCartKey('g_musi', sku)
+    dbLegacy._store.cart = [{
+      _id: 'id_legacy', _openid: 'user_legacy', key: legacyKey, goodsId: 'g_musi',
+      price: 98, number: 3, sku: sku, dateAdd: 1
+    }]
+    const legRes = await dispatch('cartAdd', { goodsId: 'g_musi', number: 2, sku }, { db: dbLegacy, openid: 'user_legacy' })
+    check('★ 历史行（自动 _id）照样原子累加、不新增行：3 + 2 = 5',
+      legRes.code === 0 && dbLegacy._store.cart.length === 1 &&
+      dbLegacy._store.cart[0]._id === 'id_legacy' && dbLegacy._store.cart[0].number === 5,
+      dbLegacy._store.cart)
+
+    // ===== (5) 幂等：同一 token 顺序重试 = 弱网"响应丢了再点一次" =====
+    const dbI = createMockDb(seedData())
+    const ctxI = { db: dbI, openid: 'user_idem' }
+    const first = await dispatch('orderCreate', mkOrder('tok_idem_00001'), ctxI)
+    check('幂等：首次下单成功且 duplicated=false',
+      first.code === 0 && first.data.duplicated === false, first)
+    const again = await dispatch('orderCreate', mkOrder('tok_idem_00001'), ctxI)
+    check('★ 幂等：同一 token 再提交 → 返回同一张单，不新建',
+      again.code === 0 && again.data.duplicated === true &&
+      again.data.id === first.data.id && again.data.orderNumber === first.data.orderNumber,
+      { again: again.data, first: first.data })
+    check('★ 幂等：库里只有 1 张单', dbI._store.order.length === 1, dbI._store.order.length)
+    check('幂等键落库（便于排查与重放）',
+      dbI._store.order[0].clientOrderToken === 'tok_idem_00001', dbI._store.order[0].clientOrderToken)
+
+    // ===== (6) 幂等：真·并发重复提交（两个请求同时到）=====
+    const dbR = createMockDb(seedData())
+    const ctxR = { db: dbR, openid: 'user_race' }
+    const race = await Promise.all([
+      dispatch('orderCreate', mkOrder('tok_race_00001'), ctxR),
+      dispatch('orderCreate', mkOrder('tok_race_00001'), ctxR)
+    ])
+    check('★ 并发同一 token：库里只落一张单', dbR._store.order.length === 1,
+      dbR._store.order.map((o) => o._id))
+    check('★ 并发同一 token：两个响应都成功且指向同一张单',
+      race[0].code === 0 && race[1].code === 0 && race[0].data.id === race[1].data.id,
+      race.map((x) => ({ code: x.code, id: x.data && x.data.id })))
+    check('并发同一 token：恰好一个是重放（duplicated 一真一假）',
+      race[0].data.duplicated !== race[1].data.duplicated,
+      race.map((x) => x.data.duplicated))
+
+    // ===== (7) 不同 token = 两笔不同的单（幂等键不会把正常下单合并掉）=====
+    const dbTwo = createMockDb(seedData())
+    const ctxTwo = { db: dbTwo, openid: 'user_two' }
+    const t1 = await dispatch('orderCreate', mkOrder('tok_two_000001'), ctxTwo)
+    const t2 = await dispatch('orderCreate', mkOrder('tok_two_000002'), ctxTwo)
+    check('不同 token 生成两张单',
+      t1.code === 0 && t2.code === 0 && t1.data.id !== t2.data.id && dbTwo._store.order.length === 2,
+      dbTwo._store.order.length)
+
+    // ===== (8) 兼容：不带幂等键（老客户端）仍能下单 =====
+    const dbNoTok = createMockDb(seedData())
+    const noTok = await dispatch('orderCreate', mkOrder(undefined), { db: dbNoTok, openid: 'user_notok' })
+    check('不带幂等键仍能下单（兼容老客户端，只记日志）',
+      noTok.code === 0 && noTok.data.duplicated === false && dbNoTok._store.order.length === 1, noTok)
+
+    // ===== (9) 非法幂等键 → 拒绝（不能靠塞坏值绕过幂等）=====
+    const dbBad = createMockDb(seedData())
+    const ctxBad = { db: dbBad, openid: 'user_badtok' }
+    const badShort = await dispatch('orderCreate', mkOrder('abc'), ctxBad)
+    check('★ 幂等键过短 → 拒绝，且不生成订单',
+      badShort.code !== 0 && dbBad._store.order.length === 0, badShort)
+    const badLong = await dispatch('orderCreate', mkOrder('x'.repeat(65)), ctxBad)
+    check('★ 幂等键过长 → 拒绝，且不生成订单',
+      badLong.code !== 0 && dbBad._store.order.length === 0, badLong)
+    const badChar = await dispatch('orderCreate', mkOrder('bad token!'), ctxBad)
+    check('★ 幂等键含非法字符 → 拒绝', badChar.code !== 0 && dbBad._store.order.length === 0, badChar)
+
+    // ===== (10) 幂等重放不做副作用：不再清购物车 =====
+    const dbS = createMockDb(seedData())
+    const ctxS = { db: dbS, openid: 'user_side' }
+    const pSide = mkOrder('tok_side_00001')
+    const s1 = await dispatch('orderCreate', pSide, ctxS)
+    await dispatch('cartAdd', { goodsId: 'g_plain', number: 1, sku: [] }, ctxS)
+    const s2 = await dispatch('orderCreate', pSide, ctxS)
+    check('★ 幂等重放不再清购物车（顾客后来加的商品不会被误删）',
+      s1.code === 0 && s2.code === 0 && s2.data.duplicated === true &&
+      dbS._store.order.length === 1 && dbS._store.cart.length === 1,
+      { orders: dbS._store.order.length, cart: dbS._store.cart })
+
+    // ===== (11) 幂等键按用户隔离：B 拿不到 A 的单 =====
+    const dbIso = createMockDb(seedData())
+    const isoA = await dispatch('orderCreate', mkOrder('tok_iso_000001'), { db: dbIso, openid: 'user_iso_a' })
+    const isoB = await dispatch('orderCreate', mkOrder('tok_iso_000001'), { db: dbIso, openid: 'user_iso_b' })
+    check('★ 幂等键按 openid 隔离：B 用同一 token 不会拿到 A 的单',
+      isoA.code === 0 && isoB.code === 0 && isoB.data.id !== isoA.data.id &&
+      isoB.data.duplicated === false && dbIso._store.order.length === 2,
+      { a: isoA.data.id, b: isoB.data.id, n: dbIso._store.order.length })
+
+    // ===== (12) 平台不支持自定义 _id 时必须降级，而不是让顾客加不了购/下不了单 =====
+    {
+      const dbDeg = createMockDb(seedData())
+      const origAdd = dbDeg.add.bind(dbDeg)
+      dbDeg.add = async (col, data) => {
+        if (data && data._id) throw new Error('custom _id not allowed')
+        return origAdd(col, data)
+      }
+      const ctxDeg = { db: dbDeg, openid: 'user_degrade' }
+      const d1 = await dispatch('cartAdd', { goodsId: 'g_musi', number: 1, sku }, ctxDeg)
+      check('★ 环境不支持自定义 _id → 加购自动降级为默认 _id（不会加不了购）',
+        d1.code === 0 && dbDeg._store.cart.length === 1, d1)
+      const d2 = await dispatch('orderCreate', mkOrder('tok_deg_000001'), ctxDeg)
+      check('★ 环境不支持自定义 _id → 下单自动降级（不会下不了单）',
+        d2.code === 0 && dbDeg._store.order.length === 1, d2)
+      const d3 = await dispatch('orderCreate', mkOrder('tok_deg_000001'), ctxDeg)
+      check('  降级后顺序重试仍幂等（靠 token 查重兜底）',
+        d3.code === 0 && d3.data.duplicated === true && dbDeg._store.order.length === 1, d3)
+    }
   }
 
   console.log('\n=== 汇总 ===')

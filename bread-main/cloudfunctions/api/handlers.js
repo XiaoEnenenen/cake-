@@ -16,6 +16,8 @@
  * ---------------------------------------------------------------------------
  */
 
+const crypto = require('crypto')
+
 // ===== 工具 =====
 function ok(data, msg) {
   return { code: 0, data, msg: msg || 'success' }
@@ -170,6 +172,26 @@ function makeCartKey(goodsId, sku) {
     .map((s) => String(s.optionId) + ':' + String(s.optionValueId))
     .sort()
   return String(goodsId) + (parts.length ? '|' + parts.join(',') : '')
+}
+
+/**
+ * 由「谁 + 业务键」推出一个**稳定**的文档 _id（2026-10-14 新增，backlog：并发/幂等）
+ * ---------------------------------------------------------------------------
+ * 用途：并发下"先查没有、再插入"会插出**两行**（购物车两行同规格 / 同一令牌两张单）。
+ *   把 _id 由业务键确定下来后，第二个请求的插入会撞主键 → 后端报错 →
+ *   我们即可识别出"另一个请求刚建好这一行/这一单"，改为累加 / 直接返回那一单。
+ * 取值：prefix + sha1(openid|seed) 前 24 位十六进制（96 bit，撞键概率可忽略）。
+ *   前缀只为人眼排查方便：c = 购物车行，o = 订单。
+ * ⚠️ 依赖云开发「add 时允许自定义 _id」（本项目 importData 导入种子数据同样依赖这一点）。
+ *   若某个环境上不允许，调用方会**降级**为默认 _id（宁可退化为"无并发保护"，
+ *   也不能让顾客加不了购 / 下不了单），见 cartAdd 与 orderCreate 的 catch 分支。
+ */
+function stableDocId(prefix, openid, seed) {
+  const hash = crypto
+    .createHash('sha1')
+    .update(String(openid) + '|' + String(seed))
+    .digest('hex')
+  return prefix + hash.slice(0, 24)
 }
 
 // ===========================================================================
@@ -655,23 +677,26 @@ async function cartAdd(payload, ctx) {
   // 阶段 9：最少购买份数（默认 1，只有 > 1 才拦）。按"累加后的总数"判断，
   // 避免"已经买够 2 份、再点一次 +1"这种正常操作被误拦。
   const minBuy = minBuyNumberOf(goods)
+  // 这一行的稳定 _id（见 stableDocId 注释）：并发插入时靠主键挡掉第二行
+  const docId = stableDocId('c', ctx.openid, key)
+
+  // ===== 2026-10-14（backlog：并发）改造：写入路径改成"原子 + 条件" =====
+  // 原来：findOne 读出旧数量 → 自己算 total → update 覆盖写。
+  //   两个并发请求都可能读到 3、各自写回 4 → 顾客连点两次"+"，购物车里只有 4 件（丢数量）。
+  // 现在：已有行走 incCartNumber（数据库端 _.inc + 上下限条件）；
+  //   没有行则用**由 (openid,key) 决定**的 _id 插入，插入撞主键 = 另一个并发请求
+  //   刚建好这一行 → 改为原子累加。两条路径都不会丢数量，也不会写出两行同规格。
   const existing = await ctx.db.findOne('cart', { _openid: ctx.openid, key })
   if (existing) {
     // 2026-10-09：库存概念已删除，同规格加购直接累加
     // 2026-10-12：但累加后的总数必须仍在单次下单上限内，否则购物车会出现"永远下不了单"的行
-    const total = (Number(existing.number) || 0) + addNumber
-    if (total > MAX_ITEM_NUMBER) {
-      return fail(goods.name + ' 单次最多购买 ' + MAX_ITEM_NUMBER + ' 件')
-    }
-    if (total < minBuy) {
-      return fail(goods.name + ' 最少购买 ' + minBuy + ' 份')
-    }
-    await ctx.db.update('cart', existing._id, { number: total })
+    const incRes = await incCartNumber(ctx, existing._id, ctx.openid, addNumber, goods.name, minBuy)
+    if (!incRes.ok) return fail(incRes.msg)
   } else {
     if (addNumber < minBuy) {
       return fail(goods.name + ' 最少购买 ' + minBuy + ' 份')
     }
-    await ctx.db.add('cart', {
+    const row = {
       _openid: ctx.openid,
       key,
       goodsId,
@@ -679,9 +704,65 @@ async function cartAdd(payload, ctx) {
       number: addNumber,
       sku: normSku,
       dateAdd: Date.now()
-    })
+    }
+    try {
+      await ctx.db.add('cart', Object.assign({ _id: docId }, row))
+    } catch (e) {
+      // 插入失败有两种可能：
+      //   ① 并发请求刚插入了同一行（_id 撞主键）→ 改为原子累加，这才是正确语义（累加而不是两行）
+      //   ② 该环境不允许自定义 _id（见 stableDocId 注释）→ 降级为默认 _id 插入
+      const retry = await incCartNumber(ctx, docId, ctx.openid, addNumber, goods.name, minBuy)
+      if (retry.ok) return cartSummary(ctx, ctx.openid, channelOf(payload))
+      if (!retry.gone) return fail(retry.msg)
+      console.warn('[cartAdd] 自定义 _id 插入失败，降级为默认 _id：' + (e && e.message))
+      await ctx.db.add('cart', row)
+    }
   }
   return cartSummary(ctx, ctx.openid, channelOf(payload))
+}
+
+/**
+ * 原子累加一行购物车的数量（并发安全）
+ * ---------------------------------------------------------------------------
+ * 2026-10-14 新增（backlog：并发）。
+ * 上下限条件全部由**数据库端**判断（不是先读后判），所以并发下不会出现
+ * "两个请求都判定没超上限、各写各的"这种越界。
+ *   · 累加后 > MAX_ITEM_NUMBER → 拒绝（否则购物车里会出现永远下不了单的行）
+ *   · 累加后 < minBuy（起购量）→ 拒绝（与改造前的判定口径一致）
+ * @param {number} rowId 目标行的 _id
+ * @param {number} delta 本次要加的数量
+ * @returns {{ok:boolean, msg?:string, gone?:boolean}}
+ *   ok=false 且 gone=true 表示"这一行已经不存在"（并发删除 / 插入其实没插进去），
+ *   调用方据此改走插入路径；其余情况的 msg 是给顾客看的原因。
+ */
+async function incCartNumber(ctx, rowId, openid, delta, goodsName, minBuy) {
+  const res = await ctx.db.incField(
+    'cart',
+    { _id: rowId, _openid: openid },
+    'number',
+    delta,
+    { min: minBuy, max: MAX_ITEM_NUMBER }
+  )
+  if (res && res.updated > 0) return { ok: true }
+
+  // 没改成：要么并发改动后越界、要么这一行被删了 / 是历史脏数据 → 重读一次给确切结论
+  const now = await ctx.db.findOne('cart', { _id: rowId, _openid: openid })
+  if (!now) return { ok: false, gone: true, msg: '购物车项已不存在，请重新加入' }
+
+  const n = Number(now.number)
+  if (!Number.isFinite(n)) {
+    // 历史脏数据：2026-10-12 之前的版本能把 'abc' 这类字符串写进 number（当时已修）。
+    // 非数字字段参与不了 _.inc（条件不匹配），这里直接自愈成本次要加的数量。
+    await ctx.db.update('cart', rowId, { number: delta })
+    return { ok: true }
+  }
+  if (n + delta > MAX_ITEM_NUMBER) {
+    return { ok: false, msg: goodsName + ' 单次最多购买 ' + MAX_ITEM_NUMBER + ' 件' }
+  }
+  if (n + delta < minBuy) {
+    return { ok: false, msg: goodsName + ' 最少购买 ' + minBuy + ' 份' }
+  }
+  return { ok: false, msg: '购物车已变化，请重试' }
 }
 
 async function cartModifyNumber(payload, ctx) {
@@ -943,6 +1024,48 @@ async function shopSubdetail(payload, ctx) {
 // 订单
 // ===========================================================================
 /**
+ * 下单幂等键（clientOrderToken）的校验与归一化
+ * ---------------------------------------------------------------------------
+ * 2026-10-14 新增（backlog：幂等）。为什么需要：
+ *   弱网下"请求其实已经到服务端、订单也写好了，只是响应丢了"时，顾客看到失败再点一次
+ *   → 生成第二张单（真机上确实会发生）。前端每次下单意图生成一个随机串、重试时复用，
+ *   服务端用 (openid, 该串) 认领"这一单是不是已经建过"。
+ * 规则：
+ *   · 不传（老版本客户端）→ 放行，token 为空，退化为无幂等（记日志，便于以后收紧）；
+ *   · 传了但不合法（长度/字符集）→ 直接拒绝，避免"随便塞个坏值就绕过幂等"。
+ */
+const ORDER_TOKEN_RE = /^[A-Za-z0-9_-]{8,64}$/
+function normalizeOrderToken(raw) {
+  if (raw === undefined || raw === null) return { ok: true, token: '' }
+  const t = String(raw).trim()
+  if (!t) return { ok: true, token: '' }
+  if (!ORDER_TOKEN_RE.test(t)) return { ok: false, token: '' }
+  return { ok: true, token: t }
+}
+
+/**
+ * 下单成功的统一返回体（首次创建与幂等重放共用，避免两处结构漂移）
+ * @param {object} o 库里的订单记录
+ * @param {boolean} duplicated 是否为幂等重放（前端据此跳过"清购物车"这类只该做一次的动作）
+ */
+function orderCreateOk(o, duplicated) {
+  const q = o.deliveryQuote || null
+  return ok({
+    id: o._id,
+    orderNumber: o.orderNumber,
+    pickupCode: o.pickupCode,
+    amountReal: o.amountReal,
+    goodsAmount: o.goodsAmount,
+    packingFee: o.packingFee || 0,
+    freight: o.freight || 0,
+    freightText: (q && q.freightText) || '免配送费',
+    distanceKm: q ? q.distanceKm : null,
+    status: o.status,
+    duplicated: !!duplicated
+  })
+}
+
+/**
  * 创建订单
  * 前端用法：pages/pay/index.js → orderCreate(postData)
  * 关键点：
@@ -951,7 +1074,8 @@ async function shopSubdetail(payload, ctx) {
  *      —— 2026-10-09 阶段二新增，见下方"阶段二安全修复"注释
  *   3) 同一请求内 goodsId + 规格 去重合并，再校验总数量上限（防止拆成多行绕过单行上限）
  *   4) 生成订单号（QH+日期+4位随机）并派生出取餐码，写入前查重
- *   5) 清空购物车
+ *   5) 清空购物车（只清本单出现的行）
+ *   6) 2026-10-14：幂等键 clientOrderToken —— 同一 token 的重复提交只落一张单
  *
  * 2026-10-09：**本店没有库存概念**，下单不再校验库存、也不再扣减/回补库存
  *             （原「原子扣减 + 失败回滚」整段已删除）。
@@ -964,6 +1088,20 @@ async function orderCreate(payload, ctx) {
     shopIdZt,
     shopNameZt
   } = payload || {}
+
+  // ===== 2026-10-14（backlog：幂等）：同一 token 的重复提交直接返回第一次那一单 =====
+  // 放在所有校验之前：重放请求的唯一正确行为是"把第一次那一单原样返回"，
+  // 而不是拿现在的 payload 再走一遍校验与算价（顾客可能已经改过购物车、
+  // 期望时间也可能已经过期 —— 那会让重放失败甚至生成第二张单）。
+  const tokenRes = normalizeOrderToken(payload && payload.clientOrderToken)
+  if (!tokenRes.ok) return fail('下单标识不合法，请退出结算页重新进入')
+  const clientOrderToken = tokenRes.token
+  if (clientOrderToken) {
+    const existed = await ctx.db.findOne('order', { _openid: ctx.openid, clientOrderToken })
+    if (existed) return orderCreateOk(existed, true)
+  } else {
+    console.warn('[orderCreate] 请求未带幂等键 clientOrderToken（弱网重试可能重复下单）openid=' + ctx.openid)
+  }
 
   let goodsJson = []
   try {
@@ -1213,7 +1351,34 @@ async function orderCreate(payload, ctx) {
     shopNameZt: (require('./shop-config').shop || {}).name || ''
   }
 
-  const res = await ctx.db.add('order', order)
+  // ===== 2026-10-14（backlog：幂等）：幂等键落库 + 稳定 _id =====
+  // 落库是为了"事后能按 token 找回这一单"（排查 + 幂等重放）；
+  // 稳定 _id 是为了挡住**并发**的重复提交：两个请求同时通过上面的查重、
+  // 同时插入时，第二个会撞主键报错 → 在 catch 里改判为"重放"。
+  if (clientOrderToken) {
+    order.clientOrderToken = clientOrderToken
+    order._id = stableDocId('o', ctx.openid, clientOrderToken)
+  }
+
+  let res
+  try {
+    res = await ctx.db.add('order', order)
+  } catch (e) {
+    if (!clientOrderToken) throw e
+    // ① 并发重复提交：另一个请求已用同一 token 建好单 → 返回那一单（这才是幂等该有的结果）
+    const dup = await ctx.db.findOne('order', { _openid: ctx.openid, clientOrderToken })
+    if (dup) return orderCreateOk(dup, true)
+    // ② 该环境不允许自定义 _id（见 stableDocId 注释）→ 去掉 _id 重试一次。
+    //    宁可退化为"并发下仍可能重复"，也不能让顾客完全下不了单；
+    //    此时仍有上面的 token 查重兜底（顺序重试依然安全）。
+    if (order._id) {
+      console.warn('[orderCreate] 自定义 _id 写入失败，降级为默认 _id 重试：' + (e && e.message))
+      delete order._id
+      res = await ctx.db.add('order', order)
+    } else {
+      throw e
+    }
+  }
 
   // 2026-10-14 审查修复：**只清本单出现的商品行**。
   // 原来是 removeWhere 清整车：如果请求只包含了购物车的一部分（改过的客户端/重放），
@@ -1222,19 +1387,8 @@ async function orderCreate(payload, ctx) {
     await ctx.db.removeWhere('cart', { _openid: ctx.openid, key: cartKey })
   }
 
-  return ok({
-    id: res._id,
-    orderNumber: orderNo,
-    pickupCode: pickupCode,
-    amountReal: totalAmount,
-    goodsAmount: amount,
-    // 阶段 9：打包费（前端结算页与实际金额对账用）
-    packingFee: packingFeeTotal,
-    freight: freight,
-    freightText: quote ? quote.freightText : '免配送费',
-    distanceKm: quote ? quote.distanceKm : null,
-    status: order.status
-  })
+  // 首次创建与幂等重放共用同一个返回体构造函数（结构不会漂移）
+  return orderCreateOk(Object.assign({}, order, { _id: (res && res._id) || order._id }), false)
 }
 
 /**

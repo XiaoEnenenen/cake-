@@ -698,6 +698,68 @@ async function main() {
   }
 
   {
+    // ②c 2026-10-14（backlog：幂等）：弱网重试必须带**同一个** clientOrderToken
+    //     —— 服务端据此判重，弱网"响应丢了再点一次"不会生成第二张单。
+    const tokens = []
+    let attempts = 0
+    const api = makeApi({
+      shippingCarInfo: async () => ({ code: 0, data: { items: [{ goodsId: 'g1', number: 1, sku: [], price: 88 }], number: 1, price: 88 } }),
+      goodsDetailV2: async () => ({ code: 0, data: { basicInfo: { isCake: false, minPrice: 88 }, properties: [] } }),
+      orderCreate: async (d) => {
+        tokens.push(d && d.clientOrderToken)
+        attempts++
+        // 第一次模拟弱网失败，第二次成功
+        return attempts === 1 ? { code: 500, msg: '云函数调用失败' } : { code: 0, data: { id: 'o1', amountReal: 88 } }
+      }
+    })
+    const page = loadPage('pages/pay/index.js', { requires: PAY_REQUIRES(api) })
+    await page.shippingCarInfo()
+    page.data.mobile = '13800138000'
+    page.data.fetchTime = '今天 15:00'
+    page.data.isDelivery = false
+    page.data.shopInfo = { id: 0, name: '卿欢蛋糕' }
+    page.data.cartItemsForQuote = []
+    await page.createorder()
+    await page.createorder()
+    check('★ 下单失败后可以重试（不能被防抖/已下单标志锁死）', tokens.length === 2, tokens)
+    check('★ 弱网重试带同一个幂等键（服务端才能判重、不出第二张单）',
+      !!tokens[0] && tokens[0] === tokens[1], tokens)
+    check('幂等键符合服务端规则（8–64 位 A-Za-z0-9_-）',
+      /^[A-Za-z0-9_-]{8,64}$/.test(String(tokens[0])), tokens[0])
+    check('结算页源码里下单请求带幂等键',
+      /clientOrderToken:\s*this\.orderToken\(\)/.test(src('pages/pay/index.js')))
+  }
+
+  {
+    // ②d 2026-10-14（backlog：幂等）：重放（duplicated=true）时不重复清购物车；
+    //     正常首次下单仍要清（不能把原有行为改掉）。
+    const mkApi = (duplicated, counter) => makeApi({
+      shippingCarInfo: async () => ({ code: 0, data: { items: [{ goodsId: 'g1', number: 1, sku: [], price: 88 }], number: 1, price: 88 } }),
+      goodsDetailV2: async () => ({ code: 0, data: { basicInfo: { isCake: false, minPrice: 88 }, properties: [] } }),
+      orderCreate: async () => ({ code: 0, data: { id: 'o1', amountReal: 88, duplicated } }),
+      shippingCarInfoRemoveAll: async () => { counter.n++; return { code: 0 } }
+    })
+    const prep = async (api) => {
+      const page = loadPage('pages/pay/index.js', { requires: PAY_REQUIRES(api) })
+      await page.shippingCarInfo()
+      page.data.mobile = '13800138000'
+      page.data.fetchTime = '今天 15:00'
+      page.data.isDelivery = false
+      page.data.shopInfo = { id: 0, name: '卿欢蛋糕' }
+      page.data.cartItemsForQuote = []
+      await page.createorder()
+    }
+    const replayCounter = { n: 0 }
+    await prep(mkApi(true, replayCounter))
+    check('★ 幂等重放（duplicated=true）不再清购物车（不误删顾客后来加的商品）',
+      replayCounter.n === 0, replayCounter.n)
+    const firstCounter = { n: 0 }
+    await prep(mkApi(false, firstCounter))
+    check('首次下单（duplicated=false）仍然清购物车（原行为不变）',
+      firstCounter.n === 1, firstCounter.n)
+  }
+
+  {
     // ③ 商品快照拉取失败时不猜运费（避免屏显 25 元、实付 20 元）
     const api = makeApi({
       shippingCarInfo: async () => ({

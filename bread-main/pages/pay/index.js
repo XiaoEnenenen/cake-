@@ -106,6 +106,20 @@ Page({
     // 阶段 5.6（缺陷 P-10）：是否正在提交订单（防抖 + 按钮文案）
     submitting: false
   },
+  // ===== 2026-10-14（backlog：幂等）：下单幂等键 clientOrderToken =====
+  // 为什么需要：弱网下"请求其实已经到服务端、订单也写好了，只是响应丢了"时，
+  //   顾客看到失败再点一次「去支付」就会生成第二张单。
+  // 生命周期：同一个结算页实例内**始终复用同一个 token**（重试 = 同一笔下单意图）；
+  //   重新进入结算页 = 新的一次下单意图，token 随之变化。
+  // 服务端（orderCreate）用 (openid, token) 判重：重复提交直接把第一次那一单原样返回。
+  _orderToken: '',
+  orderToken() {
+    if (!this._orderToken) {
+      // 32 位随机串：服务端要求 8–64 位 A-Za-z0-9_-
+      this._orderToken = 'ct' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10)
+    }
+    return this._orderToken
+  },
   onLoad: function (options) {
     AUTH.login() // 这句不能省略
     // 改造：改用固定门店配置兜底，避免未经过首页时 shopInfo 为空导致
@@ -688,6 +702,9 @@ Page({
       extJsonStr: JSON.stringify(extJsonStr),
       shopIdZt: this.data.shopInfo.id,
       shopNameZt: this.data.shopInfo.name,
+      // ===== 2026-10-14（backlog：幂等）：幂等键 =====
+      // 同一页实例内重试始终带同一个值；服务端据此保证"重复提交只落一张单"。
+      clientOrderToken: this.orderToken(),
       // ===== 改造：传给云函数用于服务端重算运费 =====
       // 注意：freightAmount 仅用于服务端比对，服务端会用同一套规则重算并以其结果为准
       deliveryMode: isDelivery ? 'delivery' : 'pickup',
@@ -708,7 +725,13 @@ Page({
       return;
     }
     // https://www.yuque.com/apifm/nu0f75/ps2q28
-    await API.shippingCarInfoRemoveAll(token)
+    // 2026-10-14（backlog：幂等）：**幂等重放时不重复清车**。
+    //   res.data.duplicated = true 表示这一单在第一次请求时就已经建好（响应丢了、
+    //   顾客重试）、购物车里的本单商品当时已由服务端清掉；再 RemoveAll 一次会把顾客
+    //   在这期间新加的商品一起删掉。
+    if (!(res.data && res.data.duplicated)) {
+      await API.shippingCarInfoRemoveAll(token)
+    }
     // 阶段 5.6：订单已生成（服务端也已清空购物车）→ 锁住本页的下单入口。
     // 支付弹窗走完之前顾客若再点一次「去支付」，原来会生成第二张重复订单。
     this._ordered = true

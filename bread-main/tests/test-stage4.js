@@ -68,6 +68,11 @@ function createMockDb(seed) {
     async add(col, data) {
       const doc = Object.assign({ _id: nextId() }, data)
       if (!store[col]) store[col] = []
+      // 与真实云库一致：_id 是主键，**重复插入必须报错**
+      // （2026-10-14 的并发/幂等保护正是靠它挡掉第二行/第二张单，见 stableDocId 注释）
+      if (store[col].some((r) => r._id === doc._id)) {
+        throw new Error('duplicate key error: _id=' + doc._id)
+      }
       store[col].push(doc)
       return JSON.parse(JSON.stringify(doc))
     },

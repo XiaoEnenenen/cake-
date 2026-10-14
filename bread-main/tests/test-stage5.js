@@ -63,6 +63,11 @@ function createMockDb(seed) {
     async add(col, data) {
       const doc = Object.assign({ _id: nextId() }, data)
       if (!store[col]) store[col] = []
+      // 与真实云库一致：_id 是主键，**重复插入必须报错**
+      // （2026-10-14 的并发/幂等保护正是靠它挡掉第二行/第二张单，见 stableDocId 注释）
+      if (store[col].some((r) => r._id === doc._id)) {
+        throw new Error('duplicate key error: _id=' + doc._id)
+      }
       store[col].push(doc)
       return JSON.parse(JSON.stringify(doc))
     },
@@ -81,6 +86,24 @@ function createMockDb(seed) {
         (r) => !Object.keys(where).every((k) => r[k] === where[k])
       )
       return { removed: before - store[col].length }
+    },
+    // 2026-10-14（backlog：并发/幂等）：原子自增。
+    // 真实实现见 cloudfunctions/api/index.js 的 incField（用 db.command.inc 在数据库端完成）。
+    // 这里函数体内**没有 await**，在 node 事件循环里就是原子的 —— 因此并发用例
+    // （Promise.all 同时发两个 cartAdd）能真实暴露原来"先读后写"的丢数量问题。
+    async incField(col, where, field, delta, opts) {
+      const o = opts || {}
+      const row = (store[col] || []).find((r) =>
+        Object.keys(where).every((k) => r[k] === where[k])
+      )
+      if (!row) return { updated: 0 }
+      const cur = Number(row[field])
+      if (!Number.isFinite(cur)) return { updated: 0 }
+      const next = cur + delta
+      if (o.min !== undefined && next < o.min) return { updated: 0 }
+      if (o.max !== undefined && next > o.max) return { updated: 0 }
+      row[field] = next
+      return { updated: 1 }
     }
   }
 }
