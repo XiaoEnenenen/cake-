@@ -70,6 +70,39 @@ console.log('\n=== 2) 配送区域判断（文字关键词）===')
   check('区域外提示文案', DR.checkArea({ detail: '某路' }).reason === CFG.area.outOfAreaTip)
 }
 
+console.log('\n=== 2b) 区域关键词白名单（2026-10-14 真机反馈后扩充）===')
+{
+  // 背景：白名单原来只有「太平新城」一个词，而这个词只能出现在**详细地址**里
+  // （行政区划选择器最细到区县"安宁市"，给不出"太平新城"）→ 手打"山水融城B区13栋"会被误拒。
+  // 现在补了片区内专名。下面既验"该进的能进"，也验"不该进的仍然进不来"。
+  const at = (detail) => ({ province: '云南省', city: '昆明市', district: '安宁市', detail })
+
+  const inside = ['万辉西山田园13幢03-1号商铺', '山水融城B区13栋2商铺', '太桃公路旁']
+  inside.forEach((d) => {
+    check('★ 不必写"太平新城"也能进：' + d, DR.checkArea(at(d)).inArea === true, DR.checkArea(at(d)))
+  })
+  check('  原有的「太平新城」仍然有效', DR.checkArea(at('太平新城某小区1号')).inArea === true)
+
+  // 反面控制：证明"补充关键词"没有把关卡放太宽
+  // （如果以后有人往白名单里加了裸词 `西山` / `太平` / `安宁`，这几条会立刻变红）
+  const outside = [
+    '云南省昆明市西山区某路1号', // 含"西山"但不是太平新城（裸词 `西山` 会误命中这里）
+    '安宁市太平路8号',           // 含"太平"但不是太平新城（裸词 `太平` 会误命中这里）
+    '昆明市五华区某路1号'
+  ]
+  outside.forEach((d) => {
+    check('★ 片区外仍然拒送：' + d, DR.checkArea({ detail: d }).inArea === false, DR.checkArea({ detail: d }))
+  })
+
+  // 关键词本身的"卫生检查"：任何关键词都必须足够长（防止以后加裸词）
+  check('★ 白名单里没有过短的关键词（每个 ≥ 3 个字）',
+    CFG.area.keywords.every((k) => String(k).length >= 3),
+    CFG.area.keywords)
+  check('  白名单里不含「太平」「西山」「安宁」这类裸地名',
+    CFG.area.keywords.every((k) => ['太平', '西山', '安宁', '昆明', '云南'].indexOf(String(k)) < 0),
+    CFG.area.keywords)
+}
+
 console.log('\n=== 3) 蛋糕识别 ===')
 {
   const cakeGoods = {
