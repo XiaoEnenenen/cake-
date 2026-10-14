@@ -163,6 +163,20 @@
     <view class="text">{{orderDetail.orderInfo.remark}}</view>
   </view>
 </view>
+<!-- 费用明细（2026-10-14 审查修复）：
+     原来只有"共 N 件商品，小计 ¥amountReal"，而 amountReal 是**含打包费 + 运费的实付总额**，
+     运费那行取的还是 extJson 里客户端下单时写的快照 → 行项与总额对不上、顾客看不明白。
+     现在改为显式的四行：商品金额 / 打包费（>0 才显示）/ 配送费（外送才有）/ 实付合计。 -->
+<view class="shops-bar">
+  <view class="shops-box">
+    <view class="content">
+      <view class="titles">商品金额（共 {{orderDetail.orderInfo.goodsNumber}} 件）</view>
+    </view>
+    <view class="text">¥{{ orderDetail.orderInfo.goodsAmount }}</view>
+  </view>
+</view>
+<view class="blank1"></view>
+
 <!-- 阶段 9：打包费（订单快照里的 packingFee；本店未收时为 0 → 整块不渲染） -->
 <block wx:if="{{ orderDetail.orderInfo.packingFee > 0 }}">
   <view class="shops-bar">
@@ -176,8 +190,24 @@
   <view class="blank1"></view>
 </block>
 
+<!-- 配送费（仅外送；金额取服务端 freight，不再用 extJson 快照）
+     freight === null 的老订单没有该字段 → 回退显示 extJson 的文案 -->
+<block wx:if="{{ orderDetail.orderInfo.deliveryMode == 'delivery' }}">
+  <view class="shops-bar">
+    <view class="shops-box">
+      <view class="content">
+        <view class="titles">配送费</view>
+      </view>
+      <view class="text">
+        {{ orderDetail.orderInfo.freight === 0 ? '免配送费' : (orderDetail.orderInfo.freight ? '¥' + orderDetail.orderInfo.freight : (orderDetail.extJson['运费'] || '待确认')) }}
+      </view>
+    </view>
+  </view>
+  <view class="blank1"></view>
+</block>
+
 <view class="num-bar">
-  <view class="num">共 {{orderDetail.orderInfo.goodsNumber}} 件商品，小计</view>
+  <view class="num">共 {{orderDetail.orderInfo.goodsNumber}} 件商品，实付</view>
   <view class="price">
     <text>¥</text>{{orderDetail.orderInfo.amountReal}}
   </view>

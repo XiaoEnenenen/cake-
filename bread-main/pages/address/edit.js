@@ -129,6 +129,32 @@ Page({
       return
     }
 
+    // ===== 2026-10-14 审查修复（P1）：没选点就别让顾客以为运费算过了 =====
+    // 运费按「收货地址 ↔ 门店」的直线距离算，没有经纬度时整条距离链路失效：
+    //   运费文案退化成"运费待确认"、门店地图气泡显示"待选择收货地址"、
+    //   订单里也没有配送距离。顾客手打地址时（页面写的是"可选：打开地图精确选点"）
+    //   会以为系统已经算过运费，实际要等店主打电话确认。
+    // 这里给一次**明确的二次确认**（不硬性拦截：确实有顾客不方便选点）。
+    if (!(Number(this.data.latitude) > 0 && Number(this.data.longitude) > 0)) {
+      wx.showModal({
+        title: '还没在地图上选点',
+        content: '不选点就算不出配送距离，运费会显示「待确认」、需要商家电话跟您确认。建议先在「地图选点」里选好位置。',
+        confirmText: '仍然保存',
+        cancelText: '去选点',
+        success: (res) => {
+          if (res.confirm) {
+            this.doSave({ name, phone, detail })
+          }
+        }
+      })
+      return
+    }
+
+    this.doSave({ name, phone, detail })
+  },
+
+  /** 真正的保存（上面做完校验/确认后再走这里） */
+  doSave({ name, phone, detail }) {
     this.setData({ saving: true })
     try {
       ADDR.save({

@@ -14,9 +14,11 @@ Page({
     shopInfo: {},
     // 商品分类（goodsCategoryV2 返回）
     goodsCategory: [],
-    // 商品列表。null = 请求失败(700) 或尚未拿到；[] = 该分类确实没有商品。
+    // 商品列表。null = 请求失败或尚未拿到；[] = 该分类确实没有商品。
     // 注意：空数组与 null 在模板里要区别对待（见 index.wxml 的空状态判断）
     goodsList: null,
+    // 2026-10-14 审查修复：把"加载失败"单独标出来（失败≠没商品），wxml 据此显示重试入口
+    goodsLoadError: false,
     // 右侧列表滚动锚点，见 resetListScroll()
     listScrollTarget: '',
     showCartPop: false,
@@ -64,6 +66,11 @@ Page({
     this.setData({
       isDelivery: next === DELIVERY.DELIVERY
     })
+    // ===== 2026-10-14 审查修复（P1）=====
+    // 切换自提/外送会改变**单价**（阶段 9 的商品级自取立减 pickupDiscount），
+    // 所以必须重拉一次购物车 —— 否则底部结算栏与购物车弹层还按上一个渠道的价显示，
+    // 顾客点进结算页才看到金额变了。pages/pay 的 onModeChange 早就这么做（同一口径）。
+    this.shippingCarInfo()
   },
   async goodsCategory() {
     // https://www.yuque.com/apifm/nu0f75/racmle
@@ -133,15 +140,28 @@ Page({
     })
     if (seq !== this._listSeq) return // 已有更新的请求在途，丢弃这次过期结果
     wx.hideLoading()
-    if (res.code == 700) {
+    // ===== 2026-10-14 审查修复：错误码判断 =====
+    // 原实现只判 `res.code == 700`（api 工厂时代的遗留码，本项目**从不返回 700**），
+    // 而唯一数据通道失败时返回的是 500 → 落到下面 `res.data.result` 直接抛 TypeError，
+    // 异常被 promise 吞掉，页面显示"暂无商品"且没有重试入口 —— 顾客会以为店里没货。
+    if (res.code != 0 || !res.data || !Array.isArray(res.data.result)) {
       this.setData({
-        goodsList: null
-      });
+        goodsList: null,
+        goodsLoadError: true
+      })
       return
     }
     this.setData({
-      goodsList: res.data.result
+      goodsList: res.data.result,
+      goodsLoadError: false
     });
+  },
+
+  // 商品列表加载失败的重试入口（wxml 里的「点击重试」）
+  retryGoodsList() {
+    this.setData({ goodsLoadError: false })
+    // 不传 categoryId → getGoodsList 用 this.data.cid（当前选中分类）
+    this.getGoodsList()
   },
 
   // ==========================================================================
@@ -158,6 +178,9 @@ Page({
    *      金额仍然只用后端返回的 price / number，前端不重算业务金额。
    */
   async shippingCarInfo(){
+    // 竞态保护（2026-10-14 审查）：连点自提/外送时可能"先发的请求后返回"，
+    // 把结算栏盖回旧渠道的价。只认最后一次请求的结果。
+    const seq = (this._cartSeq = (this._cartSeq || 0) + 1)
     const token = wx.getStorageSync('token')
     // 单一数据源（阶段三）：__isCloudMode() 恒为 true，这里不需要 token。
     // 该判断保留为兜底：万一 useCloud 被误设为 false，也不会拿空购物车去请求。
@@ -167,6 +190,7 @@ Page({
     }
     // https://www.yuque.com/apifm/nu0f75/awql14
     const res = await API.shippingCarInfo(token)
+    if (seq !== this._cartSeq) return // 已有更新的请求在途，丢弃这次过期结果
     if (res.code == 0) {
       const cartItems = await this.buildCartView(res.data.items || [])
       // 阶段 9：结算栏的「实付金额」= 商品金额 + 打包费。

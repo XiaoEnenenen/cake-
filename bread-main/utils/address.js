@@ -157,21 +157,35 @@ function setDefault(id) {
  */
 function formatFull(addr) {
   if (!addr) return ''
-  const detail = String(addr.detail || '').trim()
+  const detail = dedupeLeading(String(addr.detail || '').trim())
   const parts = [addr.province, addr.city, addr.district].filter(Boolean)
   if (!parts.length) return detail
-  const prefix = parts.join('')
-  if (!detail) return prefix
-  // detail 已以完整省市区开头 → 不重复拼
-  if (detail.indexOf(prefix) === 0) return detail
-  // 逐级退让：detail 以「市+区」「区」开头时，只补前面缺的那部分
-  for (let i = 1; i < parts.length; i++) {
-    const tail = parts.slice(i).join('')
-    if (tail && detail.indexOf(tail) === 0) {
+  if (!detail) return parts.join('')
+
+  // 逐级判断：只要详细地址**以某一级开头**，就只补它前面缺的那几级。
+  //   detail 以「云南省…」开头 → 前面什么都不用补
+  //   detail 以「昆明市…」开头 → 只补「云南省」
+  //   detail 以「安宁市…」开头 → 补「云南省昆明市」
+  //   都不匹配 → 拼完整省市区
+  // 2026-10-14 审查补强：原实现只在"以市+区 / 以区"这两种组合里找，
+  //   漏了"只以市开头"（如 province=云南省 而 detail 写"昆明市太平新城…"）、
+  //   也漏了"以省开头"（会拼出"云南省昆明市安宁市云南省…"）。
+  for (let i = 0; i < parts.length; i++) {
+    if (detail.indexOf(parts[i]) === 0) {
       return parts.slice(0, i).join('') + detail
     }
   }
-  return prefix + detail
+  return parts.join('') + detail
+}
+
+/**
+ * 去掉详细地址里**自身**重复的前缀片段（如"安宁市安宁市太平新城…"）
+ * 场景：地图/用户粘贴的地址本身就重复了一段；不去重会原样显示，也影响关键词判定。
+ */
+function dedupeLeading(detail) {
+  if (!detail) return ''
+  const m = detail.match(/^((?:[\u4e00-\u9fa5]{2,8}?)(?:省|市|区|县))\1+/)
+  return m ? detail.slice(m[1].length) : detail
 }
 
 /**

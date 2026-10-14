@@ -56,7 +56,11 @@ async function loadDeliveryRule(ctx) {
       rule = doc.value
     }
   } catch (e) {
-    // 集合不存在 / 查询失败：回退代码默认值，不影响下单
+    // 集合不存在 / 查询失败：回退代码默认值，不影响下单。
+    // 2026-10-14 审查修复：**必须记日志** —— 否则云库规则读不到时，
+    // 服务端会悄悄按代码默认阶梯收运费（店主已改价的钱对不上），而日志里毫无痕迹。
+    console.error('[loadDeliveryRule] 读取云库配送规则失败，回退代码默认值：' +
+      (e && e.message ? e.message : e))
   }
   return delivery.setDeliveryRule(rule)
 }
@@ -117,11 +121,45 @@ function minBuyNumberOf(goods) {
 }
 
 /**
- * 从请求体解析配送方式（阶段 9）。
- * 默认 'delivery' —— 即**不应用自取立减**：老客户端/未带该字段的调用方金额不变。
+ * 解析期望时间（2026-10-14）
+ * 接受 'YYYY-MM-DD HH:mm'（结算页存进 storage 的绝对时间格式）与 ISO 串；
+ * 其它（如"今天 22:00"这种可读文案）返回 null，由调用方决定是拒绝还是跳过。
+ */
+function parseExpectTime(s) {
+  const str = String(s || '').trim()
+  const m = str.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{1,2}):(\d{2})/)
+  if (m) {
+    return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]))
+  }
+  const d = new Date(str)
+  return isNaN(d.getTime()) ? null : d
+}
+
+/**
+ * 从请求体解析配送方式（阶段 9 引入，2026-10-14 审查后与 orderCreate 对齐）。
+ *
+ * ⚠️ 缺省值必须与 orderCreate 一致，否则会出现"购物车按 A 渠道显示、下单按 B 渠道收费"：
+ *   以前这里是 `只有显式传 'pickup' 才算自提`（缺省=不立减），
+ *   而 orderCreate 是 `不是 'delivery' 就算自提`（缺省=应用自取立减）—— 两边正好相反，
+ *   同一份缺 deliveryMode 的请求，购物车显示 108 元、下单实收 88 元。
+ *   现在两边都按"App 的默认配送方式 = 自提"处理。
  */
 function channelOf(payload) {
-  return payload && payload.deliveryMode === 'pickup' ? 'pickup' : 'delivery'
+  return payload && payload.deliveryMode === 'delivery' ? 'delivery' : 'pickup'
+}
+
+/**
+ * 解析 orderCreate 的配送方式（严格枚举 + 缺省推断）
+ * - 'delivery' / 'pickup' → 原样返回
+ * - 其它**非空**值 → null（调用方 fail）：避免 'DELIVERY' / 枚举改名之类被静默当成自提，
+ *   那会把顾客填的收货地址**直接丢掉**、运费按 0 收
+ * - 缺省（未传）→ 带收货地址按外送、否则按自提（"填了地址就是要送"的直觉，且不丢地址）
+ */
+function resolveDeliveryMode(payload) {
+  const raw = payload ? payload.deliveryMode : undefined
+  if (raw === 'delivery' || raw === 'pickup') return raw
+  if (raw !== undefined && raw !== null && String(raw).trim() !== '') return null
+  return payload && payload.address ? 'delivery' : 'pickup'
 }
 
 /**
@@ -173,10 +211,14 @@ function randomInt(maxExclusive) {
   return Math.floor(Math.random() * maxExclusive)
 }
 
-/** 订单号的日期段：yyMMdd（例：2026-10-10 → '261010'） */
+/** 订单号的日期段：yyMMdd（例：2026-10-10 → '261010'）
+ *  2026-10-14 审查修复：云函数运行在 **UTC**，原来用本地时间取日期段，
+ *  于是北京时间 00:00–08:00 下的单会被编号成**前一天**（店主对账时最容易懵）。
+ *  这里显式按北京时间（UTC+8）取，不受运行时区影响。 */
+const ORDER_TZ_OFFSET_MS = 8 * 60 * 60 * 1000
 function orderNoDatePart(now) {
-  const d = new Date(now)
-  return pad(d.getFullYear() % 100, 2) + pad(d.getMonth() + 1, 2) + pad(d.getDate(), 2)
+  const d = new Date(Number(now) + ORDER_TZ_OFFSET_MS)
+  return pad(d.getUTCFullYear() % 100, 2) + pad(d.getUTCMonth() + 1, 2) + pad(d.getUTCDate(), 2)
 }
 
 /**
@@ -291,9 +333,16 @@ function resolveOrderSku(goods, propertyChildIds) {
 
   const groups = goods.properties || []
   // 1) 该商品有规格组时，每组必须选中一个合法选项
+  // 2026-10-14 审查修复（P1）：**每组只能选一项**。
+  //   原来用 find 取第一个匹配项做校验，于是 `size:s4,size:s8` 也能下单：
+  //   计价按第一个（4寸 54 元），而订单里的规格文字（店主做蛋糕看的字段）
+  //   却是"4寸 / 8寸"；反过来 `size:s8,size:s4` 就按 8 寸收费、文字写"8寸 / 4寸"。
+  //   这是"可伪造规格"的漏网：顾客付小规格的钱，店主按大规格做。
   for (const group of groups) {
-    const picked = sku.find((s) => String(s.optionId) === String(group.id))
-    if (!picked) return { ok: false, msg: '请选择' + group.name }
+    const pickedList = sku.filter((s) => String(s.optionId) === String(group.id))
+    if (!pickedList.length) return { ok: false, msg: '请选择' + group.name }
+    if (pickedList.length > 1) return { ok: false, msg: group.name + '只能选一项' }
+    const picked = pickedList[0]
     const exists = (group.childsCurGoods || []).some(
       (c) => String(c.id) === String(picked.optionValueId)
     )
@@ -351,7 +400,15 @@ async function categoryList(payload, ctx) {
  * categoryId 为空 或 '0' 时表示「全部商品」
  */
 async function goodsList(payload, ctx) {
-  const { categoryId, page = 1, pageSize = 1000 } = payload || {}
+  const p = payload || {}
+  // 2026-10-14 审查修复：分页参数做类型与上界校验。
+  //   原来 `page/pageSize` 直接参与 slice：传 'abc' 时 slice(NaN, NaN) **不报错**而是返回全量，
+  //   pageSize 缺省还是 1000。现在非法值一律回落到默认，且上限 100。
+  const pageRaw = Number(p.page)
+  const page = Number.isFinite(pageRaw) && pageRaw > 0 ? Math.floor(pageRaw) : 1
+  const sizeRaw = Number(p.pageSize)
+  const pageSize = Number.isFinite(sizeRaw) && sizeRaw > 0 ? Math.min(Math.floor(sizeRaw), 100) : 100
+  const categoryId = p.categoryId
   const where = { enabled: true }
   if (categoryId && categoryId !== '0' && categoryId !== 0) {
     where.categoryId = categoryId
@@ -580,20 +637,20 @@ async function cartAdd(payload, ctx) {
   if (!numRes.ok) return fail(numRes.msg)
   const addNumber = numRes.number
 
-  // 规格必选校验：商品有规格组时，每组都必须选
-  if (goods.properties && goods.properties.length) {
-    for (const group of goods.properties) {
-      const picked = (sku || []).find((s) => String(s.optionId) === String(group.id))
-      if (!picked) return fail('请选择' + group.name)
-      const exists = (group.childsCurGoods || []).some(
-        (c) => String(c.id) === String(picked.optionValueId)
-      )
-      if (!exists) return fail(group.name + '选择有误')
-    }
-  }
+  // 规格校验：复用 resolveOrderSku（2026-10-14 审查修复，与 orderCreate 完全同一口径）。
+  //   原来这里只判"该商品有的组都选了"，不拒绝**多余的伪造 optionId**：
+  //   `sku=[{size},{flavor},{fake}]` 能加购成功，但随后 cartItemsOf 判定 resolveOrderSku 失败
+  //   → 该行被标成 unavailable「规格已变更」，而结算页看到 unavailable 会**拦下整单提交**
+  //   → 顾客既下不了单、又没有改规格的入口（死路）。两处口径必须一致。
+  const skuRes = resolveOrderSku(
+    goods,
+    (sku || []).map((s) => String(s.optionId) + ':' + String(s.optionValueId)).join(',')
+  )
+  if (!skuRes.ok) return fail(skuRes.msg)
+  const normSku = skuRes.sku
 
-  const key = makeCartKey(goodsId, sku)
-  const price = calcPrice(goods, sku)
+  const key = makeCartKey(goodsId, normSku)
+  const price = calcPrice(goods, normSku, channelOf(payload))
 
   // 阶段 9：最少购买份数（默认 1，只有 > 1 才拦）。按"累加后的总数"判断，
   // 避免"已经买够 2 份、再点一次 +1"这种正常操作被误拦。
@@ -620,7 +677,7 @@ async function cartAdd(payload, ctx) {
       goodsId,
       price,
       number: addNumber,
-      sku,
+      sku: normSku,
       dateAdd: Date.now()
     })
   }
@@ -786,7 +843,10 @@ async function appConfig(payload, ctx) {
         value = doc.value
       }
     } catch (e) {
-      // 集合不存在 / 查询失败：使用默认值，不影响主流程
+      // 集合不存在 / 查询失败：使用默认值，不影响主流程。
+      // 2026-10-14：记一条日志（原来完全静默，出问题时无从下手）
+      console.error('[appConfig] 读取 app_config 失败（key=' + key + '），使用默认值：' +
+        (e && e.message ? e.message : e))
     }
     data.push({ key, value: value === undefined ? '' : value })
   }
@@ -911,6 +971,10 @@ async function orderCreate(payload, ctx) {
   } catch (e) {
     return fail('商品数据格式错误')
   }
+  // 2026-10-14 审查修复：`goodsJsonStr` 是合法 JSON 但不是数组时（如 '{"length":2}'），
+  // 下面 `for...of` 会抛 TypeError → dispatch 把它包成 500 并把内部错误回显给客户端。
+  // 业务错误必须是业务错误，且不能泄露实现细节。
+  if (!Array.isArray(goodsJson)) return fail('商品数据格式错误')
   if (!goodsJson.length) return fail('购物车为空')
 
   let extJson = {}
@@ -919,13 +983,27 @@ async function orderCreate(payload, ctx) {
   } catch (e) {
     extJson = {}
   }
+  // extJson 必须是普通对象（数组/null/字符串会让后续 extJson['x'] 语义跑偏）
+  if (!extJson || typeof extJson !== 'object' || Array.isArray(extJson)) extJson = {}
+
+  // 2026-10-14 审查修复：备注的**类型与长度**校验。
+  // 原来原样入库并原样回给店主列表：一条 30 万字符的备注能把店主端整页响应撑到 5.7MB，
+  // 逼近云函数返回体上限 → 店主整页订单都打不开。
+  const remarkRaw = remark === undefined || remark === null ? '' : remark
+  if (typeof remarkRaw !== 'string') return fail('备注格式不正确')
+  const remarkText = remarkRaw.trim()
+  if (remarkText.length > 200) return fail('备注最多 200 字')
 
   const items = []
   let amount = 0
   let goodsNumber = 0
   // 阶段 9：配送方式要在**算价之前**确定 —— 自提时单价要按「自取立减」算，
   // 与前端结算页（cartSummary 带同一个 deliveryMode）保持同一口径。
-  const deliveryMode = payload.deliveryMode === 'delivery' ? 'delivery' : 'pickup'
+  // 2026-10-14 审查修复：严格枚举 + 缺省推断（见 resolveDeliveryMode 注释）。
+  //   以前是 `不是 'delivery' 就算 pickup`：传 'DELIVERY' / 枚举改名 / 老客户端漏传时，
+  //   会把顾客填的**收货地址直接丢掉**、运费按 0 收、订单落库成自提。
+  const deliveryMode = resolveDeliveryMode(payload)
+  if (!deliveryMode) return fail('配送方式不正确')
   // 阶段 9：打包费合计（元/件 × 件数）
   let packingFeeTotal = 0
 
@@ -1006,6 +1084,37 @@ async function orderCreate(payload, ctx) {
   }
 
   amount = Math.round(amount * 100) / 100
+
+  // ===== 2026-10-14 审查修复：期望时间的**服务端**权威校验 =====
+  // 背景：`checkAdvanceTime`（营业时间 + 蛋糕提前 3 小时）此前只被客户端
+  //   （pages/select-time 与结算页）调用，云函数里一行都没有 ——
+  //   直接用 wx.cloud.callFunction 或改过的客户端可以下一个"2000-01-01 03:00"的单。
+  // 口径：
+  //   · 客户端**结构化字段** `payload.expectTime`（绝对时间）→ 严格校验，不合法直接拒；
+  //   · 只在 `extJson` 里的可读文案（"今天 22:00"这类老格式）→ 能解析就校验，不能解析则跳过并记日志
+  //     （不为难老版本客户端，但规则不再只存在于前端）。
+  {
+    const expectFromPayload = payload && payload.expectTime ? String(payload.expectTime).trim() : ''
+    const expectFromExt = String(extJson['期望送达时间'] || extJson['自取时间'] || '').trim()
+    const expectRaw = expectFromPayload || expectFromExt
+    if (!expectRaw) {
+      console.warn('[orderCreate] 请求未带期望时间，跳过提前时间校验 openid=' + ctx.openid +
+        ' 订单商品数=' + items.length)
+    } else {
+      const expectDate = parseExpectTime(expectRaw)
+      if (!expectDate) {
+        if (expectFromPayload) return fail('期望时间格式不正确，请重新选择')
+        console.warn('[orderCreate] extJson 里的期望时间无法解析，跳过校验：' + expectRaw)
+      } else {
+        const adv = delivery.checkAdvanceTime({
+          expectTime: expectDate,
+          items: items.map((it) => ({ goods: it._goodsForQuote || it, sku: it.sku })),
+          openingHours: require('./shop-config').shop.openingHours
+        })
+        if (!adv.valid) return fail(adv.tip)
+      }
+    }
+  }
 
   // ===== 改造：服务端重算配送费（安全关键）=====
   // 设计原则：绝不信任前端传来的运费金额。
@@ -1093,19 +1202,25 @@ async function orderCreate(payload, ctx) {
       freightText: quote.freightText
     } : null,
     goodsNumber,
-    remark,
+    remark: remarkText,
     extJson,
     goods: items,
     // 取餐码：自提订单叫号用（= 订单号后 4 位）；外送订单不展示，但字段照样存
     pickupCode: pickupCode,
-    shopIdZt: shopIdZt || '',
-    shopNameZt: shopNameZt || ''
+    // 2026-10-14 审查修复：门店标识**取服务端配置**，不再回显前端传来的值
+    // （原来 `shopNameZt` 可以是任意对象/超长字符串，也会出现在店主端）
+    shopIdZt: (require('./shop-config').shop || {}).id || 0,
+    shopNameZt: (require('./shop-config').shop || {}).name || ''
   }
 
   const res = await ctx.db.add('order', order)
 
-  // 清空购物车
-  await ctx.db.removeWhere('cart', { _openid: ctx.openid })
+  // 2026-10-14 审查修复：**只清本单出现的商品行**。
+  // 原来是 removeWhere 清整车：如果请求只包含了购物车的一部分（改过的客户端/重放），
+  // 顾客购物车里其它没下单的商品会被一起删掉、凭空消失。
+  for (const cartKey of Object.keys(merged)) {
+    await ctx.db.removeWhere('cart', { _openid: ctx.openid, key: cartKey })
+  }
 
   return ok({
     id: res._id,
@@ -1144,8 +1259,15 @@ function adminOrderView(o) {
   const ext = o.extJson || {}
   const addr = o.address || null
   const goods = o.goods || []
-  const addressText = ext['收货地址'] ||
-    (addr ? [addr.province, addr.city, addr.district, addr.detail].filter(Boolean).join('') : '')
+  // 2026-10-14 审查修复：接单信息**以服务端保存的结构化字段为准**。
+  //   运费是按 `payload.address`（服务端算的）算的，而原来店主看到的收货人/电话/地址
+  //   全部优先取客户端的 `extJson` —— 客户端可任意写，于是"运费按 A 地址收 0 元、
+  //   店主看到的却是 30 公里外的 B 地址（一键导航还会导到 B）"。
+  //   现在：address 有值就用 address；只有自提单（没有结构化地址）才回退 extJson 的联络电话。
+  const addressText = addr
+    ? [addr.province, addr.city, addr.district, addr.detail].filter(Boolean).join('')
+    : (ext['收货地址'] || '')
+  const quote = o.deliveryQuote || null
   return {
     id: o._id,
     orderNumber: o.orderNumber,
@@ -1164,12 +1286,23 @@ function adminOrderView(o) {
     freight: o.freight,
     goodsNumber: o.goodsNumber,
     // ===== 接单要用的联系信息 =====
-    contactName: ext['收货人'] || '',
-    contactPhone: ext['收货电话'] || ext['联络电话'] || '',
+    contactName: (addr && addr.name) || ext['收货人'] || '',
+    contactPhone: (addr && addr.phone) || ext['收货电话'] || ext['联络电话'] || '',
     addressText,
     // 结构化地址（含经纬度）：店主端可直接「一键导航」
     address: addr,
-    distanceText: ext['配送距离'] || '',
+    distanceText: quote && quote.distanceKm !== null && quote.distanceKm !== undefined
+      ? quote.distanceKm + '公里'
+      : '',
+    // 2026-10-14 审查修复：把服务端算出的配送判定也下发给店主 ——
+    // 否则"运费待确认（>8km / 地址可疑）"的订单在店主页面上跟真免运费的长得一样，
+    // 店主无法判断这一单要不要打电话确认运费。
+    deliveryQuote: quote ? {
+      distanceKm: quote.distanceKm,
+      inArea: quote.inArea,
+      reason: quote.reason,
+      freightText: quote.freightText
+    } : null,
     remark: o.remark || '',
     goods: goods.map((g) => ({
       goodsName: g.goodsName,
@@ -1204,10 +1337,18 @@ async function orderAdminList(payload, ctx) {
   })
 
   let list = all
-  if (p.statusBatch !== undefined && p.statusBatch !== null && String(p.statusBatch) !== '') {
-    const allow = String(p.statusBatch)
+  // 2026-10-14 审查修复：**缺省只返回未完成的订单**（待支付 + 制作中）。
+  //   原来缺省返回全部历史订单：接口一次把每一位顾客的姓名/电话/地址（含经纬度）/
+  //   备注交给白名单里的任何人，且订单越多响应体越大（云函数返回体有上限）。
+  //   店主端要看历史时就显式传 `statusBatch: '3'` 或 '0,1,3'。
+  const statusFilterRaw = p.statusBatch === undefined || p.statusBatch === null
+    ? '0,1'
+    : String(p.statusBatch)
+  if (statusFilterRaw.trim() !== '') {
+    const allow = statusFilterRaw
       .split(',')
       .map((s) => Number(s.trim()))
+      .filter((n) => !isNaN(n))
     list = all.filter((o) => allow.indexOf(Number(o.status)) >= 0)
   }
 
@@ -1242,11 +1383,15 @@ async function orderList(payload, ctx) {
 
   const all = await ctx.db.find('order', { _openid: ctx.openid }, { sort: -1, field: 'dateAdd' })
   let list = all
-  if (statusBatch) {
-    const allow = String(statusBatch)
+  // 2026-10-14 审查修复：判定与 orderAdminList 统一为"非空字符串才过滤"。
+  //   原来用 `if (statusBatch)`：`statusBatch: 0`（数字，代表"只看待支付"）是假值 → 变成不过滤。
+  const statusFilter = statusBatch === undefined || statusBatch === null ? '' : String(statusBatch).trim()
+  if (statusFilter !== '') {
+    const allow = statusFilter
       .split(',')
       .map((s) => Number(s.trim()))
-    list = all.filter((o) => allow.indexOf(o.status) >= 0)
+      .filter((n) => !isNaN(n))
+    list = all.filter((o) => allow.indexOf(Number(o.status)) >= 0)
   }
   const goodsMap = {}
   list.forEach((o) => {
@@ -1305,6 +1450,15 @@ async function orderDetail(payload, ctx) {
       statusStr: statusTextOf(o.status),
       amountReal: o.amountReal,
       goodsNumber: o.goodsNumber,
+      // 2026-10-14 审查修复：订单详情补**费用明细**。
+      // 原来 orderInfo 只有 amountReal，订单详情页只能显示"共 N 件商品，小计 ¥(含打包费+运费的总额)"，
+      // 而运费那行取的是 extJson 里**客户端下单时写的快照**，行项与总额对不上。
+      goodsAmount: o.goodsAmount,
+      packingFee: o.packingFee || 0,
+      freight: o.freight,
+      deliveryQuote: o.deliveryQuote || null,
+      // 收货地址快照（外送单才有；自提单为 null）
+      address: o.address || null,
       // 2026-10-12：待支付订单的自动取消时刻（同 orderList）
       autoCancelAt: o.status === ORDER_STATUS.UNPAID && Number(o.dateAdd) > 0
         ? Number(o.dateAdd) + timeoutMs
@@ -1727,7 +1881,24 @@ async function importData(payload, ctx) {
   // ---- 导入 ----
   report.seed = {}
   report.seed.category = await seed('category', CATEGORIES, '_id')
-  report.seed.goods = await seed('goods', GOODS, '_id')
+  // 2026-10-14 审查修复：**库里有商品就不塞样例商品**。
+  // 种子商品的 _id 是 g_musi_fruit / g_birthday_classic 这类"样例 id"，与真实商品的
+  // g_real_* 不同 → 在已上线的库上跑一次 importData，会给顾客目录追加 5 个
+  // Logo 占位图的测试商品（幂等只对"自己的种子 id"生效，挡不住这种跨数据集污染）。
+  {
+    let goodsCount = 0
+    try {
+      const rows = await ctx.db.find('goods', {}, {})
+      goodsCount = rows.length
+    } catch (e) {
+      goodsCount = 0
+    }
+    if (goodsCount > 0) {
+      report.seed.goods = { inserted: 0, skipped: 0, skippedReason: 'goods 集合已有数据，跳过种子商品（防止给线上目录塞测试商品）' }
+    } else {
+      report.seed.goods = await seed('goods', GOODS, '_id')
+    }
+  }
   report.seed.banner = await seed('banner', BANNERS, '_id')
   report.seed.app_config = await seed('app_config', APP_CONFIG, 'key')
 
@@ -1799,12 +1970,23 @@ const handlers = {
  * @param {object} ctx { db, openid }
  */
 async function dispatch(action, payload, ctx) {
-  const fn = handlers[action]
-  if (!fn) return fail('未知的接口：' + action, 404)
+  // 2026-10-14 审查修复：
+  //   ① 用 hasOwnProperty 取路由 —— 原来 `handlers[action]` 会把原型链上的属性当接口：
+  //      action='constructor' 原样回显 payload（返回体没有 code/data）、'__proto__'/'valueOf' 直接 500；
+  //   ② 身份必填 —— 云开发上下文里 ctx.openid 一定有值；缺失时（非小程序来源/异常）
+  //      必须明确拒绝，否则 `orderCreate` 会写出 `_openid: undefined` 的订单、
+  //      `cartRemoveAll` 会执行 `removeWhere('cart', {_openid: undefined})`；
+  //   ③ 异常不再把内部细节回显给客户端（原来 'goodsJson is not iterable' 这类实现细节
+  //      会直接出现在顾客看到的提示里），细节只进日志。
+  const fn = Object.prototype.hasOwnProperty.call(handlers, action) ? handlers[action] : null
+  if (typeof fn !== 'function') return fail('未知的接口：' + action, 404)
+  if (!ctx || !ctx.openid) return fail('身份缺失，请重新进入小程序', 401)
   try {
-    return await fn(payload, ctx)
+    return await fn(payload || {}, ctx)
   } catch (e) {
-    return fail('服务异常：' + (e && e.message ? e.message : '未知错误'), 500)
+    console.error('[dispatch] action=' + action + ' openid=' + (ctx && ctx.openid) +
+      ' 异常：' + (e && e.stack ? e.stack : e))
+    return fail('服务异常，请稍后重试', 500)
   }
 }
 
@@ -1822,6 +2004,10 @@ module.exports = {
   packingFeeOf,
   minBuyNumberOf,
   channelOf,
+  // 2026-10-14 审查整改：导出便于测试直接断言（配送方式严格化 / 期望时间 / 单号日期段）
+  resolveDeliveryMode,
+  parseExpectTime,
+  orderNoDatePart,
   // 阶段二安全修复相关
   MAX_ITEM_NUMBER,
   normalizeOrderNumber,

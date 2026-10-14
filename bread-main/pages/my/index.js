@@ -36,6 +36,9 @@ Page({
   data: {
     // 用户信息
     userInfo: null,
+    // 2026-10-14 审查修复：资料/登录加载失败时给明确提示与重试入口
+    // （原来云函数不通会静默吞异常，卡片永远停在「点击完善资料」）
+    profileError: false,
     // 用户编号（阶段 5.5 / P-12）：由 openid 派生的短编号，**不再把 OPENID 直接显示给顾客**
     userNo: '',
     // ===== 阶段 5.5（缺陷 P-06）：登录 / 资料编辑 =====
@@ -79,15 +82,27 @@ Page({
     this.loadDefaultAddress()
     // 阶段 5.6 复核整改：AUTH.authorize() 在云函数不通时会 throw，
     // 原来没有 .catch → 未处理的 Promise rejection（真机上还伴随一条报错）。
+    // 2026-10-14 审查修复：失败时**不能只是静默吞掉** —— 原来卡片会永远停在
+    // 「点击完善资料」，顾客分不清"还没登录"和"云函数挂了"，也没有重试入口。
     AUTH.checkHasLogined().then((isLogined) => {
       if (isLogined) {
         this.userDetail()
       } else {
         AUTH.authorize().then(() => {
           this.userDetail()
-        }).catch(() => {})
+        }).catch(() => {
+          this.setData({ profileError: true })
+        })
       }
-    }).catch(() => {})
+    }).catch(() => {
+      this.setData({ profileError: true })
+    })
+  },
+
+  // wxml 里的「点击重试」（资料加载失败时）
+  retryProfile() {
+    this.setData({ profileError: false })
+    this.onShow()
   },
 
   // ===== 门店配置（纯本地常量，不依赖网络）=====
@@ -115,17 +130,23 @@ Page({
 
   // ===== 用户资料 =====
   async userDetail() {
+    // 2026-10-14 审查修复：原实现直接 `res.code == 0`，res 为 undefined（或缺 data）
+    // 时抛 TypeError，而外层是静默 catch → 表现为"资料永远刷不出来、也不报错"。
+    // 同类判空在 current-order / pay / orders 都已做，这里补齐。
     const res = await API.userDetail(wx.getStorageSync('token'))
-    if (res.code == 0) {
+    if (res && res.code == 0 && res.data && res.data.base) {
       // 2026-10-10：扫码核销下线，本页不再需要 canHX 判定；
       // 店主的「完成订单」入口改在订单列表页（判定逻辑见 utils/admin.js）。
-      const base = res.data.base || {}
+      const base = res.data.base
       this.setData({
         userInfo: base,
+        profileError: false,
         // 阶段 5.5 / P-12：列表里显示短编号，不显示原始 OPENID
         userNo: FMT.shortUserNo(base.id || '')
       })
+      return
     }
+    this.setData({ profileError: true })
   },
 
   // ===== 阶段 5.5：登录 / 更新头像昵称 =====

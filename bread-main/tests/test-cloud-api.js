@@ -666,7 +666,8 @@ async function main() {
     check('★ 自提模式：立减 10 → 44', rs.data.price === 44, rs.data.price)
     check('  单个商品行也带上了 this 价格', rs.data.items[0].price === 44, rs.data.items[0])
     rs = await dispatch('cartInfo', {}, ctxS)
-    check('  不带 deliveryMode（老客户端）→ 不立减，按 54', rs.data.price === 54, rs.data.price)
+    check('★ 不带 deliveryMode：购物车与下单**同口径**（都按自提 → 立减后 44）',
+      rs.data.price === 44, rs.data.price)
 
     // 自提下单：服务端按自提口径算 → 与 cartInfo(pickup) 一致
     const dbS2 = mkDb({ pickupDiscount: 10 })
@@ -850,6 +851,131 @@ async function main() {
 
     // 收尾：还原白名单，避免影响后续小节
     SHOP_CFG.adminOpenids.length = 0
+  }
+
+  // ---- 2026-10-14 用户端全面审查的整改回归 ----
+  console.log('\n=== 18) 审查整改：规格/配送方式/期望时间/输入校验/清车 ===')
+  {
+    const SHOP = require('../shop-config').shop
+    const H = require('../cloudfunctions/api/handlers')
+    const SHOP_CFG = require('../cloudfunctions/api/shop-config')
+    const nearAddr = {
+      name: '张三', phone: '13800138000',
+      province: '云南省', city: '昆明市', district: '安宁市',
+      detail: '太平新城某小区1栋101',
+      latitude: SHOP.latitude + 1 / 111.19, longitude: SHOP.longitude
+    }
+    const oneGoods = (num) => JSON.stringify([{ goodsId: 'g_musi', number: num || 1, propertyChildIds: 'size:s4,flavor:f_straw' }])
+    // 明天中午 12:00（营业时间内、且远超 3 小时）——用于"合法期望时间"的用例
+    const tomorrowNoon = (() => {
+      const d = new Date(Date.now() + 24 * 3600 * 1000)
+      d.setHours(12, 0, 0, 0)
+      const p = (n) => (n < 10 ? '0' + n : '' + n)
+      return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' 12:00'
+    })()
+    const mkCtx = (patch) => {
+      const db = createMockDb(seedData())
+      if (patch) Object.assign(db._store.goods.find((g) => g._id === 'g_musi'), patch)
+      return { db, openid: 'user_audit' }
+    }
+
+    // (1) 同一规格组多值 → 必须拒绝（原来能下单、且订单规格文字与计价不一致）
+    let r = await dispatch('orderCreate', {
+      goodsJsonStr: JSON.stringify([{ goodsId: 'g_musi', number: 1, propertyChildIds: 'size:s4,size:s8,flavor:f_straw' }]),
+      extJsonStr: '{}', deliveryMode: 'pickup', expectTime: tomorrowNoon
+    }, mkCtx())
+    check('★ 同一规格组选了两项 → 拒绝（原来能下单、还按 4 寸计价却写"4寸/8寸"）',
+      r.code !== 0 && /只能选一项/.test(r.msg), r)
+    r = await dispatch('orderCreate', {
+      goodsJsonStr: JSON.stringify([{ goodsId: 'g_musi', number: 1, propertyChildIds: 'size:s4,size:s4,flavor:f_straw' }]),
+      extJsonStr: '{}', deliveryMode: 'pickup', expectTime: tomorrowNoon
+    }, mkCtx())
+    check('  同组同一个值重复传也算多选 → 拒绝', r.code !== 0, r)
+
+    // (2) cartAdd 伪造多余规格组 → 与 orderCreate 同口径拒绝（原来能加购，随后整单下不了）
+    r = await dispatch('cartAdd', {
+      goodsId: 'g_musi', number: 1,
+      sku: [{ optionId: 'size', optionValueId: 's4' }, { optionId: 'flavor', optionValueId: 'f_straw' }, { optionId: 'fake', optionValueId: 'x' }]
+    }, mkCtx())
+    check('★ 加购时伪造规格组 → 拒绝（原来能加进购物车，然后整单被拦死）',
+      r.code !== 0 && /规格参数有误/.test(r.msg), r)
+
+    // (3) 配送方式：非枚举值拒绝；缺省时按"有没有地址"推断（不再静默丢地址）
+    check('★ deliveryMode 非枚举值（DELIVERY）→ 拒绝，不再静默当自提把地址丢掉',
+      H.resolveDeliveryMode({ deliveryMode: 'DELIVERY', address: nearAddr }) === null)
+    check('  缺省 + 带地址 → 按外送（地址不会被丢）',
+      H.resolveDeliveryMode({ address: nearAddr }) === 'delivery')
+    check('  缺省 + 无地址 → 按自提', H.resolveDeliveryMode({}) === 'pickup')
+    r = await dispatch('orderCreate', {
+      goodsJsonStr: oneGoods(1), extJsonStr: '{}', deliveryMode: 'DELIVERY',
+      address: nearAddr, expectTime: tomorrowNoon
+    }, mkCtx())
+    check('  非法 deliveryMode 下单 → 明确报错', r.code !== 0 && /配送方式/.test(r.msg), r)
+    let dbAddr = createMockDb(seedData())
+    r = await dispatch('orderCreate', {
+      goodsJsonStr: oneGoods(1), extJsonStr: '{}', address: nearAddr, expectTime: tomorrowNoon
+    }, { db: dbAddr, openid: 'user_audit2' })
+    check('  缺省 deliveryMode + 带地址 → 落库为外送且保留地址',
+      r.code === 0 && dbAddr._store.order[0].deliveryMode === 'delivery' && !!dbAddr._store.order[0].address,
+      dbAddr._store.order[0] && dbAddr._store.order[0].deliveryMode)
+
+    // (4) 期望时间的服务端权威校验（原来服务端一行都不校验）
+    r = await dispatch('orderCreate', {
+      goodsJsonStr: oneGoods(1), extJsonStr: '{}', deliveryMode: 'pickup',
+      expectTime: '2000-01-01 03:00'
+    }, mkCtx())
+    check('★ 过去时间 + 非营业时间下单 → 服务端拒绝（原来直接成功）', r.code !== 0, r)
+    r = await dispatch('orderCreate', {
+      goodsJsonStr: oneGoods(1), extJsonStr: '{}', deliveryMode: 'pickup', expectTime: 'not-a-time'
+    }, mkCtx())
+    check('★ 期望时间格式非法 → 拒绝', r.code !== 0 && /期望时间/.test(r.msg), r)
+    r = await dispatch('orderCreate', {
+      goodsJsonStr: oneGoods(1), extJsonStr: '{}', deliveryMode: 'pickup', expectTime: tomorrowNoon
+    }, mkCtx())
+    check('  合法的明天中午 → 通过', r.code === 0, r)
+
+    // (5) 备注类型/长度（原来 30 万字符也能入库并把店主端响应撑到 5MB+）
+    r = await dispatch('orderCreate', {
+      goodsJsonStr: oneGoods(1), extJsonStr: '{}', deliveryMode: 'pickup',
+      expectTime: tomorrowNoon, remark: 'x'.repeat(300000)
+    }, mkCtx())
+    check('★ 超长备注（30 万字符）→ 拒绝', r.code !== 0 && /备注/.test(r.msg), r)
+    r = await dispatch('orderCreate', {
+      goodsJsonStr: oneGoods(1), extJsonStr: '{}', deliveryMode: 'pickup',
+      expectTime: tomorrowNoon, remark: { evil: true }
+    }, mkCtx())
+    check('  备注传对象 → 拒绝', r.code !== 0, r)
+    r = await dispatch('orderCreate', {
+      goodsJsonStr: oneGoods(1), extJsonStr: JSON.stringify(['not-an-object']),
+      deliveryMode: 'pickup', expectTime: tomorrowNoon
+    }, mkCtx())
+    check('  extJson 传数组 → 归一化成 {}，不影响下单', r.code === 0, r)
+
+    // (6) 只清本单的商品行（原来清整车 → 顾客没下单的商品凭空消失）
+    {
+      const db = createMockDb(seedData())
+      const ctx = { db, openid: 'user_audit3' }
+      await dispatch('cartAdd', { goodsId: 'g_musi', number: 1, sku: [{ optionId: 'size', optionValueId: 's4' }, { optionId: 'flavor', optionValueId: 'f_straw' }] }, ctx)
+      await dispatch('cartAdd', { goodsId: 'g_plain', number: 3, sku: [] }, ctx)
+      const before = db._store.cart.length
+      const rc = await dispatch('orderCreate', {
+        goodsJsonStr: oneGoods(1), extJsonStr: '{}', deliveryMode: 'pickup', expectTime: tomorrowNoon
+      }, ctx)
+      check('前置：下单成功', rc.code === 0, rc)
+      check('★ 只清掉本单的商品行，购物车里其它商品保留（原来清整车）',
+        db._store.cart.length === before - 1 && db._store.cart.every((c) => c.goodsId !== 'g_musi'),
+        db._store.cart.map((c) => c.goodsId))
+    }
+
+    // (7) 分发层加固：原型链、身份缺失、内部错误不外显
+    r = await dispatch('constructor', {}, { db: createMockDb(seedData()), openid: 'u' })
+    check('★ action="constructor" → 404（原来会把 payload 原样回显）', r.code === 404, r)
+    r = await dispatch('goodsList', {}, { db: createMockDb(seedData()) })
+    check('★ ctx.openid 缺失 → 401（原来会写出 _openid: undefined 的订单）',
+      r.code === 401 && /身份/.test(r.msg), r)
+    r = await dispatch('orderCreate', { goodsJsonStr: '{"length":2}' }, { db: createMockDb(seedData()), openid: 'u' })
+    check('★ 非法结构（非数组）→ 业务错误，且不泄露实现细节',
+      r.code !== 0 && r.msg.indexOf('iterable') < 0 && r.msg.indexOf('商品数据') >= 0, r)
   }
 
   console.log('\n=== 汇总 ===')

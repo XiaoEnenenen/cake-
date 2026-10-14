@@ -1,2 +1,17 @@
-<view class="title">{{cmsPage.info.title}}</view>
-<view class="content"><parser html="{{cmsPage.info.content}}" /></view>
+<!-- 2026-10-14 审查修复：补三态。
+     原来直接写 {{cmsPage.info.title}} / html="{{cmsPage.info.content}}"，
+     加载失败时 cmsPage 为 null → 渲染层在 null 上取二级字段（白屏、无提示、无重试）。 -->
+<block wx:if="{{ loadError }}">
+  <view class="title">加载失败</view>
+  <view class="content">
+    内容没能加载出来，请检查网络后重试
+    <view class="cms-retry" bindtap="retry">点击重试</view>
+  </view>
+</block>
+<block wx:elif="{{ cmsPage }}">
+  <view class="title">{{cmsPage.info.title}}</view>
+  <view class="content"><parser html="{{cmsPage.info.content}}" /></view>
+</block>
+<block wx:else>
+  <view class="title">加载中…</view>
+</block>

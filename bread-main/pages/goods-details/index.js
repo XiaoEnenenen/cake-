@@ -191,11 +191,18 @@ Page({
       return
     }
     const sku = this.buildSku()
+    // ===== 2026-10-14 审查修复（P1）：按「最少购买份数」一次加够 =====
+    // 原来固定 number: 1，而服务端 cartAdd 会拒绝"少于起购量"的加购 →
+    // 起购量 > 1 的商品会陷入"点了只弹一句'最少购买 X 份'、永远加不进去"的死路
+    // （详情页没有数量控件，购物车的 stepper 只作用于已在购物车里的行）。
+    // 这里按起购量作为初始数量加购；顾客仍可在购物车弹层里用 stepper 调整（服务端会校验下限）。
+    const minBuy = Number(this.data.goodsDetail.basicInfo.minBuyNumber) || 1
+    const buyNumber = minBuy > 1 ? minBuy : 1
     // https://www.yuque.com/apifm/nu0f75/et6m6m
     const res = await API.shippingCarInfoAddItemV2({
       token: wx.getStorageSync('token'),
       goodsId: this.data.goodsDetail.basicInfo.id,
-      number: 1,
+      number: buyNumber,
       sku
     })
     if (res.code != 0) {
@@ -211,7 +218,7 @@ Page({
     // 返回后点单页 onShow 会重新拉购物车（pages/orders/index.js:34），
     // 因此底部结算栏的数量/金额会自动刷新。
     wx.showToast({
-      title: '已加入购物车',
+      title: buyNumber > 1 ? '已按 ' + buyNumber + ' 份起购加入' : '已加入购物车',
       icon: 'success',
       duration: 600
     })

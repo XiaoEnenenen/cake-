@@ -11,8 +11,14 @@ Page({
   onLoad: function (options) {
     const order_remark_msg = wx.getStorageSync('order_remark_msg')
     if (order_remark_msg) {
+      // 2026-10-14 审查修复：**过滤空项**。
+      // 原来直接 split('\n')：配置里有空行/尾随换行时会多出一个"空白可点块"，
+      // 顾客误点就把备注设成了空字符串（看起来像备注丢了）。
       this.setData({
-        list: order_remark_msg.split('\n')
+        list: String(order_remark_msg)
+          .split('\n')
+          .map((s) => String(s).trim())
+          .filter(Boolean)
       })
     }
   },

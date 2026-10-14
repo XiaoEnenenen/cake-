@@ -47,10 +47,19 @@
     <view class="user-row">
       <view class="user-avatar user-avatar-empty"></view>
       <view class="user-meta">
-        <view class="user-nick">点击完善资料</view>
-        <view class="user-id">填写头像与昵称，方便我们称呼您</view>
+        <!-- 2026-10-14 审查修复：把"云函数不通/资料没拉到"与"还没登录"区分开，
+             否则顾客看到「点击完善资料」点进去也保存不了，且没有任何提示 -->
+        <block wx:if="{{ profileError }}">
+          <view class="user-nick">资料加载失败</view>
+          <view class="user-id">请检查网络后重试</view>
+        </block>
+        <block wx:else>
+          <view class="user-nick">点击完善资料</view>
+          <view class="user-id">填写头像与昵称，方便我们称呼您</view>
+        </block>
       </view>
-      <view class="user-edit" bindtap="startEditProfile">去填写</view>
+      <view wx:if="{{ profileError }}" class="user-edit" bindtap="retryProfile">点击重试</view>
+      <view wx:else class="user-edit" bindtap="startEditProfile">去填写</view>
     </view>
   </block>
 

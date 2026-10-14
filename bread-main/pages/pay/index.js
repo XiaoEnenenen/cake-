@@ -691,6 +691,10 @@ Page({
       // ===== 改造：传给云函数用于服务端重算运费 =====
       // 注意：freightAmount 仅用于服务端比对，服务端会用同一套规则重算并以其结果为准
       deliveryMode: isDelivery ? 'delivery' : 'pickup',
+      // 2026-10-14 审查修复：把**绝对时间**也作为结构化字段交给服务端。
+      //   原来期望时间只写在 extJson 的可读文案里（"今天 22:00"），服务端无法校验
+      //   "营业时间 / 蛋糕提前 3 小时" 这条规则 —— 现在云函数会用它做权威校验。
+      expectTime: expectTimeAbs || '',
       address: postAddress,
       freightAmount: this.data.freight === null ? null : this.data.freight
     }

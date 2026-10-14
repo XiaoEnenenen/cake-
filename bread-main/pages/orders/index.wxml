@@ -96,11 +96,18 @@
   <scroll-view class="goods-list" scroll-y scroll-into-view="{{ listScrollTarget }}">
     <view id="goods-list-top"></view>
 
+    <!-- 错误态（2026-10-14 审查修复）：云函数失败时以前会显示"暂无商品"且没有重试入口，
+         顾客会以为店里没货。现在失败与"确实没商品"分开显示。 -->
+    <view wx:if="{{ goodsLoadError }}" class="goods-empty">
+      商品加载失败，请检查网络后重试
+      <view class="goods-retry" bindtap="retryGoodsList">点击重试</view>
+    </view>
+
     <!-- 空状态（2026-10-12 修复缺陷 5.4）：
          原来只判断 `!goodsList`，而「该分类没有商品」时 goodsList 是空数组 []，
          `![]` 为 false → 既不渲染商品、也不显示「暂无商品」→ 整块白屏。
          现在 null（加载失败/未加载）与 []（确实没有商品）都显示提示。 -->
-    <view wx:if="{{ !goodsList || goodsList.length == 0 }}" class="goods-empty">暂无商品</view>
+    <view wx:if="{{ !goodsLoadError && (!goodsList || goodsList.length == 0) }}" class="goods-empty">暂无商品</view>
 
     <!-- 改造：整行绑定 goDetail，卡片任意位置都能进商品详情/规格选择 -->
     <view

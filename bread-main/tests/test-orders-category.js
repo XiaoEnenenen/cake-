@@ -209,17 +209,25 @@ async function main() {
     check('wxml 存在顶部锚点 id="goods-list-top"', /id="goods-list-top"/.test(wxml))
   }
 
-  console.log('\n=== 5) wxml 空状态：空数组也要显示「暂无商品」 ===')
+  console.log('\n=== 5) wxml 空状态与错误态（2026-10-14 审查：加载失败 ≠ 没有商品）===')
   {
     const wxml = src(WXML)
-    const emptyNode = (wxml.match(/<view[^>]*class="goods-empty"[^>]*>/) || [''])[0]
-    check('空状态节点存在', !!emptyNode, emptyNode)
+    const nodes = wxml.match(/<view[^>]*class="goods-empty"[^>]*>/g) || []
+    check('空状态与错误态节点都存在', nodes.length >= 2, nodes)
+    // 错误态节点：由 goodsLoadError 为真时显示
+    const errNode = nodes.find((n) => /goodsLoadError/.test(n) && !/!\s*goodsLoadError/.test(n)) || ''
+    // 空状态节点：带 `!goodsLoadError`（失败时不显示"暂无商品"）
+    const emptyNode = nodes.find((n) => /!\s*goodsLoadError/.test(n)) || ''
+    check('★ 错误态节点由 goodsLoadError 控制', /goodsLoadError/.test(errNode), errNode)
+    check('  错误态带重试入口（bindtap=retryGoodsList）', /bindtap="retryGoodsList"/.test(wxml))
     check(
       '★ 空状态判断含 goodsList.length == 0（否则空数组时白屏）',
       /goodsList\.length\s*==\s*0/.test(emptyNode),
       emptyNode
     )
     check('空状态同时兼容 goodsList 为 null', /!\s*goodsList/.test(emptyNode), emptyNode)
+    check('★ 空状态不会再在"加载失败"时误显示（否则顾客以为店里没货）',
+      /!\s*goodsLoadError/.test(emptyNode), emptyNode)
   }
 
   console.log('\n=== 6) 源码级防御：不再有「全部商品提前 return」 ===')
