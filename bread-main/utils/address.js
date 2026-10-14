@@ -138,13 +138,40 @@ function setDefault(id) {
 }
 
 /**
- * 拼出用于展示的完整地址文字
+ * 拼出用于展示的完整地址文字（省市区 + 详细地址）
+ * ---------------------------------------------------------------------------
+ * ★ 2026-10-14 修复"地址文字重复"（店主真机截图）：
+ *   「地图选点」用的是 wx.chooseLocation，它返回的 `res.address` **本身就是完整地址**
+ *   （形如「云南省昆明市安宁市太平新城街道山水融城B区13栋2商铺」），
+ *   直接塞进 detail 后，再拼一次省市区就变成
+ *   「云南省昆明市安宁市云南省昆明市安宁市太平新城街道…」——
+ *   顾客核对的那一行出现重复文字，也让订单快照变长。
+ *
+ * 规则：详细地址里**已经包含**的省/市/区前缀就不再重复拼（从最长的组合开始退让）。
+ *   · detail 已含「省+市+区」→ 原样用 detail
+ *   · detail 只含「区」（如"安宁市太平新城…"）→ 补上「省+市」
+ *   · detail 是纯街道门牌（如"太平新城××小区1号"）→ 拼完整省市区
+ *   · 没有填过省市区（2026-10-14 起页面已不再收集）→ 直接用 detail
+ * @param {object} addr 地址对象 { province, city, district, detail }
+ * @returns {string}
  */
 function formatFull(addr) {
   if (!addr) return ''
-  return [addr.province, addr.city, addr.district, addr.detail]
-    .filter(Boolean)
-    .join('')
+  const detail = String(addr.detail || '').trim()
+  const parts = [addr.province, addr.city, addr.district].filter(Boolean)
+  if (!parts.length) return detail
+  const prefix = parts.join('')
+  if (!detail) return prefix
+  // detail 已以完整省市区开头 → 不重复拼
+  if (detail.indexOf(prefix) === 0) return detail
+  // 逐级退让：detail 以「市+区」「区」开头时，只补前面缺的那部分
+  for (let i = 1; i < parts.length; i++) {
+    const tail = parts.slice(i).join('')
+    if (tail && detail.indexOf(tail) === 0) {
+      return parts.slice(0, i).join('') + detail
+    }
+  }
+  return prefix + detail
 }
 
 /**

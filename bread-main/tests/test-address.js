@@ -68,6 +68,39 @@ check('拼接完整地址', full === '云南省昆明市安宁市某小区1栋',
 check('缺字段不报错', ADDR.formatFull({ detail: '只有详细' }) === '只有详细')
 check('null 安全', ADDR.formatFull(null) === '')
 
+// ===== 2026-10-14 修复：地图选点带出的完整地址不能再被拼一遍 =====
+// 真机现象（店主截图）：收货地址显示成
+//   「云南省昆明市安宁市云南省昆明市安宁市太平新城街道山水融城B区13栋2商铺」
+// 原因：wx.chooseLocation 的 res.address 本身就是完整地址，formatFull 又拼了一次省市区。
+console.log('\n=== 9b) 详细地址已含省市区时不重复拼接（2026-10-14 真机修复）===')
+const dupCase = ADDR.formatFull({
+  province: '云南省', city: '昆明市', district: '安宁市',
+  detail: '云南省昆明市安宁市太平新城街道山水融城B区13栋2商铺'
+})
+check('★ 详细地址含完整省市区 → 原样使用，不再拼一次',
+  dupCase === '云南省昆明市安宁市太平新城街道山水融城B区13栋2商铺', dupCase)
+check('  结果里「云南省昆明市安宁市」只出现一次',
+  dupCase.split('云南省昆明市安宁市').length - 1 === 1, dupCase)
+
+const halfCase = ADDR.formatFull({
+  province: '云南省', city: '昆明市', district: '安宁市',
+  detail: '安宁市太平新城某小区1号'
+})
+check('★ 详细地址只含「区」→ 只补省+市，不再重复区',
+  halfCase === '云南省昆明市安宁市太平新城某小区1号', halfCase)
+
+check('  详细地址是纯街道门牌 → 仍拼完整省市区',
+  ADDR.formatFull({ province: '云南省', city: '昆明市', district: '安宁市', detail: '太平新城某小区1号' }) ===
+    '云南省昆明市安宁市太平新城某小区1号')
+check('  省市区全空（2026-10-14 起的新地址）→ 直接用详细地址',
+  ADDR.formatFull({ province: '', city: '', district: '', detail: '太平新城山水融城B区13栋' }) ===
+    '太平新城山水融城B区13栋')
+check('  有省市区但详细地址为空 → 只显示省市区',
+  ADDR.formatFull({ province: '云南省', city: '昆明市', district: '安宁市', detail: '' }) === '云南省昆明市安宁市')
+check('  只有市+区（没有省）也能对上',
+  ADDR.formatFull({ city: '昆明市', district: '安宁市', detail: '昆明市安宁市太平新城某处' }) ===
+    '昆明市安宁市太平新城某处')
+
 console.log('\n=== 10) 编辑不存在的地址应报错 ===')
 let threw = false
 try { ADDR.save({ id: 'not_exist', name: 'x', detail: 'y' }) } catch (e) { threw = true }

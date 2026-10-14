@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 收货地址页回归测试（2026-10-14 阶段 8 复核整改新增）
  * ---------------------------------------------------------------------------
  * 覆盖两个**真机复现**的缺陷（店主 2026-10-14 截图）：
@@ -105,7 +105,11 @@ function wxmlCode(rel) {
 }
 
 // ===========================================================================
-console.log('=== 1) 省市区选择器不再空白（van-area → 微信原生 picker）===')
+console.log('=== 1) 收货地址页：省市区整行已删除（2026-10-14 店主真机反馈）===')
+// 删除理由：① 行政区划选择器最细只到区县（安宁市），**永远给不出「太平新城」**，
+//   对"配送范围按文字判定"毫无帮助；② 地图选点返回的 res.address 本身就是完整地址，
+//   再拼一次省市区会出现「云南省昆明市安宁市云南省昆明市安宁市…」的重复文字；
+//   ③ 排版乱（标签 + 占位文案两行挤在一起）。
 // ===========================================================================
 {
   const wxml = src('pages/address/edit.wxml')
@@ -113,102 +117,64 @@ console.log('=== 1) 省市区选择器不再空白（van-area → 微信原生 p
   const json = JSON.parse(src('pages/address/edit.json'))
   const js = src('pages/address/edit.js')
 
-  check('★ wxml 不再使用 <van-area（注释里保留的"已删除"留痕不算）',
-    code.indexOf('<van-area') < 0)
-  check('★ edit.json 不再注册 van-area 组件',
-    !(json.usingComponents && json.usingComponents['van-area']),
-    json.usingComponents)
-  check('★ 改用微信原生省市区选择器（picker mode="region"）',
-    /<picker[\s\S]{0,200}mode="region"/.test(code))
-  check('  选择器事件接在 onAreaChange 上', /bindchange="onAreaChange"/.test(code))
-  check('  不再引用已删除的 openArea', code.indexOf('openArea') < 0)
-  check('★ wxml 代码里不再有"van-area 自带行政区划数据"这类说法（注释留痕不算）',
-    code.indexOf('area-list') < 0)
-  check('  删除留痕里明确标注了那句注释是错的（防止又被当依据）',
-    wxml.indexOf('2026-10-14 删除') >= 0 && /错误/.test(wxml))
-  check('★ edit.js 不再有 van-area 时代的三个方法（openArea/closeArea/onAreaConfirm）',
-    js.indexOf('openArea(') < 0 && js.indexOf('closeArea(') < 0 && js.indexOf('onAreaConfirm(') < 0)
-  check('  edit.js 有 onAreaChange 实现', /onAreaChange\s*\(/.test(js))
-  check('  不再保留 showArea / areaCode 这类死字段',
-    !/\bshowArea\s*:/.test(js) && !/\bareaCode\s*:/.test(js))
+  check('★ wxml 代码里不再有「所在地区」这一行', code.indexOf('所在地区') < 0)
+  check('★ 不再使用原生省市区选择器（picker mode="region"）', code.indexOf('mode="region"') < 0)
+  check('  也不再使用 <van-area>（历史的错误实现）', code.indexOf('<van-area') < 0)
+  check('★ edit.json 不注册任何自定义组件（本页零依赖）',
+    !json.usingComponents || Object.keys(json.usingComponents).length === 0, json.usingComponents)
+  check('★ edit.js 不再有省市区选择相关方法与字段（onAreaChange/openArea/areaText/areaValue）',
+    !/onAreaChange\s*\(/.test(js) && !/openArea\s*\(/.test(js) &&
+    !/\bareaText\s*:/.test(js) && !/\bareaValue\s*:/.test(js))
+  check('  提示文案改成引导「地图选点」', /地图选点/.test(wxml))
+  check('  提示里写明配送范围按详细地址文字判断（含「太平新城」即送）',
+    /太平新城/.test(wxml) && /详细地址/.test(wxml))
+  check('  删除留痕保留（说明为什么删，防止又被加回来）',
+    wxml.indexOf('2026-10-14 删除') >= 0 && /永远给不出/.test(wxml))
 }
 
 // ===========================================================================
-console.log('\n=== 2) onAreaChange：原生 picker 的值要写进地址字段 ===')
-// ===========================================================================
-{
-  const page = loadPage('pages/address/edit.js')
-  page.onAreaChange({ detail: { value: ['云南省', '昆明市', '安宁市'], code: ['530000', '530100', '530181'] } })
-  check('province 写入', page.data.province === '云南省', page.data.province)
-  check('city 写入', page.data.city === '昆明市', page.data.city)
-  check('district 写入', page.data.district === '安宁市', page.data.district)
-  check('areaText 拼成完整文案', page.data.areaText === '云南省昆明市安宁市', page.data.areaText)
-  check('areaValue 回写（再次打开选择器停在同一位置）',
-    JSON.stringify(page.data.areaValue) === JSON.stringify(['云南省', '昆明市', '安宁市']),
-    page.data.areaValue)
-
-  // 异常入参不能崩，也不能写出半截地址
-  const page2 = loadPage('pages/address/edit.js')
-  page2.onAreaChange({})
-  check('空 detail 不抛异常且字段保持为空',
-    page2.data.province === '' && page2.data.areaText === '' && Array.isArray(page2.data.areaValue))
-  page2.onAreaChange({ detail: { value: ['云南省'] } })
-  check('只有省（半截值）→ areaValue 留空，避免原生 picker 落到默认省份',
-    page2.data.areaValue.length === 0, page2.data.areaValue)
-}
-
-// ===========================================================================
-console.log('\n=== 3) 编辑已有地址：省市区要能回填到原生选择器 ===')
+console.log('\n=== 2) 数据兼容：老地址的 province/city/district 不能丢 ===')
+// 页面不再收集省市区，但**数据字段保留**：编辑老地址时要原样带回、保存时原样写回。
 // ===========================================================================
 {
   const FULL = {
     id: 'a_full', name: '肖恩', phone: '13608878371',
     province: '云南省', city: '昆明市', district: '安宁市',
-    detail: '太平新城某小区1号', latitude: 24.95, longitude: 102.58
+    detail: '云南省昆明市安宁市太平新城街道山水融城B区13栋2商铺',
+    latitude: 24.95, longitude: 102.58
   }
-  const HALF = Object.assign({}, FULL, { id: 'a_half', district: '' })
-
   const page = loadPage('pages/address/edit.js')
   withGlobalWx(storageStub([FULL]), () => { page.onLoad({ id: 'a_full' }) })
-  check('★ 三项齐全 → areaValue 回填为三项数组',
-    JSON.stringify(page.data.areaValue) === JSON.stringify(['云南省', '昆明市', '安宁市']),
-    page.data.areaValue)
-  check('  areaText 显示为完整省市区', page.data.areaText === '云南省昆明市安宁市')
+  check('★ 编辑老地址：省市区原样带回（虽然页面不显示）',
+    page.data.province === '云南省' && page.data.city === '昆明市' && page.data.district === '安宁市',
+    [page.data.province, page.data.city, page.data.district])
   check('  标题切到「编辑收货地址」', page.__titles.indexOf('编辑收货地址') >= 0, page.__titles)
+  check('  详细地址与坐标也带回来了',
+    page.data.detail === FULL.detail && page.data.latitude === FULL.latitude)
 
   const page2 = loadPage('pages/address/edit.js')
-  withGlobalWx(storageStub([HALF]), () => { page2.onLoad({ id: 'a_half' }) })
-  check('★ 缺区（半截值）→ areaValue 不回填（否则 picker 会显示成别的地方）',
-    page2.data.areaValue.length === 0, page2.data.areaValue)
-  check('  但 areaText 仍然显示已有的省+市，不丢信息',
-    page2.data.areaText === '云南省昆明市', page2.data.areaText)
-
-  const page3 = loadPage('pages/address/edit.js')
-  page3.onLoad({})
-  check('新增地址时标题为「新增收货地址」', page3.__titles.indexOf('新增收货地址') >= 0, page3.__titles)
-  check('新增地址时 areaValue 为空数组（不预选任何省）', page3.data.areaValue.length === 0)
+  page2.onLoad({})
+  check('新增地址时标题为「新增收货地址」', page2.__titles.indexOf('新增收货地址') >= 0, page2.__titles)
+  check('  新增时省市区为空（不再有输入入口，保存的就是空串）',
+    page2.data.province === '' && page2.data.city === '' && page2.data.district === '')
 }
 
 // ===========================================================================
-console.log('\n=== 4) 结构守卫：wxml 用到的字段与事件都真实存在 ===')
+console.log('\n=== 3) 结构守卫：wxml 用到的字段与事件都真实存在 ===')
 // ===========================================================================
 {
   const wxml = src('pages/address/edit.wxml')
   const js = src('pages/address/edit.js')
-  // 顶层 data 字段（{{ areaValue }} / {{ areaText }}）必须在 data 里声明
-  ;['areaValue', 'areaText'].forEach((k) => {
-    check('wxml 用到的 ' + k + ' 已在 data 中声明',
-      new RegExp('\\b' + k + '\\s*:').test(js) && wxml.indexOf(k) >= 0)
-  })
-  check('wxml 里的 bindchange 处理函数都有实现（本页只有 onAreaChange）',
+  check('wxml 里的 bindchange/bindtap/bindinput 处理函数都有实现',
     (wxml.match(/bind(?:change|tap|input)="([^"]+)"/g) || []).every((m) => {
       const fn = m.replace(/.*="([^"]+)"/, '$1')
       return new RegExp(fn + '\\s*\\(').test(js)
     }))
-  check('  「省市区选填」的口径没变（提示文案仍在）',
-    /省市区选填/.test(wxml))
+  check('wxml 用到的 data 字段都已声明（detail / latitude / isDefault / saving）',
+    ['detail', 'latitude', 'isDefault', 'saving'].every((k) => new RegExp('\\b' + k + '\\s*:').test(js)))
+  check('  必填校验仍在（收货人 / 手机号 / 详细地址）',
+    /请填写收货人姓名/.test(js) && /请填写正确的手机号/.test(js) && /请填写详细地址/.test(js))
 }
-
 console.log('\n' + '='.repeat(60))
 console.log((fail === 0 ? '全部通过' : '存在失败') + '：' + pass + ' 通过 / ' + fail + ' 失败')
 process.exit(fail === 0 ? 0 : 1)

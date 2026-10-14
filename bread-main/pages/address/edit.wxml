@@ -30,24 +30,18 @@
     />
   </view>
 
-  <!-- 省市区：微信原生省市区选择器（picker mode="region"）
-       ⚠️ 2026-10-14 修复：原实现用 Vant 的 <van-area>，但**没有传 area-list**，
-       项目也没装 @vant/area-data（Vant 的 area 组件不自带行政区划数据，
-       源码里 columns 初始就是 [{values:[]},{values:[]},{values:[]}]）→
-       真机上点开是"取消 / 选择所在地区 / 确认 + 一大片空白"（店主 10-14 截图复现）。
-       改用微信原生 picker：零依赖、不会再空白，且保持"省市区选填"的口径不变。 -->
-  <picker
-    class="form-row"
-    mode="region"
-    value="{{ areaValue }}"
-    bindchange="onAreaChange"
-  >
-    <view class="form-label">所在地区</view>
-    <view class="form-picker {{ areaText ? '' : 'form-placeholder' }}">
-      {{ areaText || '请选择省 / 市 / 区（选填）' }}
-    </view>
-    <view class="form-arrow"></view>
-  </picker>
+  <!-- 2026-10-14 删除：「所在地区（省/市/区）」整行（店主真机反馈）。
+       删除的三个理由：
+         1) 它对本店**没有任何作用**：配送范围是按详细地址里的文字（含「太平新城」）判断的，
+            而行政区划选择器最细只到**区县**（安宁市），**永远给不出「太平新城」**这三个字
+            ——填了也帮不上判定；
+         2) 地图选点（下面的 wx.chooseLocation）返回的 `res.address` **本身就是完整地址**
+            （已含省市街道），再拼一次省市区就会出现
+            “云南省昆明市安宁市云南省昆明市安宁市太平新城街道…”这种重复文字（店主截图里就是）；
+         3) 排版也乱：标签 + 占位文案两行挤在一起。
+       ⚠️ 数据兼容：`province/city/district` 三个字段**保留在数据里**（老地址仍有值，
+       保存时新地址写空串），只是不再提供输入入口；`utils/address.js` 的 formatFull
+       对"详细地址已含省市区"的情况做了去重（见该函数注释）。 -->
 
   <!-- 地图选点：微信原生 wx.chooseLocation，无需第三方地图插件与 key -->
   <view class="form-row" bindtap="onChooseLocation">
@@ -77,15 +71,13 @@
      （edit.js 的 `if (!detail)` 会拦下），照着提示做会被打回，属于自相矛盾的引导。
      现在如实写成：姓名 / 手机号 / 详细地址必填，省市区选填。 -->
 <view class="edit-note">
-  提示：收货人、手机号、详细地址为必填；省市区选填（配送范围按「省市区 + 详细地址」的文字判断，填了更准，未选点则不走精确距离）。
+  提示：收货人、手机号、详细地址为必填。建议用上面的「地图选点」（选点后会自动带出完整地址），
+  或手写清小区与门牌；配送范围按详细地址里的文字判断（含「太平新城」即送）。
 </view>
 
-<!-- 2026-10-14 删除：空的 van-area 弹层。
-     原代码是：
-       <van-area show="{{ showArea }}" title="选择所在地区" bind:confirm="onAreaConfirm" ... />
-     并附带一句**错误**的注释「不传 area-list，van-area 会使用内置的行政区划数据」——
-     Vant 的 area 组件必须由使用方提供 area-list，否则三列全空（真机复现的空白面板就是它）。
-     现已换成上面的原生 picker，本页不再需要任何自定义组件（见 edit.json）。 -->
+<!-- 2026-10-14 删除：空的 van-area 弹层（Vant 的 area 组件必须由使用方提供
+     area-list，项目没装 @vant/area-data → 三列全空，真机复现为"一大片空白"）。
+     随后「所在地区」整行也一并删除，原因见文件上方注释。本页不再需要任何自定义组件。 -->
 
 <!-- 2026-10-09 删除：「标签（家 / 公司 / 学校 / 其他）」整块。
      删除原因：该卡片位于表单最底部，被固定定位的「保存」按钮压住且无法滚动到；

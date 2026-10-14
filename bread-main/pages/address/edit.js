@@ -24,7 +24,8 @@ Page({
     id: '',
     name: '',
     phone: '',
-    // 省市区（用微信原生 picker mode="region" 选择）
+    // 省市区：**页面已不再提供输入入口**（2026-10-14 删除「所在地区」行，原因见 edit.wxml），
+    // 但字段保留在数据流里 —— 老地址仍有值，编辑时原样带回、保存时原样写回，不会丢数据。
     province: '',
     city: '',
     district: '',
@@ -32,30 +33,21 @@ Page({
     isDefault: false,
     latitude: 0,
     longitude: 0,
-    saving: false,
-    // 省市区选择器的当前值（['云南省','昆明市','安宁市']）；新增时为空数组
-    areaValue: [],
-    // 省市区展示文案（如「云南省昆明市安宁市」）
-    areaText: ''
+    saving: false
   },
 
   onLoad(options) {
     if (options && options.id) {
       const addr = ADDR.getById(options.id)
       if (addr) {
-        const province = addr.province || ''
-        const city = addr.city || ''
-        const district = addr.district || ''
         this.setData({
           id: addr.id,
           name: addr.name,
           phone: addr.phone,
-          province,
-          city,
-          district,
-          // 三项齐全才回填选择器：缺项时传半截数组会让原生 picker 落到默认省份
-          areaValue: province && city && district ? [province, city, district] : [],
-          areaText: [province, city, district].filter(Boolean).join(''),
+          // 老地址的省市区原样带回（页面不显示，但保存时不能丢）
+          province: addr.province || '',
+          city: addr.city || '',
+          district: addr.district || '',
           detail: addr.detail,
           isDefault: !!addr.isDefault,
           latitude: addr.latitude || 0,
@@ -68,27 +60,12 @@ Page({
     wx.setNavigationBarTitle({ title: '新增收货地址' })
   },
 
-  // ===== 省市区选择（微信原生 picker mode="region"）=====
-  // 2026-10-14：替换掉"点开一片空白"的 van-area（原因见 edit.wxml 顶部说明）。
-  // e.detail = { value: ['云南省','昆明市','安宁市'], code: ['530000','530100','530181'] }
-  onAreaChange(e) {
-    const values = (e.detail && e.detail.value) || []
-    const province = values[0] || ''
-    const city = values[1] || ''
-    const district = values[2] || ''
-    this.setData({
-      province,
-      city,
-      district,
-      areaValue: province && city && district ? [province, city, district] : [],
-      areaText: [province, city, district].filter(Boolean).join('')
-    })
-  },
-
   // 2026-10-12 阶段 5.7：删除死代码 refreshAreaText()。
   //   它是 api 工厂时代「编辑已有地址时刷新省市区文案」的辅助函数，
   //   但 onLoad 早已直接算出 areaText（见上面的 setData），全项目零调用。
   //   （审计报告 §4.3 已记录该孤儿函数。）
+  // 2026-10-14：随「所在地区」整行删除，省市区选择器相关方法（openArea / onAreaConfirm /
+  //   onAreaChange）与 areaText / areaValue 字段一并移除 —— 见 edit.wxml 的删除说明。
 
   onInput(e) {
     const field = e.currentTarget.dataset.field

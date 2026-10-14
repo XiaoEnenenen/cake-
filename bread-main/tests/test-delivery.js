@@ -369,6 +369,9 @@ console.log('\n=== 12) 配置一致性检查 ===')
   check('区域外提示给出了替代方案（改选自提）',
     String(CFG.area.outOfAreaTip).indexOf('自提') >= 0,
     CFG.area.outOfAreaTip)
+  // 2026-10-14 店主真机反馈：只给"改自提"一条路太窄，补上"联系商家"
+  check('★ 区域外提示同时给出"联系商家"这条路',
+    String(CFG.area.outOfAreaTip).indexOf('联系商家') >= 0, CFG.area.outOfAreaTip)
 
   // ===== 阶段 8 新增：默认值的"不擅自收紧"与镜像一致性 =====
   check('★ 默认不启用不送区域黑名单（店主没给清单前不能自己加）',
