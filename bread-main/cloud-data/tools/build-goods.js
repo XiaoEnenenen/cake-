@@ -356,7 +356,45 @@ function buildRecords(list, ctx) {
     // 有「磅数」规格 = 蛋糕（配送规则据此算免配送费/提前 3 小时，见 handlers.js 的 isCakeGoods）
     const isCake = typeof g.isCake === 'boolean' ? g.isCake : sizeOpts.length > 0
 
-    records.push({
+    // ---- 阶段 9：渠道差价 / 打包费 / 最少购买（都可选，默认关闭 = 不写字段）----
+    //   pickupDiscount 自取立减（元/件）—— 对应美团「外送 178 / 自取 168」
+    //   packingFee     打包费（元/件）  —— 对应美团「打包费 已设置(2)」
+    //   minBuyNumber   最少购买份数     —— 对应美团「最少购买 1 份」
+    // 都不写时**不生成这些字段**，生成的记录与加这三个能力之前逐字节一致。
+    let pickupDiscount = 0
+    let packingFee = 0
+    let minBuyNumber = 1
+    if (g.pickupDiscount !== undefined) {
+      const v = num(g.pickupDiscount)
+      if (!(v >= 0)) err(at + '：pickupDiscount 必须是 ≥ 0 的数字（自取立减，元/件）')
+      else {
+        pickupDiscount = money(v)
+        if (Number.isFinite(minPrice) && pickupDiscount >= minPrice) {
+          warn(
+            at + '：pickupDiscount（' + pickupDiscount + '）≥ 最低价（' + minPrice +
+              '），自取价会被算成 0，确认是有意为之'
+          )
+        }
+      }
+    }
+    if (g.packingFee !== undefined) {
+      const v = num(g.packingFee)
+      if (!(v >= 0)) err(at + '：packingFee 必须是 ≥ 0 的数字（打包费，元/件）')
+      else {
+        packingFee = money(v)
+        if (packingFee > 50) warn(at + '：packingFee（' + packingFee + ' 元/件）偏高，确认单位没写错（是"元"不是"分"）')
+      }
+    }
+    if (g.minBuyNumber !== undefined) {
+      const v = num(g.minBuyNumber)
+      if (!Number.isInteger(v) || v < 1) {
+        err(at + '：minBuyNumber 必须是不小于 1 的整数（最少购买份数）')
+      } else {
+        minBuyNumber = v
+      }
+    }
+
+    const record = {
       _id: id,
       categoryId,
       name,
@@ -371,7 +409,13 @@ function buildRecords(list, ctx) {
       enabled: g.enabled === false ? false : true,
       isCake: !!isCake,
       properties
-    })
+    }
+    // 只在"确实启用"时才写字段（0 / 1 视为未启用，不污染数据）
+    if (pickupDiscount > 0) record.pickupDiscount = pickupDiscount
+    if (packingFee > 0) record.packingFee = packingFee
+    if (minBuyNumber > 1) record.minBuyNumber = minBuyNumber
+
+    records.push(record)
   })
 
   return { records }

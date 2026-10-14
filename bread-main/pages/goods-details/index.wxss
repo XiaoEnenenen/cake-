@@ -225,6 +225,24 @@ page {
   margin-right: 2rpx;
 }
 
+/* 阶段 9：价格相关提示（自取立减 / 打包费 / 起购量）。
+   未配置的商品不会渲染这块，样式不影响原有布局。 */
+.detail-price-bar .price-tips {
+  display: flex;
+  flex-wrap: wrap;
+  margin-top: 4rpx;
+}
+
+.detail-price-bar .price-tip-item {
+  margin-right: 12rpx;
+  padding: 0 8rpx;
+  font-size: 20rpx;
+  line-height: 30rpx;
+  color: #b06a00;
+  background-color: #fff7e0;
+  border-radius: 6rpx;
+}
+
 .detail-price-bar .add-cart {
   display: flex;
   justify-content: space-between;

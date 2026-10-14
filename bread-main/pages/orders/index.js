@@ -169,11 +169,17 @@ Page({
     const res = await API.shippingCarInfo(token)
     if (res.code == 0) {
       const cartItems = await this.buildCartView(res.data.items || [])
+      // 阶段 9：结算栏的「实付金额」= 商品金额 + 打包费。
+      //   · 商品金额已由服务端按当前配送方式算好（自提可能立减 pickupDiscount）；
+      //   · 打包费（packingFee）默认 0，只有店主配置了才不为 0。
+      //   这样它与结算页底部「合计」在"商品 + 打包费"部分完全一致（结算页再多一个运费）。
+      const goodsAmount = Number(res.data.price) || 0
+      const packing = Number(res.data.packingFee) || 0
       this.setData({
         shippingCarInfo: res.data,
         cartItems,
         cartCount: Number(res.data.number) || 0,
-        cartPrice: Number(res.data.price) || 0
+        cartPrice: Math.round((goodsAmount + packing) * 100) / 100
       })
     } else {
       this.setData({

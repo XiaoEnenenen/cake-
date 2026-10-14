@@ -182,6 +182,11 @@
       {{ freight === null ? freightText : (freight === 0 ? '免配送费' : '¥' + freight) }}
     </view>
   </view>
+  <!-- 阶段 9：打包费（本店未收时为 0 → 整行不渲染） -->
+  <view wx:if="{{ packingFee > 0 }}" class="fee-row">
+    <view class="fee-label">打包费</view>
+    <view class="fee-value">¥{{ packingFee }}</view>
+  </view>
 </view>
 
 <!-- 底部固定栏占位（避免最后一张卡片被遮挡） -->
@@ -191,7 +196,7 @@
   <view class="pay-box">
     <view class="pay-total">
       <text class="pay-label">合计</text>
-      <text class="pay-price"><text class="yen">¥</text>{{ isDelivery ? payableAmount : shippingCarInfo.price }}</text>
+      <text class="pay-price"><text class="yen">¥</text>{{ isDelivery ? payableAmount : pickupTotal }}</text>
     </view>
     <view class="pay-sub">共 {{ shippingCarInfo.number }} 件商品</view>
   </view>

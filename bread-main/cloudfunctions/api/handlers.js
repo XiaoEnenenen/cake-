@@ -74,19 +74,54 @@ function getDelta(option) {
  * 计算某组规格选项组合的最终单价
  * @param {object} goods 商品文档
  * @param {Array} sku [{ optionId, optionValueId }]
+ * @param {'delivery'|'pickup'|undefined} channel 配送方式（阶段 9）：
+ *        只有**显式**传 'pickup' 才应用「自取立减」goods.pickupDiscount；
+ *        不传或传 'delivery' = 不区分渠道（列表价，与历史行为完全一致）。
+ *        默认关闭是刻意的：老客户端不传 deliveryMode 时金额一分不变。
  */
-function calcPrice(goods, sku) {
+function calcPrice(goods, sku, channel) {
   let price = typeof goods.minPrice === 'number' ? goods.minPrice : 0
-  if (!sku || !sku.length || !goods.properties) return price
-  goods.properties.forEach((group) => {
-    const picked = sku.find((s) => String(s.optionId) === String(group.id))
-    if (!picked) return
-    const opt = (group.childsCurGoods || []).find(
-      (c) => String(c.id) === String(picked.optionValueId)
-    )
-    price += getDelta(opt)
-  })
+  if (sku && sku.length && goods.properties) {
+    goods.properties.forEach((group) => {
+      const picked = sku.find((s) => String(s.optionId) === String(group.id))
+      if (!picked) return
+      const opt = (group.childsCurGoods || []).find(
+        (c) => String(c.id) === String(picked.optionValueId)
+      )
+      price += getDelta(opt)
+    })
+  }
+  // 阶段 9：自取立减（元/件）。未配置 / 配 0 → 完全不影响价格。
+  // 减到 0 为止，绝不出现负价（数据校验在 build-goods.js 里也有兜底）。
+  if (String(channel) === 'pickup') {
+    const discount = Number(goods.pickupDiscount) || 0
+    if (discount > 0) price = Math.max(0, price - discount)
+  }
   return Math.round(price * 100) / 100
+}
+
+/**
+ * 每件打包费（元）（阶段 9）。默认 0 = 不收，金额与历史行为一致。
+ */
+function packingFeeOf(goods) {
+  const v = Number(goods && goods.packingFee)
+  return isFinite(v) && v > 0 ? Math.round(v * 100) / 100 : 0
+}
+
+/**
+ * 最少购买份数（阶段 9）。默认 1 = 不限制（只有 > 1 才算"有起购量"）。
+ */
+function minBuyNumberOf(goods) {
+  const v = Number(goods && goods.minBuyNumber)
+  return Number.isInteger(v) && v > 1 ? v : 1
+}
+
+/**
+ * 从请求体解析配送方式（阶段 9）。
+ * 默认 'delivery' —— 即**不应用自取立减**：老客户端/未带该字段的调用方金额不变。
+ */
+function channelOf(payload) {
+  return payload && payload.deliveryMode === 'pickup' ? 'pickup' : 'delivery'
 }
 
 /**
@@ -376,7 +411,15 @@ async function goodsDetail(payload, ctx) {
       // 2026-10-09：库存概念整体删除，不再返回 stores 字段
       purchaseNotes: g.purchaseNotes || '',
       // 改造：是否蛋糕，供前端配送规则（免配送费 / 提前3小时）判断
-      isCake: isCakeGoods(g)
+      isCake: isCakeGoods(g),
+      // ===== 阶段 9：这三个字段只用于**展示提示**，不参与前端算钱 =====
+      // （真正算钱的地方是 cartSummary 与 orderCreate，都在服务端，同一口径）
+      //   pickupDiscount 自取立减（元/件）→ 详情页提示「自取立减 ¥10」
+      //   packingFee     打包费（元/件）  → 提示「打包费 ¥2/件」
+      //   minBuyNumber   最少购买份数     → 提示「X 份起购」
+      pickupDiscount: Number(g.pickupDiscount) || 0,
+      packingFee: packingFeeOf(g),
+      minBuyNumber: minBuyNumberOf(g)
     },
     pics: g.pics || [],
     content: g.content || '',
@@ -405,13 +448,14 @@ async function goodsDetail(payload, ctx) {
  *   `unavailable` + `unavailableReason`，前端据此提示并禁止提交。
  *   （商品被删除时退回快照价，否则整个购物车都算不出价。）
  */
-function cartItemsOf(items, goodsMap) {
+function cartItemsOf(items, goodsMap, channel) {
   // 组装前端需要的字段：key / goodsId / name / pic / price / number / sku / priceChanged / unavailable
   return items.map((it) => {
     const g = goodsMap[it.goodsId]
     const snapshotPrice = Number(it.price) || 0
     // 现价：与 orderCreate 用同一个 calcPrice（商品不存在时才退回快照）
-    const currentPrice = g ? calcPrice(g, it.sku) : snapshotPrice
+    // 阶段 9：channel 为 'pickup' 时单价按「自取立减」算，与下单口径一致
+    const currentPrice = g ? calcPrice(g, it.sku, channel) : snapshotPrice
 
     // 不可下单原因：与 orderCreate 的校验保持同一口径
     let unavailableReason = ''
@@ -425,6 +469,13 @@ function cartItemsOf(items, goodsMap) {
         .join(',')
       if (!resolveOrderSku(g, propertyChildIds).ok) {
         unavailableReason = '规格已变更，请重新选择'
+      } else {
+        // 阶段 9：商家后来调高了「最少购买份数」→ 购物车里这项已不可能下单，
+        // 提前标出来（与 orderCreate 的拒绝条件一一对应，避免填完地址才被拒）
+        const minBuy = minBuyNumberOf(g)
+        if (Number(it.number) < minBuy) {
+          unavailableReason = '最少购买 ' + minBuy + ' 份'
+        }
       }
     }
 
@@ -441,6 +492,9 @@ function cartItemsOf(items, goodsMap) {
       priceChanged: !!g && !unavailableReason && currentPrice !== snapshotPrice,
       number: it.number,
       sku: it.sku || [],
+      // 阶段 9：每件打包费与最少购买份数（前端据此显示「打包费 ¥2/件」等提示）
+      packingFee: g ? packingFeeOf(g) : 0,
+      minBuyNumber: g ? minBuyNumberOf(g) : 1,
       // 阶段 5.1：能否下单（false 时前端必须提示并禁止提交）
       unavailable: !!unavailableReason,
       unavailableReason
@@ -448,7 +502,7 @@ function cartItemsOf(items, goodsMap) {
   })
 }
 
-async function cartSummary(ctx, openid) {
+async function cartSummary(ctx, openid, channel) {
   const items = await ctx.db.find('cart', { _openid: openid }, {})
   const goodsIds = [...new Set(items.map((i) => i.goodsId))]
   const goodsMap = {}
@@ -456,9 +510,11 @@ async function cartSummary(ctx, openid) {
     const g = await ctx.db.get('goods', gid)
     if (g) goodsMap[gid] = g
   }
-  const view = cartItemsOf(items, goodsMap)
+  const view = cartItemsOf(items, goodsMap, channel)
   let price = 0
   let number = 0
+  // 阶段 9：打包费合计（元）。没配 packingFee 的商品贡献 0 → 与历史行为一致
+  let packingFee = 0
   let priceChanged = false
   let unavailable = false
   const priceChangedNames = []
@@ -466,6 +522,7 @@ async function cartSummary(ctx, openid) {
   view.forEach((v) => {
     // 金额一律用**现价**累加（v.price 已是现价），与 orderCreate 的口径一致
     price += v.price * v.number
+    packingFee += (Number(v.packingFee) || 0) * (Number(v.number) || 0)
     number += v.number
     if (v.priceChanged) {
       priceChanged = true
@@ -481,6 +538,8 @@ async function cartSummary(ctx, openid) {
   return ok({
     items: view,
     price: Math.round(price * 100) / 100,
+    // 阶段 9：打包费合计（下单时 amountReal = 商品金额 + 打包费 + 运费）
+    packingFee: Math.round(packingFee * 100) / 100,
     number,
     // 阶段 5.1：价格是否发生过变动（前端据此提示「以下为最新价格」）
     priceChanged,
@@ -492,7 +551,8 @@ async function cartSummary(ctx, openid) {
 }
 
 async function cartInfo(payload, ctx) {
-  return cartSummary(ctx, ctx.openid)
+  // 阶段 9：带上配送方式 → 自提时单价按「自取立减」算（与下单同一口径）
+  return cartSummary(ctx, ctx.openid, channelOf(payload))
 }
 
 /**
@@ -535,6 +595,9 @@ async function cartAdd(payload, ctx) {
   const key = makeCartKey(goodsId, sku)
   const price = calcPrice(goods, sku)
 
+  // 阶段 9：最少购买份数（默认 1，只有 > 1 才拦）。按"累加后的总数"判断，
+  // 避免"已经买够 2 份、再点一次 +1"这种正常操作被误拦。
+  const minBuy = minBuyNumberOf(goods)
   const existing = await ctx.db.findOne('cart', { _openid: ctx.openid, key })
   if (existing) {
     // 2026-10-09：库存概念已删除，同规格加购直接累加
@@ -543,8 +606,14 @@ async function cartAdd(payload, ctx) {
     if (total > MAX_ITEM_NUMBER) {
       return fail(goods.name + ' 单次最多购买 ' + MAX_ITEM_NUMBER + ' 件')
     }
+    if (total < minBuy) {
+      return fail(goods.name + ' 最少购买 ' + minBuy + ' 份')
+    }
     await ctx.db.update('cart', existing._id, { number: total })
   } else {
+    if (addNumber < minBuy) {
+      return fail(goods.name + ' 最少购买 ' + minBuy + ' 份')
+    }
     await ctx.db.add('cart', {
       _openid: ctx.openid,
       key,
@@ -555,7 +624,7 @@ async function cartAdd(payload, ctx) {
       dateAdd: Date.now()
     })
   }
-  return cartSummary(ctx, ctx.openid)
+  return cartSummary(ctx, ctx.openid, channelOf(payload))
 }
 
 async function cartModifyNumber(payload, ctx) {
@@ -573,16 +642,24 @@ async function cartModifyNumber(payload, ctx) {
   // 0（或负数）= 删除该项（van-stepper 减到 0 走这条）
   if (raw <= 0) {
     await ctx.db.remove('cart', item._id)
-    return cartSummary(ctx, ctx.openid)
+    return cartSummary(ctx, ctx.openid, channelOf(payload))
   }
   // 与 orderCreate 同口径：单次最多 MAX_ITEM_NUMBER 件
   if (raw > MAX_ITEM_NUMBER) {
     const g = await ctx.db.get('goods', item.goodsId)
     return fail(((g && g.name) || '商品') + ' 单次最多购买 ' + MAX_ITEM_NUMBER + ' 件')
   }
+  // 阶段 9：最少购买份数（默认 1）。减到低于起购量就明确拒绝，而不是让它变成"下不了单"的行
+  {
+    const g = await ctx.db.get('goods', item.goodsId)
+    const minBuy = minBuyNumberOf(g)
+    if (raw < minBuy) {
+      return fail(((g && g.name) || '商品') + ' 最少购买 ' + minBuy + ' 份')
+    }
+  }
   // 2026-10-09：库存概念已删除，修改数量只校验数量本身
   await ctx.db.update('cart', item._id, { number: raw })
-  return cartSummary(ctx, ctx.openid)
+  return cartSummary(ctx, ctx.openid, channelOf(payload))
 }
 
 async function cartRemoveItem(payload, ctx) {
@@ -590,12 +667,12 @@ async function cartRemoveItem(payload, ctx) {
   if (!key) return fail('缺少购物车项 key')
   const item = await ctx.db.findOne('cart', { _openid: ctx.openid, key })
   if (item) await ctx.db.remove('cart', item._id)
-  return cartSummary(ctx, ctx.openid)
+  return cartSummary(ctx, ctx.openid, channelOf(payload))
 }
 
 async function cartRemoveAll(payload, ctx) {
   await ctx.db.removeWhere('cart', { _openid: ctx.openid })
-  return cartSummary(ctx, ctx.openid)
+  return cartSummary(ctx, ctx.openid, channelOf(payload))
 }
 
 // ===========================================================================
@@ -846,6 +923,11 @@ async function orderCreate(payload, ctx) {
   const items = []
   let amount = 0
   let goodsNumber = 0
+  // 阶段 9：配送方式要在**算价之前**确定 —— 自提时单价要按「自取立减」算，
+  // 与前端结算页（cartSummary 带同一个 deliveryMode）保持同一口径。
+  const deliveryMode = payload.deliveryMode === 'delivery' ? 'delivery' : 'pickup'
+  // 阶段 9：打包费合计（元/件 × 件数）
+  let packingFeeTotal = 0
 
   // ===== 阶段二安全修复：先校验与合并，再算价 =====
   // 修复的三个问题（均有 tests/test-security.js 断言守着）：
@@ -884,8 +966,16 @@ async function orderCreate(payload, ctx) {
     if (row.number > MAX_ITEM_NUMBER) {
       return fail(goods.name + ' 单次最多购买 ' + MAX_ITEM_NUMBER + ' 件')
     }
+    // 阶段 9：最少购买份数（默认 1）。前端加购时就拦了，这里是服务端兜底
+    const minBuy = minBuyNumberOf(goods)
+    if (row.number < minBuy) {
+      return fail(goods.name + ' 最少购买 ' + minBuy + ' 份')
+    }
 
-    const price = calcPrice(goods, row.sku)
+    // 阶段 9：单价按配送方式算（自提可能立减）
+    const price = calcPrice(goods, row.sku, deliveryMode)
+    // 阶段 9：打包费按件计（默认 0 = 不收）
+    packingFeeTotal += packingFeeOf(goods) * row.number
     items.push({
       goodsId: goods._id,
       goodsName: goods.name,
@@ -921,7 +1011,7 @@ async function orderCreate(payload, ctx) {
   // 设计原则：绝不信任前端传来的运费金额。
   //   前端传 freightAmount 只用于「与云函数算出的结果比对」，
   //   不一致时以云函数为准并记录告警，避免顾客伪造运费（例如传 0 元）。
-  const deliveryMode = payload.deliveryMode === 'delivery' ? 'delivery' : 'pickup'
+  // 注：deliveryMode 已在函数开头算好（阶段 9：单价要按它算，所以不能等到这里）
   let freight = 0
   let quote = null
 
@@ -959,8 +1049,11 @@ async function orderCreate(payload, ctx) {
   // 无论自提还是外送，都清掉内部快照字段
   stripInternal()
   freight = Math.round(freight * 100) / 100
+  // 阶段 9：打包费合计（元）。默认 0（没有商品配 packingFee）→ 与历史金额完全一致
+  packingFeeTotal = Math.round(packingFeeTotal * 100) / 100
 
-  const totalAmount = Math.round((amount + freight) * 100) / 100
+  // 阶段 9：应付 = 商品金额（按配送方式算） + 打包费 + 配送费
+  const totalAmount = Math.round((amount + packingFeeTotal + freight) * 100) / 100
 
   // 2026-10-09：库存概念整体删除。
   // 删除内容：原先在这里对每个商品做「原子条件扣减 stores + 失败回滚」，
@@ -984,9 +1077,11 @@ async function orderCreate(payload, ctx) {
     dateAdd: now,
     status: ORDER_STATUS.UNPAID,
     statusStr: statusTextOf(ORDER_STATUS.UNPAID),
-    // amountReal = 商品金额 + 配送费（服务端重算后的最终应付金额）
+    // amountReal = 商品金额 + 打包费 + 配送费（服务端重算后的最终应付金额）
     amountReal: totalAmount,
     goodsAmount: amount,
+    // 阶段 9：打包费合计（元）。没配 packingFee 时为 0
+    packingFee: packingFeeTotal,
     freight: freight,
     deliveryMode: deliveryMode,
     // 收货地址快照（仅外送订单）
@@ -1018,6 +1113,8 @@ async function orderCreate(payload, ctx) {
     pickupCode: pickupCode,
     amountReal: totalAmount,
     goodsAmount: amount,
+    // 阶段 9：打包费（前端结算页与实际金额对账用）
+    packingFee: packingFeeTotal,
     freight: freight,
     freightText: quote ? quote.freightText : '免配送费',
     distanceKm: quote ? quote.distanceKm : null,
@@ -1605,6 +1702,10 @@ module.exports = {
   calcPrice,
   makeCartKey,
   getDelta,
+  // 阶段 9：渠道差价 / 打包费 / 最少购买（导出便于测试直接断言边界）
+  packingFeeOf,
+  minBuyNumberOf,
+  channelOf,
   // 阶段二安全修复相关
   MAX_ITEM_NUMBER,
   normalizeOrderNumber,

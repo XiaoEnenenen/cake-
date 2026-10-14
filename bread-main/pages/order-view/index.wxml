@@ -163,6 +163,19 @@
     <view class="text">{{orderDetail.orderInfo.remark}}</view>
   </view>
 </view>
+<!-- 阶段 9：打包费（订单快照里的 packingFee；本店未收时为 0 → 整块不渲染） -->
+<block wx:if="{{ orderDetail.orderInfo.packingFee > 0 }}">
+  <view class="shops-bar">
+    <view class="shops-box">
+      <view class="content">
+        <view class="titles">打包费</view>
+      </view>
+      <view class="text">¥{{ orderDetail.orderInfo.packingFee }}</view>
+    </view>
+  </view>
+  <view class="blank1"></view>
+</block>
+
 <view class="num-bar">
   <view class="num">共 {{orderDetail.orderInfo.goodsNumber}} 件商品，小计</view>
   <view class="price">

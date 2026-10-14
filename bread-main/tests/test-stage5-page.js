@@ -168,7 +168,11 @@ async function main() {
       /wx:if="\{\{\s*priceChangedTip\s*\}\}"/.test(payWxml))
     check('金额一律取后端 cartSummary 的 price/number（前端不自己算业务金额）',
       /const goodsAmount = Number\(res\.data\.price\) \|\| 0/.test(src('pages/pay/index.js')) &&
-      /cartPrice: Number\(res\.data\.price\)/.test(src('pages/orders/index.js')))
+      /const goodsAmount = Number\(res\.data\.price\) \|\| 0/.test(src('pages/orders/index.js')))
+    // 阶段 9：打包费也只从后端取（前端不自己乘件数），两个页面口径相同
+    check('★ 打包费同样只取后端 cartSummary 的 packingFee（前端不重算）',
+      /Number\(res\.data\.packingFee\) \|\| 0/.test(src('pages/pay/index.js')) &&
+      /Number\(res\.data\.packingFee\) \|\| 0/.test(src('pages/orders/index.js')))
     check('价格变动标记样式已定义', /\.price-updated-tag\s*\{/.test(src('pages/orders/index.wxss')))
     check('★ 无法下单的项在购物车弹层也有标记', /item\.unavailable/.test(ordersWxml) &&
       /\.unavailable-tag\s*\{/.test(src('pages/orders/index.wxss')))

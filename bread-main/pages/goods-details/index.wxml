@@ -93,6 +93,12 @@
         <!-- 起价说明：本店价格规则为「基础价 + 选中项加价」，
              故这里显示商品起价（= basicInfo.minPrice），与云函数 calcPrice 一致 -->
         <view class="price-from"><text>¥</text>{{ basePrice }} 起</view>
+        <!-- 阶段 9：渠道差价 / 打包费 / 起购量提示。
+             全部由云函数 goodsDetail 下发，**未配置的商品这里什么都不显示**；
+             展示口径与结算页一致（金额仍以服务端 cartSummary / orderCreate 为准）。 -->
+        <view wx:if="{{ priceTips.length }}" class="price-tips">
+          <text wx:for="{{ priceTips }}" wx:key="*this" class="price-tip-item">{{ item }}</text>
+        </view>
       </view>
 
       <view class="add-cart" bindtap="addCart">

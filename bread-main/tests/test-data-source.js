@@ -60,6 +60,10 @@ let modalCount = 0
 let mode = 'ok' // ok | fail | biz500
 
 global.wx = {
+  // 阶段 9：购物车调用会读当前配送方式（storage.deliveryMode）→ 这里给个可控的桩
+  _storage: {},
+  getStorageSync(k) { return this._storage[k] === undefined ? '' : this._storage[k] },
+  setStorageSync(k, v) { this._storage[k] = v },
   cloud: {
     init(opts) { initCalls.push(opts) },
     callFunction(opts) {
@@ -98,11 +102,28 @@ check('wx.cloud.init 开启 traceUser', initCalls.length === 1 && initCalls[0].t
   calls = []
   await API.shippingCarInfoModifyNumber('token', 'k1', 3)
   check(
-    'shippingCarInfoModifyNumber 沿用 (token,key,number) 且只取后两个',
-    calls[0].data.action === 'cartModifyNumber' && JSON.stringify(calls[0].data.payload) === '{"key":"k1","number":3}',
+    'shippingCarInfoModifyNumber 沿用 (token,key,number)、只取后两个',
+    calls[0].data.action === 'cartModifyNumber' &&
+      calls[0].data.payload.key === 'k1' && calls[0].data.payload.number === 3,
     calls[0].data
   )
-
+  // ===== 阶段 9：购物车调用必须带上当前配送方式（自取立减的口径）=====
+  // 默认 storage 里没有 deliveryMode → 按自提（utils/delivery 的默认值）
+  check('★ 购物车调用附带 deliveryMode（默认自提）',
+    calls[0].data.payload.deliveryMode === 'pickup', calls[0].data.payload)
+  global.wx.setStorageSync('deliveryMode', 'delivery')
+  calls = []
+  await API.shippingCarInfo()
+  check('★ 切换成外送后，cartInfo 的 deliveryMode 跟着变',
+    calls[0].data.action === 'cartInfo' && calls[0].data.payload.deliveryMode === 'delivery',
+    calls[0].data.payload)
+  calls = []
+  await API.shippingCarInfoAddItemV2({ goodsId: 'g1', number: 2, sku: [] })
+  check('  cartAdd 也带 deliveryMode，且原有字段不变',
+    calls[0].data.payload.deliveryMode === 'delivery' &&
+      calls[0].data.payload.goodsId === 'g1' && calls[0].data.payload.number === 2,
+    calls[0].data.payload)
+  global.wx.setStorageSync('deliveryMode', 'pickup')
   calls = []
   await API.shippingCarInfoRemoveAll('token')
   check('shippingCarInfoRemoveAll 忽略 token', calls[0].data.action === 'cartRemoveAll')

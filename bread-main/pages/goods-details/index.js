@@ -29,7 +29,10 @@ Page({
     // 会先渲染一屏空的商品名 / 规格行。
     loaded: false,
     // 2026-10-12 复核整改：wxml 读到的字段显式声明（本项目约定）
-    goodsDetail: null
+    goodsDetail: null,
+    // 阶段 9：价格相关提示（自取立减 / 打包费 / 起购量）。
+    // 由云函数 goodsDetail 下发的三个字段拼出来，没配置的商品数组为空 → wxml 不渲染。
+    priceTips: []
   },
   onLoad: function (options) {
     // options.id = 427682
@@ -68,20 +71,42 @@ Page({
     if (res.code == 0 && res.data && res.data.basicInfo) {
       // ===== 改造：原来只取 properties[0]，现在构建全部规格组 =====
       const specGroups = this.buildPropertyGroups(res.data.properties)
+      const bi = res.data.basicInfo
       this.setData({
         specGroups,
         // 默认每组选中第 1 项（与截图一致：进入即有默认选中，规格底色为黄色）
         selectedIndices: specGroups.map(() => 0),
         goodsDetail: res.data,
-        basePrice: Number(res.data.basicInfo.minPrice) || 0,
+        basePrice: Number(bi.minPrice) || 0,
+        // 阶段 9：把服务端下发的三个价格相关字段变成人话提示（都没配置时为空数组）
+        priceTips: this.buildPriceTips(bi),
         loadError: false,
         loaded: true
       })
       this.updateSelectedText()
-      this.checkBuyedNumber(res.data.basicInfo.id)
+      this.checkBuyedNumber(bi.id)
     } else {
       this.setData({ goodsDetail: null, loadError: true, loaded: true })
     }
+  },
+
+  /**
+   * 阶段 9：价格相关提示（只做展示，不参与算钱）
+   * 数据来自云函数 goodsDetail 的 basicInfo：
+   *   pickupDiscount 自取立减（元/件）、packingFee 打包费（元/件）、minBuyNumber 最少购买份数
+   * 为什么不在详情页改价格：算钱的唯一口径在服务端（cartSummary / orderCreate），
+   * 详情页再算一遍就会出现"两个口径"——于是这里只提示，金额以结算页为准。
+   */
+  buildPriceTips(basicInfo) {
+    const bi = basicInfo || {}
+    const tips = []
+    const discount = Number(bi.pickupDiscount) || 0
+    const packing = Number(bi.packingFee) || 0
+    const minBuy = Number(bi.minBuyNumber) || 1
+    if (discount > 0) tips.push('自取立减 ¥' + discount)
+    if (packing > 0) tips.push('打包费 ¥' + packing + '/件')
+    if (minBuy > 1) tips.push(minBuy + ' 份起购')
+    return tips
   },
   bannerChange(e) {
     this.setData({

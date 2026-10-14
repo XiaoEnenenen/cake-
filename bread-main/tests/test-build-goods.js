@@ -264,6 +264,73 @@ console.log('\n=== 5) id 稳定性：加组/加商品不会改动别人 ===')
   check('  名字带数字 → 前缀+数字（6寸 → s6）', TOOL.optionId('s', '6寸') === 's6')
 }
 
+// ===========================================================================
+console.log('\n=== 6) 阶段 9：自取立减 / 打包费 / 最少购买（不写就不生成字段）===')
+// ===========================================================================
+{
+  const { calcPrice, packingFeeOf, minBuyNumberOf } = require('../cloudfunctions/api/handlers')
+
+  // ① 不写这三个字段 → 记录里**根本没有这些键**（保证已有商品数据逐字节不变）
+  const plain = build([BASE_GOODS]).records[0]
+  check('★ 不写新字段时，记录里不出现 pickupDiscount / packingFee / minBuyNumber',
+    !('pickupDiscount' in plain) && !('packingFee' in plain) && !('minBuyNumber' in plain),
+    Object.keys(plain))
+
+  // ② 写入非法值 → 不生成字段（n/a）
+  // ③ 正常写入
+  const r1 = build([Object.assign({}, BASE_GOODS, {
+    pickupDiscount: 10, packingFee: 2, minBuyNumber: 2
+  })])
+  check('三个字段都写 → 校验通过', r1.errors.length === 0, r1.errors)
+  const g1 = r1.records[0]
+  check('pickupDiscount 写入记录', g1.pickupDiscount === 10, g1.pickupDiscount)
+  check('packingFee 写入记录', g1.packingFee === 2, g1.packingFee)
+  check('minBuyNumber 写入记录', g1.minBuyNumber === 2, g1.minBuyNumber)
+
+  // ④ 与服务端口径的契约：工具写出来的字段，服务端算法直接认
+  check('★ 服务端 calcPrice 按自取立减算（100 → 90）', calcPrice(g1, [{ optionId: 'size', optionValueId: 's6' }], 'pickup') === 90,
+    calcPrice(g1, [{ optionId: 'size', optionValueId: 's6' }], 'pickup'))
+  check('  外送不立减（100）', calcPrice(g1, [{ optionId: 'size', optionValueId: 's6' }], 'delivery') === 100)
+  check('  打包费 / 起购量被服务端读到', packingFeeOf(g1) === 2 && minBuyNumberOf(g1) === 2)
+
+  // ⑤ 边界与警告
+  const r2 = build([Object.assign({}, BASE_GOODS, { pickupDiscount: -1 })])
+  check('pickupDiscount 为负 → 报错', r2.errors.some((e) => e.indexOf('pickupDiscount') >= 0), r2.errors)
+
+  const r3 = build([Object.assign({}, BASE_GOODS, { pickupDiscount: 100 })])
+  check('★ 立减 ≥ 最低价（100）→ 报警告但不报错（可能是有意做 0 元自提）',
+    r3.errors.length === 0 && r3.warnings.some((w) => w.indexOf('自取价会被算成 0') >= 0),
+    { e: r3.errors, w: r3.warnings })
+
+  const r4 = build([Object.assign({}, BASE_GOODS, { packingFee: 'abc' })])
+  check('packingFee 非数字 → 报错', r4.errors.some((e) => e.indexOf('packingFee') >= 0), r4.errors)
+  const r5 = build([Object.assign({}, BASE_GOODS, { packingFee: 80 })])
+  check('打包费偏高（80 元/件）→ 警告（提醒单位别写成"分"）',
+    r5.errors.length === 0 && r5.warnings.some((w) => w.indexOf('偏高') >= 0),
+    { e: r5.errors, w: r5.warnings })
+
+  const r6 = build([Object.assign({}, BASE_GOODS, { minBuyNumber: 0 })])
+  check('minBuyNumber = 0 → 报错（必须 ≥ 1）', r6.errors.some((e) => e.indexOf('minBuyNumber') >= 0), r6.errors)
+  const r7 = build([Object.assign({}, BASE_GOODS, { minBuyNumber: 1.5 })])
+  check('minBuyNumber 非整数 → 报错', r7.errors.some((e) => e.indexOf('minBuyNumber') >= 0), r7.errors)
+  const r8 = build([Object.assign({}, BASE_GOODS, { minBuyNumber: 1 })])
+  check('minBuyNumber = 1（默认值）→ 不写进记录，保持数据干净',
+    r8.errors.length === 0 && !('minBuyNumber' in r8.records[0]), Object.keys(r8.records[0]))
+
+  // ⑥ 与 specGroups 同时使用（夹心 + 自取立减 + 打包费）
+  const r9 = build([Object.assign({}, BASE_GOODS, {
+    specGroups: [{ name: '夹心一', options: [{ name: '芒果' }, { name: '奥利奥', delta: 5 }] }],
+    pickupDiscount: 10,
+    packingFee: 3,
+    minBuyNumber: 2
+  })])
+  check('★ 夹心组与新字段可以共存', r9.errors.length === 0, r9.errors)
+  const g9 = r9.records[0]
+  check('  自取价 = 基础价 + 加价 − 立减（8寸 160 + 奥利奥 5 − 10 = 155）',
+    calcPrice(g9, [{ optionId: 'size', optionValueId: 's8' }, { optionId: 'filling1', optionValueId: 'f_oreo' }], 'pickup') === 155,
+    calcPrice(g9, [{ optionId: 'size', optionValueId: 's8' }, { optionId: 'filling1', optionValueId: 'f_oreo' }], 'pickup'))
+}
+
 console.log('\n' + '='.repeat(60))
 console.log((fail === 0 ? '全部通过' : '存在失败') + '：' + pass + ' 通过 / ' + fail + ' 失败')
 process.exit(fail === 0 ? 0 : 1)

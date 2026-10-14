@@ -28,6 +28,8 @@ const DS = require('./data-source')
 // 说明：LOG.debug 内部就是判断 DS.debug，行为与原来的 `if (DS.debug) console.log(...)` 一致；
 //      LOG.warn / LOG.error 始终输出，与原来的 console.warn / console.error 一致。
 const LOG = require('./log')
+// 阶段 9：购物车调用要带当前配送方式（自取立减的口径）。只依赖 shop-config，无循环依赖。
+const DELIVERY = require('./delivery')
 
 // ===== 云函数调用 =====
 /**
@@ -192,23 +194,44 @@ const API = {
 
   // ---------- 购物车 ----------
   // 云开发下身份由 OPENID 决定，token 参数仅用于保持调用签名兼容
-  shippingCarInfo: () => callCloud('cartInfo', {}),
+  //
+  // ===== 阶段 9：所有购物车调用都自动带上当前配送方式 =====
+  // 为什么在这里统一带、而不是让每个页面自己传：
+  //   商品可能有「自取立减」（pickupDiscount），自提与外送的**单价不同**。
+  //   只要有一个页面漏传，就会出现「购物车按自取价、结算页按下单口径重算」不一致。
+  //   在唯一的出口处附加，页面代码一行都不用改（页面只需要在切模式后重新拉一次）。
+  // 取值来源是 utils/delivery.getMode()（storage.deliveryMode，默认 'pickup'）。
+  // 云函数侧 channelOf() 只认 'pickup'，其它值一律按不启用立减处理。
+  _cartPayload(extra) {
+    // 读 storage 失败（极端情况/非小程序环境）时按自提处理：宁可少给一个折扣，
+    // 也不能让「加入购物车」直接抛异常。
+    let mode = DELIVERY.PICKUP
+    try {
+      mode = DELIVERY.getMode()
+    } catch (e) {
+      mode = DELIVERY.PICKUP
+    }
+    return Object.assign({ deliveryMode: mode }, extra || {})
+  },
+  shippingCarInfo: () => callCloud('cartInfo', API._cartPayload()),
 
   shippingCarInfoAddItemV2(data) {
     const d = data || {}
-    return callCloud('cartAdd', {
+    return callCloud('cartAdd', API._cartPayload({
       goodsId: d.goodsId,
       number: d.number,
       sku: d.sku
-    })
+    }))
   },
 
   // 注意参数形态：沿用原 api工厂 的 (token, key, number)，云函数只取后两个
-  shippingCarInfoModifyNumber: (token, key, number) => callCloud('cartModifyNumber', { key, number }),
+  shippingCarInfoModifyNumber: (token, key, number) =>
+    callCloud('cartModifyNumber', API._cartPayload({ key, number })),
 
-  shippingCarInfoRemoveItem: (token, key) => callCloud('cartRemoveItem', { key }),
+  shippingCarInfoRemoveItem: (token, key) =>
+    callCloud('cartRemoveItem', API._cartPayload({ key })),
 
-  shippingCarInfoRemoveAll: () => callCloud('cartRemoveAll', {}),
+  shippingCarInfoRemoveAll: () => callCloud('cartRemoveAll', API._cartPayload()),
 
   // ---------- 订单 ----------
   orderCreate: (data) => callCloud('orderCreate', data),

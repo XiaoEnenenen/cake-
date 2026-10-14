@@ -68,8 +68,19 @@ module.exports = {
     purchaseNotes: '购买须知，显示在结算页顶部',
     sort: '排序，越小越靠前',
     enabled: '是否上架',
+    // ===== 阶段 9 新增（都可选，不写 = 不启用）=====
+    pickupDiscount: '自取立减（元/件）。自提时从单价里减掉；不写 = 不区分渠道（美团「外送178/自取168」即 10）',
+    packingFee: '打包费（元/件）。下单按件计入总额并单列一行；不写 = 不收',
+    minBuyNumber: '最少购买份数。加购/改数量/下单三处同口径；不写 = 1 份',
     properties: '规格组数组，见下方 example_goods'
   },
+
+  // ⚠️ 本店**没有库存概念**（阶段二 2026-10-09 整体删除）：
+  //   蛋糕现做，缺货靠「提前 3 小时预订」的业务规则解决，不做库存字段、不扣减、不回补。
+  //   历史上的 stores / 限量 / 售罄 相关字段与逻辑都已删除（报告 D-03 已作废）；
+  //   cartAdd / orderCreate 里限制的只是「单次下单最多 99 件」，与库存无关。
+  //   详见 handlers.js 的 orderCreate 注释与 tests/test-cloud-api.js 的「不再返回 stores」断言。
+  no_stock_concept: true,
 
   example_goods: {
     id: 10001,

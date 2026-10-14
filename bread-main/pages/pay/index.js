@@ -71,6 +71,11 @@ Page({
     quote: null,
     // 商品金额（不含运费）
     goodsAmount: 0,
+    // 阶段 9：打包费合计（元，服务端 cartSummary 返回；默认 0 = 本店未收打包费）
+    packingFee: 0,
+    // 阶段 9：自提时的「合计」= 商品金额 + 打包费。
+    // 在 JS 里算好并 round，不让 wxml 做浮点加法（178.1 + 2.2 在 wxml 里会渲染成 180.29999999999998）
+    pickupTotal: 0,
     // 应付总价（商品 + 运费）；运费待确认时等于商品金额
     payableAmount: 0,
     // 运费展示文案
@@ -230,6 +235,11 @@ Page({
     this.syncDeliveryRule()
 
     const goodsAmount = Number(this.data.goodsAmount) || 0
+    // 阶段 9：打包费（元，合计）= 服务端 cartSummary 按"每件打包费 × 件数"算好的，
+    // 前端只负责显示与加总 —— 绝不自己乘一遍，避免出现第二种口径。
+    const packingFee = Number(this.data.packingFee) || 0
+    // 商品金额 + 打包费：不涉及运费的几个分支都直接用这个基数
+    const goodsPlusPacking = Math.round((goodsAmount + packingFee) * 100) / 100
 
     // 自提：无运费。距离气泡留空 → 由 shop-map 显示「距离您 X」（去店里取，这个距离才有意义）
     if (!this.data.isDelivery) {
@@ -237,7 +247,7 @@ Page({
         quote: null,
         freight: 0,
         freightText: '自提免运费',
-        payableAmount: goodsAmount,
+        payableAmount: goodsPlusPacking,
         deliveryTip: '',
         mapDistanceText: ''
       })
@@ -250,7 +260,7 @@ Page({
         quote: null,
         freight: null,
         freightText: '请先选择收货地址',
-        payableAmount: goodsAmount,
+        payableAmount: goodsPlusPacking,
         deliveryTip: '',
         // 外送但还没选地址：明确提示，避免又退回显示"当前位置到门店"的误导距离
         mapDistanceText: '待选择收货地址'
@@ -268,7 +278,7 @@ Page({
         quote: null,
         freight: null,
         freightText: '运费待确认',
-        payableAmount: goodsAmount,
+        payableAmount: goodsPlusPacking,
         deliveryTip: '',
         mapDistanceText: '待确认'
       })
@@ -281,7 +291,7 @@ Page({
 
     // 应付金额：运费待确认(null)时先按商品金额计，最终以服务端返回为准
     const freightValue = quote.freight === null ? 0 : quote.freight
-    const payableAmount = Math.round((goodsAmount + freightValue) * 100) / 100
+    const payableAmount = Math.round((goodsAmount + packingFee + freightValue) * 100) / 100
 
     // 2026-10-10：外送场景的气泡显示「收货地址 → 门店」的距离，
     // 不再显示"用户当前位置到门店"（人在外面下单时那个数字与配送距离无关）。
@@ -318,7 +328,9 @@ Page({
     const mode = e.currentTarget.dataset.mode
     DELIVERY.setMode(mode)
     this.syncDeliveryMode()
-    // 切换配送方式会改变运费，需要重算
+    // 阶段 9：切换配送方式会改变**运费**（距离/档位）与**单价**（自取立减 pickupDiscount），
+    // 所以必须重新拉一次购物车 —— 否则页面还按上一个渠道的单价显示。
+    this.shippingCarInfo()
     this.recalcQuote()
   },
   async shippingCarInfo(){
@@ -344,6 +356,8 @@ Page({
         cartItemsForQuote: [],
         cartCount: 0,
         cartPrice: 0,
+        packingFee: 0,
+        pickupTotal: 0,
         cartEmpty: false,
         cartLoadError: true,
         cartLoaded: true,
@@ -409,6 +423,10 @@ Page({
         shippingCarInfo: res.data,
         cartEmpty: !(res.data.items && res.data.items.length),
         goodsAmount,
+        // 阶段 9：打包费合计（服务端算好的，前端只显示、不自己乘）
+        packingFee: Number(res.data.packingFee) || 0,
+        // 自提时的合计（商品 + 打包费），与底部栏、shownAmount 共用同一个值
+        pickupTotal: Math.round(((Number(res.data.price) || 0) + (Number(res.data.packingFee) || 0)) * 100) / 100,
         cartItemsForQuote,
         priceChangedTip,
         cartUnavailableTip,
@@ -435,8 +453,8 @@ Page({
    */
   shownAmount() {
     if (this.data.isDelivery) return Number(this.data.payableAmount) || 0
-    const info = this.data.shippingCarInfo
-    return Number(info && info.price) || 0
+    // 阶段 9：自提 = 商品金额 + 打包费（pickupTotal 与底部「合计」是同一个值）
+    return Number(this.data.pickupTotal) || 0
   },
   async userDetail() {
     // https://www.yuque.com/apifm/nu0f75/zgf8pu

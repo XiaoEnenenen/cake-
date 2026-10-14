@@ -625,6 +625,133 @@ async function main() {
       dr2.value.freight.tiers)
   }
 
+  // ---- 阶段 9：渠道差价 / 打包费 / 最少购买（默认关闭）----
+  console.log('\n=== 16) 阶段 9：自取立减 / 打包费 / 最少购买 ===')
+  {
+    const SHOP = require('../shop-config').shop
+    const nearAddr = {
+      name: '张三', phone: '13800138000',
+      province: '云南省', city: '昆明市', district: '安宁市',
+      detail: '太平新城某小区1栋101',
+      latitude: SHOP.latitude + 1 / 111.19, longitude: SHOP.longitude
+    }
+    // g_musi 的 4寸草莓 = 54 元（不享受蛋糕免运费：4寸 < 6寸）
+    const sku4 = [{ optionId: 'size', optionValueId: 's4' }, { optionId: 'flavor', optionValueId: 'f_straw' }]
+    const cartKey = 'g_musi|flavor:f_straw,size:s4'
+    const goodsJson = JSON.stringify([{ goodsId: 'g_musi', number: 2, propertyChildIds: 'size:s4,flavor:f_straw' }])
+
+    // 每个用例一份独立库，并按需给 g_musi 打上阶段 9 的字段
+    const mkDb = (patch) => {
+      const db = createMockDb(seedData())
+      if (patch) Object.assign(db._store.goods.find((g) => g._id === 'g_musi'), patch)
+      return db
+    }
+
+    // (1) 默认关闭：没有新字段时，自提/外送金额一模一样（老行为不变）
+    let dbS = mkDb()
+    let ctxS = { db: dbS, openid: 'user_s9a' }
+    let rs = await dispatch('cartAdd', { goodsId: 'g_musi', number: 1, sku: sku4 }, ctxS)
+    check('无新字段：cartAdd 成功且价 54', rs.code === 0 && rs.data.price === 54, rs.data)
+    rs = await dispatch('cartInfo', { deliveryMode: 'pickup' }, ctxS)
+    check('  自提模式下金额不变（pickupDiscount 未配置）', rs.data.price === 54, rs.data)
+    check('  打包费合计为 0', rs.data.packingFee === 0, rs.data.packingFee)
+
+    // (2) 自取立减 pickupDiscount = 10
+    dbS = mkDb({ pickupDiscount: 10 })
+    ctxS = { db: dbS, openid: 'user_s9b' }
+    await dispatch('cartAdd', { goodsId: 'g_musi', number: 1, sku: sku4 }, ctxS)
+    rs = await dispatch('cartInfo', { deliveryMode: 'delivery' }, ctxS)
+    check('外送模式：按列表价 54', rs.data.price === 54, rs.data.price)
+    rs = await dispatch('cartInfo', { deliveryMode: 'pickup' }, ctxS)
+    check('★ 自提模式：立减 10 → 44', rs.data.price === 44, rs.data.price)
+    check('  单个商品行也带上了 this 价格', rs.data.items[0].price === 44, rs.data.items[0])
+    rs = await dispatch('cartInfo', {}, ctxS)
+    check('  不带 deliveryMode（老客户端）→ 不立减，按 54', rs.data.price === 54, rs.data.price)
+
+    // 自提下单：服务端按自提口径算 → 与 cartInfo(pickup) 一致
+    const dbS2 = mkDb({ pickupDiscount: 10 })
+    let r9 = await dispatch('orderCreate', {
+      goodsJsonStr: goodsJson, extJsonStr: '{}',
+      deliveryMode: 'pickup', shopIdZt: 0, shopNameZt: '卿欢蛋糕'
+    }, { db: dbS2, openid: 'user_s9c' })
+    check('★ 自提下单：单价 44 × 2 = 88', r9.code === 0 && r9.data.amountReal === 88, r9.data)
+    check('  订单快照里 item.price 也是 44（对账一致）',
+      dbS2._store.order[0].goods[0].price === 44, dbS2._store.order[0].goods[0].price)
+
+    // 外送下单：不立减（54×2=108 + 运费）
+    const dbS3 = mkDb({ pickupDiscount: 10 })
+    r9 = await dispatch('orderCreate', {
+      goodsJsonStr: goodsJson, extJsonStr: '{}',
+      deliveryMode: 'delivery', address: nearAddr, shopIdZt: 0, shopNameZt: '卿欢蛋糕'
+    }, { db: dbS3, openid: 'user_s9d' })
+    check('★ 外送下单：不立减（108 + 运费）',
+      r9.code === 0 && r9.data.goodsAmount === 108, r9.data)
+
+    // (3) 打包费 packingFee = 2 元/件
+    const dbP = mkDb({ packingFee: 2 })
+    const ctxP = { db: dbP, openid: 'user_s9e' }
+    await dispatch('cartAdd', { goodsId: 'g_musi', number: 2, sku: sku4 }, ctxP)
+    let rp = await dispatch('cartInfo', { deliveryMode: 'pickup' }, ctxP)
+    check('★ 打包费合计 = 2 元/件 × 2 件 = 4', rp.data.packingFee === 4, rp.data.packingFee)
+    check('  商品行也带每件打包费（前端提示用）', rp.data.items[0].packingFee === 2, rp.data.items[0].packingFee)
+    rp = await dispatch('orderCreate', {
+      goodsJsonStr: goodsJson, extJsonStr: '{}',
+      deliveryMode: 'pickup', shopIdZt: 0, shopNameZt: '卿欢蛋糕'
+    }, { db: dbP, openid: 'user_s9f' })
+    check('★ 自提下单总额 = 54×2 + 打包费 4 = 112', rp.code === 0 && rp.data.amountReal === 112, rp.data)
+    check('  订单里单独记了 packingFee', rp.data.packingFee === 4, rp.data.packingFee)
+    check('  订单文档也存了 packingFee（订单详情页据此单列一行）',
+      dbP._store.order[0].packingFee === 4, dbP._store.order[0].packingFee)
+
+    // 打包费 + 自取立减 + 外送运费 三者叠加
+    const dbMix = mkDb({ pickupDiscount: 10, packingFee: 2 })
+    rp = await dispatch('orderCreate', {
+      goodsJsonStr: goodsJson, extJsonStr: '{}',
+      deliveryMode: 'pickup', shopIdZt: 0, shopNameZt: '卿欢蛋糕'
+    }, { db: dbMix, openid: 'user_s9g' })
+    check('★ 立减与打包费叠加：44×2 + 2×2 = 92', rp.code === 0 && rp.data.amountReal === 92, rp.data)
+    const mixOrder = dbMix._store.order[0]
+    check('  订单快照三者齐全（goodsAmount / packingFee / freight）',
+      mixOrder.goodsAmount === 88 && mixOrder.packingFee === 4 && mixOrder.freight === 0, mixOrder)
+
+    // (4) 最少购买份数 minBuyNumber = 2
+    const dbM = mkDb({ minBuyNumber: 2 })
+    const ctxM = { db: dbM, openid: 'user_s9h' }
+    let rm = await dispatch('cartAdd', { goodsId: 'g_musi', number: 1, sku: sku4 }, ctxM)
+    check('★ 加购 1 份（少于起购量 2）→ 拒绝', rm.code !== 0 && rm.msg.indexOf('最少购买 2 份') >= 0, rm)
+    rm = await dispatch('cartAdd', { goodsId: 'g_musi', number: 2, sku: sku4 }, ctxM)
+    check('  加购 2 份 → 成功', rm.code === 0, rm)
+    rm = await dispatch('cartModifyNumber', { key: cartKey, number: 1 }, ctxM)
+    check('★ 把数量改成 1（低于起购量）→ 拒绝', rm.code !== 0 && rm.msg.indexOf('最少购买 2 份') >= 0, rm)
+    rm = await dispatch('cartModifyNumber', { key: cartKey, number: 3 }, ctxM)
+    check('  改成 3 → 成功', rm.code === 0 && rm.data.items[0].number === 3, rm.data)
+    rm = await dispatch('orderCreate', {
+      goodsJsonStr: JSON.stringify([{ goodsId: 'g_musi', number: 1, propertyChildIds: 'size:s4,flavor:f_straw' }]),
+      extJsonStr: '{}', deliveryMode: 'pickup', shopIdZt: 0, shopNameZt: '卿欢蛋糕'
+    }, { db: mkDb({ minBuyNumber: 2 }), openid: 'user_s9i' })
+    check('★ 绕过前端直接下单 1 份 → 服务端也拒绝（兜底）',
+      rm.code !== 0 && rm.msg.indexOf('最少购买 2 份') >= 0, rm)
+
+    // 商家后来调高起购量 → 购物车里旧的行要能被提前标出"不可下单"
+    const dbOld = createMockDb(seedData())
+    await dispatch('cartAdd', { goodsId: 'g_musi', number: 1, sku: sku4 }, { db: dbOld, openid: 'user_s9j' })
+    Object.assign(dbOld._store.goods.find((g) => g._id === 'g_musi'), { minBuyNumber: 3 })
+    const rOld = await dispatch('cartInfo', { deliveryMode: 'pickup' }, { db: dbOld, openid: 'user_s9j' })
+    check('★ 起购量被调高后，购物车该项标记为不可下单并说明原因',
+      rOld.data.items[0].unavailable === true &&
+      String(rOld.data.items[0].unavailableReason).indexOf('最少购买 3 份') >= 0,
+      rOld.data.items[0])
+
+    // (5) 边界：立减大于等于价格时不能出现负价
+    const H = require('../cloudfunctions/api/handlers')
+    check('★ 立减 ≥ 价格 → 按 0 计，不出负价',
+      H.calcPrice({ minPrice: 10, pickupDiscount: 30 }, [], 'pickup') === 0,
+      H.calcPrice({ minPrice: 10, pickupDiscount: 30 }, [], 'pickup'))
+    check('  未配置时 packingFeeOf / minBuyNumberOf 回落到 0 / 1',
+      H.packingFeeOf({}) === 0 && H.minBuyNumberOf({}) === 1 &&
+      H.packingFeeOf({ packingFee: -1 }) === 0 && H.minBuyNumberOf({ minBuyNumber: 0 }) === 1)
+  }
+
   console.log('\n=== 汇总 ===')
   console.log('  通过 ' + pass + ' / 失败 ' + fail)
   if (fail) process.exitCode = 1
