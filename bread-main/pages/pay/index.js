@@ -145,15 +145,10 @@ Page({
     //   顾客选完地址回到结算页，**屏幕上那一行还是上一个地址**（订单快照是对的，
     //   但顾客核对的那一行是错的，最容易造成"送到错地址"）。
     //   现在每次 onShow 都以 selectedAddress 为准重新生成展示文案，两处数据不再可能脱节。
-    const selected = this.data.selectedAddress
-    if (selected) {
-      this.applyAddress(selected)
-    } else {
-      const def = ADDR.getDefault()
-      if (def) {
-        this.applyAddress(def)
-      }
-    }
+    // 阶段 8 复核（2026-10-14 真机复现）：
+    //   「改完地址回到结算页，那行还是旧地址，退出重进才对」——原因是上面只在内存快照上
+    //   重算文案，**没有回地址簿取最新内容**。现在统一交给 resolveAddress() 解析。
+    this.resolveAddress()
     this.recalcQuote()
   },
 
@@ -163,6 +158,47 @@ Page({
       selectedAddress: addr,
       addressText: ADDR.formatFull(addr) || (addr.detail || '')
     })
+  },
+
+  /**
+   * 解析「当前应显示的收货地址」（阶段 8 复核新增）
+   * ---------------------------------------------------------------------------
+   * 优先级：**选中地址（按 id 回地址簿取最新内容）** > 地址簿默认地址 > 无
+   *
+   * 为什么必须按 id 回查而不是直接用内存里的 selectedAddress：
+   *   1) 顾客在地址簿里**编辑了当前选中的那条**（改了门牌/重新选点）后回到结算页，
+   *      内存快照还是旧的 → 屏幕上显示旧地址、运费也按旧坐标算
+   *      （2026-10-14 真机复现：必须退出小程序重进才刷新）；
+   *   2) 顾客把选中的地址**删掉**了，快照还在 → 会照着一个不存在的地址下单。
+   * 两种情况都在这里收口：每次 onShow 都重新解析一次。
+   */
+  resolveAddress() {
+    const selected = this.data.selectedAddress
+
+    // 1) 有选中地址且带 id：回地址簿取最新内容
+    if (selected && selected.id) {
+      const fresh = ADDR.getById(selected.id)
+      if (fresh) {
+        this.applyAddress(fresh)
+        return
+      }
+      // 已被删除 → 清掉选中态，下面走默认地址
+      this.setData({ selectedAddress: null })
+    } else if (selected) {
+      // 历史数据没有 id（早期版本存的地址）→ 无法回查，保留原快照，别把地址清空
+      this.applyAddress(selected)
+      return
+    }
+
+    // 2) 没有选中地址（或被删了）→ 用地址簿默认地址
+    const def = ADDR.getDefault()
+    if (def) {
+      this.applyAddress(def)
+      return
+    }
+
+    // 3) 一条地址都没有：明确清空，避免显示上一次的残留
+    this.setData({ selectedAddress: null, addressText: '' })
   },
 
   // ===== 改造：跳转地址选择页 =====

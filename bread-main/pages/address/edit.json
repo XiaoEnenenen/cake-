@@ -1,8 +1,5 @@
 {
   "navigationBarTitleText": "新增收货地址",
   "navigationBarBackgroundColor": "#ffffff",
-  "navigationBarTextStyle": "black",
-  "usingComponents": {
-    "van-area": "@vant/weapp/area/index"
-  }
+  "navigationBarTextStyle": "black"
 }

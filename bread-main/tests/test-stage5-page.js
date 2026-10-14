@@ -201,12 +201,84 @@ async function main() {
     check('生成的就是完整地址文案', page.data.addressText === '云南省昆明市安宁市太平新城1号', page.data.addressText)
 
     // 没选过地址时仍然带出默认地址（原行为不能丢）
-    check('selectedAddress 为空时仍走默认地址分支（源码保证）',
-      /const selected = this\.data\.selectedAddress[\s\S]{0,300}else \{[\s\S]{0,200}ADDR\.getDefault\(\)/.test(src('pages/pay/index.js')))
-
+    // 2026-10-14 阶段 8 复核：地址解析逻辑搬进 resolveAddress()，
+    //   这里改为断言「按 id 回查 + 无选中时用默认地址」两件事都在。
     const payJs = src('pages/pay/index.js')
+    check('结算页会按 id 回地址簿取最新内容（编辑地址后立即生效的根）',
+      /ADDR\.getById\(selected\.id\)/.test(payJs))
+    check('没有选中地址时仍然回退到默认地址',
+      /const def = ADDR\.getDefault\(\)/.test(payJs))
     check('不再只在「没有选中地址」时才 applyAddress（缺陷根源）',
       !/if \(!this\.data\.selectedAddress\) \{\s*const def = ADDR\.getDefault\(\)/.test(payJs))
+  }
+
+  // =========================================================================
+  console.log('\n=== 5.3 续（2026-10-14 阶段 8 复核）：编辑过的地址必须立即刷新 ===')
+  // 真机现象：在地址簿里改完地址回到结算页，那一行还是旧地址，退出小程序重进才对。
+  // 根因：结算页只拿内存里的 selectedAddress 重算文案，没回地址簿取最新内容。
+  // =========================================================================
+  {
+    const ADDR_OLD = {
+      id: 'a_edit', name: '肖恩', phone: '13608878371',
+      province: '云南省', city: '昆明市', district: '安宁市',
+      detail: '太平新城旧门牌1号', latitude: 24.95, longitude: 102.58, isDefault: true
+    }
+    // 地址簿里已经是"改过之后"的那条（同 id）
+    const ADDR_NEW = Object.assign({}, ADDR_OLD, { detail: '太平新城新门牌99号', latitude: 24.96, longitude: 102.59 })
+    const storageStub = (list) => ({
+      getStorageSync(k) { return k === 'addressList' ? list : '' },
+      setStorageSync() {}
+    })
+
+    const mkPay = (list) => loadPage('pages/pay/index.js', {
+      requires: {
+        'api-map$': makeApi(),
+        'utils/auth$': { login() {}, wxaCode: async () => 'c', checkHasLogined: async () => true, authorize: async () => ({}) },
+        'utils/pay': { wxpay() {} },
+        'shop-config$': SHOP_STUB,
+        'utils/delivery$': { isDelivery: () => false, isDeliveryEnabled: () => true, setMode: () => 'pickup', DELIVERY: 'delivery' },
+        'delivery-range$': { calcQuote: () => ({ freight: 0, freightText: '', deliverable: true, distanceKm: null }), checkAdvanceTime: () => ({ valid: true }), setDeliveryRule: () => ({}), getDeliveryRule: () => ({ area: { outOfAreaTip: '超出配送范围' } }) },
+        'config/delivery$': { area: { outOfAreaTip: '超出配送范围' } },
+        'utils/location$': { formatDistance: () => '', openNavigation: async () => {} }
+      },
+      wx: storageStub(list)
+    })
+
+    // ① 编辑了当前选中的地址 → onShow 立即显示新内容
+    const page1 = mkPay([ADDR_NEW])
+    page1.data.selectedAddress = Object.assign({}, ADDR_OLD)   // 内存里的旧快照
+    page1.data.addressText = REAL_ADDR.formatFull(ADDR_OLD)
+    withGlobalWx(storageStub([ADDR_NEW]), () => { page1.onShow() })
+    check('★ 编辑当前选中地址后，结算页 onShow 立即显示新内容（不用退出重进）',
+      page1.data.addressText === REAL_ADDR.formatFull(ADDR_NEW), page1.data.addressText)
+    check('  选中地址对象也换成了最新内容（下单快照不会用旧地址）',
+      !!page1.data.selectedAddress && page1.data.selectedAddress.detail === ADDR_NEW.detail,
+      page1.data.selectedAddress)
+    check('  运费按新地址重算（用的是刷新后的坐标）',
+      Math.abs(Number(page1.data.selectedAddress.latitude) - ADDR_NEW.latitude) < 1e-9,
+      page1.data.selectedAddress.latitude)
+
+    // ② 选中的地址被删除 → 回退到地址簿默认地址
+    const OTHER = {
+      id: 'a_other', name: '张三', phone: '13800138000',
+      province: '云南省', city: '昆明市', district: '安宁市',
+      detail: '太平新城别的门牌2号', latitude: 24.94, longitude: 102.57, isDefault: true
+    }
+    const page2 = mkPay([OTHER])
+    page2.data.selectedAddress = Object.assign({}, ADDR_OLD)   // 这条在地址簿里已经没有 id 了
+    page2.data.addressText = REAL_ADDR.formatFull(ADDR_OLD)
+    withGlobalWx(storageStub([OTHER]), () => { page2.onShow() })
+    check('★ 选中地址被删除 → 回退到地址簿默认地址（不会照不存在的地址下单）',
+      page2.data.addressText === REAL_ADDR.formatFull(OTHER), page2.data.addressText)
+
+    // ③ 地址簿空 + 选中地址也没了 → 清空，不留上一单的残留
+    const page3 = mkPay([])
+    page3.data.selectedAddress = Object.assign({}, ADDR_OLD)
+    page3.data.addressText = REAL_ADDR.formatFull(ADDR_OLD)
+    withGlobalWx(storageStub([]), () => { page3.onShow() })
+    check('★ 地址簿为空且选中地址已删 → 清空显示（不残留上一次的地址）',
+      page3.data.selectedAddress === null && page3.data.addressText === '',
+      { selected: page3.data.selectedAddress, text: page3.data.addressText })
   }
   {
     // 地址选择页：一次 setData 同时注入 selectedAddress 与 addressText（真实跑一遍）

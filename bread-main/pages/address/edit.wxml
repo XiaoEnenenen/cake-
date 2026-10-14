@@ -30,14 +30,24 @@
     />
   </view>
 
-  <!-- 省市区：使用 Vant 的 van-area（自带行政区划数据，无需第三方地图服务） -->
-  <view class="form-row" bindtap="openArea">
+  <!-- 省市区：微信原生省市区选择器（picker mode="region"）
+       ⚠️ 2026-10-14 修复：原实现用 Vant 的 <van-area>，但**没有传 area-list**，
+       项目也没装 @vant/area-data（Vant 的 area 组件不自带行政区划数据，
+       源码里 columns 初始就是 [{values:[]},{values:[]},{values:[]}]）→
+       真机上点开是"取消 / 选择所在地区 / 确认 + 一大片空白"（店主 10-14 截图复现）。
+       改用微信原生 picker：零依赖、不会再空白，且保持"省市区选填"的口径不变。 -->
+  <picker
+    class="form-row"
+    mode="region"
+    value="{{ areaValue }}"
+    bindchange="onAreaChange"
+  >
     <view class="form-label">所在地区</view>
     <view class="form-picker {{ areaText ? '' : 'form-placeholder' }}">
-      {{ areaText || '请选择省 / 市 / 区' }}
+      {{ areaText || '请选择省 / 市 / 区（选填）' }}
     </view>
     <view class="form-arrow"></view>
-  </view>
+  </picker>
 
   <!-- 地图选点：微信原生 wx.chooseLocation，无需第三方地图插件与 key -->
   <view class="form-row" bindtap="onChooseLocation">
@@ -70,15 +80,12 @@
   提示：收货人、手机号、详细地址为必填；省市区选填（配送范围按「省市区 + 详细地址」的文字判断，填了更准，未选点则不走精确距离）。
 </view>
 
-<!-- 省市区选择弹层
-     说明：不传 area-list，van-area 会使用内置的行政区划数据（无需第三方地图服务与 key） -->
-<van-area
-  show="{{ showArea }}"
-  title="选择所在地区"
-  bind:confirm="onAreaConfirm"
-  bind:cancel="closeArea"
-  bind:close="closeArea"
-/>
+<!-- 2026-10-14 删除：空的 van-area 弹层。
+     原代码是：
+       <van-area show="{{ showArea }}" title="选择所在地区" bind:confirm="onAreaConfirm" ... />
+     并附带一句**错误**的注释「不传 area-list，van-area 会使用内置的行政区划数据」——
+     Vant 的 area 组件必须由使用方提供 area-list，否则三列全空（真机复现的空白面板就是它）。
+     现已换成上面的原生 picker，本页不再需要任何自定义组件（见 edit.json）。 -->
 
 <!-- 2026-10-09 删除：「标签（家 / 公司 / 学校 / 其他）」整块。
      删除原因：该卡片位于表单最底部，被固定定位的「保存」按钮压住且无法滚动到；

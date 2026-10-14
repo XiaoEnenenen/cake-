@@ -24,7 +24,7 @@ Page({
     id: '',
     name: '',
     phone: '',
-    // 省市区（用 van-area 选择）
+    // 省市区（用微信原生 picker mode="region" 选择）
     province: '',
     city: '',
     district: '',
@@ -33,9 +33,8 @@ Page({
     latitude: 0,
     longitude: 0,
     saving: false,
-    // 省市区选择弹层
-    showArea: false,
-    areaCode: '',
+    // 省市区选择器的当前值（['云南省','昆明市','安宁市']）；新增时为空数组
+    areaValue: [],
     // 省市区展示文案（如「云南省昆明市安宁市」）
     areaText: ''
   },
@@ -44,14 +43,19 @@ Page({
     if (options && options.id) {
       const addr = ADDR.getById(options.id)
       if (addr) {
+        const province = addr.province || ''
+        const city = addr.city || ''
+        const district = addr.district || ''
         this.setData({
           id: addr.id,
           name: addr.name,
           phone: addr.phone,
-          province: addr.province || '',
-          city: addr.city || '',
-          district: addr.district || '',
-          areaText: [addr.province, addr.city, addr.district].filter(Boolean).join(''),
+          province,
+          city,
+          district,
+          // 三项齐全才回填选择器：缺项时传半截数组会让原生 picker 落到默认省份
+          areaValue: province && city && district ? [province, city, district] : [],
+          areaText: [province, city, district].filter(Boolean).join(''),
           detail: addr.detail,
           isDefault: !!addr.isDefault,
           latitude: addr.latitude || 0,
@@ -64,26 +68,20 @@ Page({
     wx.setNavigationBarTitle({ title: '新增收货地址' })
   },
 
-  // ===== 省市区选择 =====
-  openArea() {
-    this.setData({ showArea: true })
-  },
-  closeArea() {
-    this.setData({ showArea: false })
-  },
-  onAreaConfirm(e) {
-    // e.detail.values 形如 [{ name: '云南省' }, { name: '昆明市' }, { name: '安宁市' }]
-    const values = (e.detail && e.detail.values) || []
-    const pick = (i) => (values[i] && values[i].name) || ''
-    const province = pick(0)
-    const city = pick(1)
-    const district = pick(2)
+  // ===== 省市区选择（微信原生 picker mode="region"）=====
+  // 2026-10-14：替换掉"点开一片空白"的 van-area（原因见 edit.wxml 顶部说明）。
+  // e.detail = { value: ['云南省','昆明市','安宁市'], code: ['530000','530100','530181'] }
+  onAreaChange(e) {
+    const values = (e.detail && e.detail.value) || []
+    const province = values[0] || ''
+    const city = values[1] || ''
+    const district = values[2] || ''
     this.setData({
       province,
       city,
       district,
-      areaText: [province, city, district].filter(Boolean).join(''),
-      showArea: false
+      areaValue: province && city && district ? [province, city, district] : [],
+      areaText: [province, city, district].filter(Boolean).join('')
     })
   },
 
