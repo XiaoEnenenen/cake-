@@ -51,6 +51,7 @@ node cloud-data/tools/verify-goods.js
 | `verify-goods.js` | 核对生成物：分类 id 是否存在、真实 `calcPrice` 算出的最低价是否等于 `minPrice`、详情标签是否在 parser 白名单内、图片是否存在、蛋糕尺寸能否被配送规则识别 |
 | `optimize-images.py` | 商品图缩放 + 去 EXIF，并报告主包占用（需工作区自带 Python + Pillow） |
 | `sync-delivery.js` | **配送规则副本同步**：把 `config/delivery.js` / `utils/delivery-range.js` 生成云函数副本 `cloudfunctions/api/delivery-config.js` / `delivery-calc.js`（阶段 8 起） |
+| `migrate-env.js` | **换云环境迁移**（阶段 6）：把所有文本文件里的旧环境 ID / appid 批量替换，**默认只预演**（`--apply` 才写文件）。控制台侧步骤见 [docs/换新号迁移清单.md](../docs/换新号迁移清单.md) |
 
 ---
 
