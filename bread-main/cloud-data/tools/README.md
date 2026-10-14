@@ -50,6 +50,31 @@ node cloud-data/tools/verify-goods.js
 | `build-goods.js` | 源文件 → 校验 → 生成 `goods-real.jsonl`（分类名转 id、绝对价转加价、图片名转路径） |
 | `verify-goods.js` | 核对生成物：分类 id 是否存在、真实 `calcPrice` 算出的最低价是否等于 `minPrice`、详情标签是否在 parser 白名单内、图片是否存在、蛋糕尺寸能否被配送规则识别 |
 | `optimize-images.py` | 商品图缩放 + 去 EXIF，并报告主包占用（需工作区自带 Python + Pillow） |
+| `sync-delivery.js` | **配送规则副本同步**：把 `config/delivery.js` / `utils/delivery-range.js` 生成云函数副本 `cloudfunctions/api/delivery-config.js` / `delivery-calc.js`（阶段 8 起） |
+
+---
+
+## 配送规则的两份副本：不要手改云函数那份
+
+微信云函数是**独立打包**的，不能 `require` 主包里的文件，所以配送规则与配送计算各有两份：
+
+```
+config/delivery.js       ──[node cloud-data/tools/sync-delivery.js]──►  cloudfunctions/api/delivery-config.js
+utils/delivery-range.js  ──[node cloud-data/tools/sync-delivery.js]──►  cloudfunctions/api/delivery-calc.js
+```
+
+**只改主包那两份，然后跑一次脚本**：
+
+```bash
+cd bread-main
+node cloud-data/tools/sync-delivery.js          # 生成/覆盖云函数副本
+node cloud-data/tools/sync-delivery.js --check  # 只校验是否已同步（不写文件）
+```
+
+> ⚠️ 2026-10-12 的复核证明"手工改两份"一定会漂（副本头注释自指就是漂出来的）。
+> 从阶段 8 起改为**脚本生成 + 测试逐字节守着**：
+> `tests/test-delivery.js` 直接调用 `transform()` 与磁盘上的云函数副本比对，
+> **只改一边、或改了主包忘了跑脚本，`npm test` 就会红。**
 
 ---
 
