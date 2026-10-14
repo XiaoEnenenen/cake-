@@ -25,8 +25,8 @@ const SHOP_CONFIG = require('../../shop-config')
 const DELIVERY = require('../../utils/delivery')
 const ADDR = require('../../utils/address')
 const DR = require('../../utils/delivery-range')
-// 区域外等提示文案统一从配置取，页面里不留旧文案
-const DCFG = require('../../config/delivery')
+// 区域外等提示文案统一取自**运行期规则**（见 recalcQuote 的 syncDeliveryRule）：
+// 阶段 8 起 app_config.delivery_rule 可以覆盖文案，页面里不能再读静态副本。
 const LOC = require('../../utils/location')
 
 // 联络电话在本地持久化的键名（顾客手填后下次自动带出）
@@ -172,9 +172,27 @@ Page({
     })
   },
 
+  // ===== 阶段 8：装入云库下发的配送规则 =====
+  // app.js 启动时把 appConfig 返回的 delivery_rule（完整规则）写进 storage，
+  // 这里每次重算前同步一次，保证**前端与云函数用的是同一份规则** ——
+  // 否则会出现"屏显运费 5 元、服务端实收 8 元"这类审计 D-01 同族问题。
+  // 取不到（首次启动、云函数不可用、老版本 storage）时回退代码默认值。
+  syncDeliveryRule() {
+    let rule = null
+    try {
+      rule = wx.getStorageSync('delivery_rule') || null
+    } catch (e) {
+      rule = null
+    }
+    DR.setDeliveryRule(rule)
+  },
+
   // ===== 改造：重新计算运费报价 =====
   // 规则全部来自 utils/delivery-range（与云函数服务端同一套）
   recalcQuote() {
+    // 阶段 8：先把云库规则装进来，再算（顺序不能反）
+    this.syncDeliveryRule()
+
     const goodsAmount = Number(this.data.goodsAmount) || 0
 
     // 自提：无运费。距离气泡留空 → 由 shop-map 显示「距离您 X」（去店里取，这个距离才有意义）
@@ -509,7 +527,7 @@ Page({
       if (this.data.quote && this.data.quote.deliverable === false) {
         wx.showModal({
           title: '无法配送',
-          content: this.data.quote.freightText || DCFG.area.outOfAreaTip,
+          content: this.data.quote.freightText || DR.getDeliveryRule().area.outOfAreaTip,
           showCancel: false
         })
         return

@@ -187,7 +187,7 @@ async function main() {
         'utils/pay': { wxpay() {} },
         'shop-config$': SHOP_STUB,
         'utils/delivery$': { isDelivery: () => false, isDeliveryEnabled: () => true, setMode: () => 'pickup', DELIVERY: 'delivery' },
-        'delivery-range$': { calcQuote: () => ({ freight: 0, freightText: '', deliverable: true, distanceKm: null }), checkAdvanceTime: () => ({ valid: true }) },
+        'delivery-range$': { calcQuote: () => ({ freight: 0, freightText: '', deliverable: true, distanceKm: null }), checkAdvanceTime: () => ({ valid: true }), setDeliveryRule: () => ({}), getDeliveryRule: () => ({ area: { outOfAreaTip: '超出配送范围' } }) },
         'config/delivery$': { area: { outOfAreaTip: '超出配送范围' } },
         'utils/location$': { formatDistance: () => '', openNavigation: async () => {} }
       }
@@ -474,7 +474,7 @@ async function main() {
         'utils/pay': { wxpay() {} },
         'shop-config$': SHOP_STUB,
         'utils/delivery$': { isDelivery: () => false, isDeliveryEnabled: () => true, setMode: () => 'pickup', DELIVERY: 'delivery' },
-        'delivery-range$': { calcQuote: () => ({ freight: 0, freightText: '', deliverable: true, distanceKm: null }), checkAdvanceTime: () => ({ valid: true }) },
+        'delivery-range$': { calcQuote: () => ({ freight: 0, freightText: '', deliverable: true, distanceKm: null }), checkAdvanceTime: () => ({ valid: true }), setDeliveryRule: () => ({}), getDeliveryRule: () => ({ area: { outOfAreaTip: '超出配送范围' } }) },
         'config/delivery$': { area: { outOfAreaTip: '超出配送范围' } },
         'utils/location$': { formatDistance: () => '', openNavigation: async () => {} }
       }
@@ -525,7 +525,7 @@ async function main() {
     'utils/pay': payStub || { wxpay() {} },
     'shop-config$': SHOP_STUB,
     'utils/delivery$': { isDelivery: () => false, isDeliveryEnabled: () => true, setMode: () => 'pickup', DELIVERY: 'delivery' },
-    'delivery-range$': { calcQuote: () => ({ freight: 0, freightText: '', deliverable: true, distanceKm: null }), checkAdvanceTime: () => ({ valid: true }) },
+    'delivery-range$': { calcQuote: () => ({ freight: 0, freightText: '', deliverable: true, distanceKm: null }), checkAdvanceTime: () => ({ valid: true }), setDeliveryRule: () => ({}), getDeliveryRule: () => ({ area: { outOfAreaTip: '超出配送范围' } }) },
     'config/delivery$': { area: { outOfAreaTip: '超出配送范围' } },
     'utils/location$': { formatDistance: () => '', openNavigation: async () => {} }
   })

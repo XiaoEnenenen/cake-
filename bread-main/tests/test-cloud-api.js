@@ -493,6 +493,116 @@ async function main() {
     check('详情返回 isCake', re.data.basicInfo.isCake === true, re.data.basicInfo)
   }
 
+  // ---- 阶段 8：云库配送规则（app_config.delivery_rule）----
+  console.log('\n=== 15) 阶段 8：云库配送规则在服务端生效 ===')
+  {
+    const SHOP = require('../shop-config').shop
+    const CLOD_CFG = require('../cloudfunctions/api/delivery-config')
+    const mkAddr = (km, detail) => ({
+      name: '张三',
+      phone: '13800138000',
+      province: '云南省',
+      city: '昆明市',
+      district: '安宁市',
+      detail: detail || '太平新城某小区1栋101',
+      latitude: SHOP.latitude + km / 111.19,
+      longitude: SHOP.longitude
+    })
+    const goodsJson = JSON.stringify([{ goodsId: 'g_musi', number: 1, propertyChildIds: 'size:s4,flavor:f_straw' }])
+    // g_musi 4寸草莓 = 54 元（< 6寸，不享受蛋糕免运费）
+    const RULE = {
+      area: { excludeKeywords: ['山水间'], excludedTip: '该小区暂不支持外送，请改自提' },
+      freight: {
+        tiers: [
+          { maxKm: 3, fee: 5, freeAmount: 35 },
+          { maxKm: 5, fee: 8, freeAmount: 60 },
+          { maxKm: null, fee: null, freeAmount: null, tip: '运费待确认' }
+        ]
+      }
+    }
+    const dbWithRule = () => {
+      const db = createMockDb(seedData())
+      db._store.app_config = [{ _id: 'cfg_rule', key: 'delivery_rule', value: RULE }]
+      return db
+    }
+
+    // (1) 4km + 54 元 → 命中第二档 8 元（默认规则下是"待确认" → 0）
+    let dbR = dbWithRule()
+    let rr = await dispatch('orderCreate', {
+      goodsJsonStr: goodsJson, extJsonStr: '{}',
+      deliveryMode: 'delivery', address: mkAddr(4),
+      shopIdZt: 0, shopNameZt: '卿欢蛋糕'
+    }, { db: dbR, openid: 'user_rule1' })
+    check('云库规则生效：4km 按第二档收 8 元', rr.code === 0 && rr.data.freight === 8, rr.data)
+    check('  总额 = 商品 54 + 运费 8', rr.data.amountReal === 62, rr.data.amountReal)
+    check('  订单里记下了运费与理由',
+      dbR._store.order[0].freight === 8 && dbR._store.order[0].deliveryQuote.reason === 'within_paid',
+      dbR._store.order[0].deliveryQuote)
+
+    // (2) 不送区域黑名单 → 服务端拒单（前端改不掉）
+    dbR = dbWithRule()
+    rr = await dispatch('orderCreate', {
+      goodsJsonStr: goodsJson, extJsonStr: '{}',
+      deliveryMode: 'delivery', address: mkAddr(2, '太平新城山水间小区3栋'),
+      shopIdZt: 0, shopNameZt: '卿欢蛋糕'
+    }, { db: dbR, openid: 'user_rule2' })
+    check('★ 黑名单地址被服务端拒绝', rr.code !== 0, rr)
+    check('  提示取自云库配置的 excludedTip', rr.msg === RULE.area.excludedTip, rr.msg)
+    check('  没有生成订单', dbR._store.order.length === 0, dbR._store.order.length)
+
+    // (3) 云库里没有规则 → 回退代码默认值（2km + 54 元 → 满 35 免运费）
+    const dbNoRule = createMockDb(seedData())
+    rr = await dispatch('orderCreate', {
+      goodsJsonStr: goodsJson, extJsonStr: '{}',
+      deliveryMode: 'delivery', address: mkAddr(2),
+      shopIdZt: 0, shopNameZt: '卿欢蛋糕'
+    }, { db: dbNoRule, openid: 'user_rule3' })
+    check('无规则时回退代码默认值（2km/54 元 → 免运费）',
+      rr.code === 0 && rr.data.freight === 0, rr.data)
+
+    // (4) 半截规则：只给了黑名单，其余仍按默认值（不能整体丢弃）
+    const dbHalf = createMockDb(seedData())
+    dbHalf._store.app_config = [{ _id: 'cfg_half', key: 'delivery_rule', value: { area: { excludeKeywords: ['某某花园'] } } }]
+    rr = await dispatch('orderCreate', {
+      goodsJsonStr: goodsJson, extJsonStr: '{}',
+      deliveryMode: 'delivery', address: mkAddr(2),
+      shopIdZt: 0, shopNameZt: '卿欢蛋糕'
+    }, { db: dbHalf, openid: 'user_rule4' })
+    check('半截规则：未覆盖的运费仍用默认值（2km/54 元 → 免运费）',
+      rr.code === 0 && rr.data.freight === 0, rr.data)
+
+    // (5) 上一条规则不能污染下一个请求（云函数容器会复用）
+    rr = await dispatch('orderCreate', {
+      goodsJsonStr: goodsJson, extJsonStr: '{}',
+      deliveryMode: 'delivery', address: mkAddr(2),
+      shopIdZt: 0, shopNameZt: '卿欢蛋糕'
+    }, { db: createMockDb(seedData()), openid: 'user_rule5' })
+    check('★ 规则不跨请求残留（前一条是黑名单规则，这里仍能下单）',
+      rr.code === 0 && rr.data.freight === 0, rr.data)
+
+    // (6) appConfig 把完整规则下发给前端（前端据此显示运费）
+    const cfgRes = await dispatch('appConfig', {}, { db: dbWithRule(), openid: 'user_rule6' })
+    const dr = (cfgRes.data || []).find((x) => x.key === 'delivery_rule')
+    check('★ appConfig 下发 delivery_rule', !!(dr && dr.value), cfgRes.data)
+    check('  下发的是完整规则（含 area/distance/freight/cake/advance）',
+      !!dr.value.area && !!dr.value.distance && !!dr.value.freight && !!dr.value.cake && !!dr.value.advance,
+      dr.value && Object.keys(dr.value))
+    check('  下发的是归一化后的阶梯（云库值已生效）',
+      Array.isArray(dr.value.freight.tiers) && dr.value.freight.tiers[1].fee === 8,
+      dr.value && dr.value.freight.tiers)
+    check('  云库黑名单随之下发',
+      JSON.stringify(dr.value.area.excludeKeywords) === JSON.stringify(['山水间']),
+      dr.value.area.excludeKeywords)
+
+    // (7) 无规则时下发的就是代码默认值（前端不必自己拼默认值）
+    const cfgRes2 = await dispatch('appConfig', {}, { db: createMockDb(seedData()), openid: 'user_rule7' })
+    const dr2 = (cfgRes2.data || []).find((x) => x.key === 'delivery_rule')
+    check('无云库规则时下发代码默认阶梯',
+      dr2.value.freight.tiers[0].fee === CLOD_CFG.freight.tiers[0].fee &&
+      dr2.value.freight.tiers.length === CLOD_CFG.freight.tiers.length,
+      dr2.value.freight.tiers)
+  }
+
   console.log('\n=== 汇总 ===')
   console.log('  通过 ' + pass + ' / 失败 ' + fail)
   if (fail) process.exitCode = 1

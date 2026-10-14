@@ -33,6 +33,35 @@ function fail(msg, code) {
 const delivery = require('./delivery-calc')
 
 /**
+ * 读取并装入配送规则（阶段 8 新增）
+ * ---------------------------------------------------------------------------
+ * 规则来源：app_config 集合里 key = 'delivery_rule' 的 value（对象）。
+ *   - 取到了 → 覆盖代码默认值（config/delivery.js）里 area / distance / freight / cake 四节
+ *   - 取不到 / 不是对象 / 查询失败 → 用代码默认值
+ *
+ * ⚠️ 两条纪律（都是踩过的坑）：
+ *   1) **无论成功失败都要装一次**：云函数容器会被复用，不装就可能沿用到
+ *      "上一个请求装进来的规则"（跨请求污染），这比读不到配置危险得多；
+ *   2) 前端也要用同一份规则：本函数返回的完整规则由 appConfig action 下发给前端，
+ *      前端结算页据此显示运费 —— 否则会出现"屏显运费 ≠ 实付"。
+ *
+ * @param {object} ctx 云函数上下文（含 db）
+ * @returns {object} 生效后的完整规则
+ */
+async function loadDeliveryRule(ctx) {
+  let rule = null
+  try {
+    const doc = await ctx.db.findOne('app_config', { key: 'delivery_rule' })
+    if (doc && doc.value && typeof doc.value === 'object') {
+      rule = doc.value
+    }
+  } catch (e) {
+    // 集合不存在 / 查询失败：回退代码默认值，不影响下单
+  }
+  return delivery.setDeliveryRule(rule)
+}
+
+/**
  * 取规格选项的加价
  * 价格规则（用户 2026-02-14 确认）：选项是「加价」，最终价 = 商品基础价 + 各选中项加价
  */
@@ -684,6 +713,12 @@ async function appConfig(payload, ctx) {
     }
     data.push({ key, value: value === undefined ? '' : value })
   }
+
+  // 阶段 8：配送规则下发给前端（结算页要用**同一份**规则算运费）
+  // 注意这里的值永远是"完整的生效规则"（不是云库里的半截覆盖），
+  // 前端拿到后原样使用即可，不必依赖自己那份默认值 —— 从根上排除两边漂移。
+  data.push({ key: 'delivery_rule', value: await loadDeliveryRule(ctx) })
+
   return ok(data)
 }
 
@@ -900,7 +935,10 @@ async function orderCreate(payload, ctx) {
     if (!address) {
       return fail('外送订单缺少收货地址')
     }
-    // 用与前端完全相同的规则计算（delivery-calc.js 是 config/delivery.js 的副本）
+    // 阶段 8：先从云库装入规则（取不到 → 代码默认值），再算运费 ——
+    // 保证「顾客屏显的运费」与「服务端实收」用的是同一份规则。
+    await loadDeliveryRule(ctx)
+    // 用与前端完全相同的规则计算（delivery-calc.js 由 sync-delivery.js 从主包生成）
     quote = delivery.calcQuote({
       address,
       goodsAmount: amount,
