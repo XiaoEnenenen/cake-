@@ -253,6 +253,42 @@ const API = {
   // 2026-10-10：店主手动完成订单，取代原 orderHXV2（扫码核销）。
   orderFinish: (token, orderId) => callCloud('orderFinish', { id: orderId }),
 
+  // ---------- 店主端（阶段 10）----------
+  // ⚠️ 这些接口在**服务端**用 ctx.openid 比对白名单（requireAdmin）——
+  //    前端只是"入口显不显示"的展示判断，改前端拿不到权限。
+  //    页面统一通过 utils/admin.js 的 isShopAdmin() 决定入口，禁止自己在页面里拼 storage 判断。
+  /** 店主视角订单列表（跨顾客；statusBatch/page/pageSize） */
+  adminOrderList(data) {
+    const d = data || {}
+    return callCloud('orderAdminList', {
+      statusBatch: d.statusBatch,
+      page: d.page,
+      pageSize: d.pageSize
+    })
+  },
+
+  /** 店主视角商品列表（含已下架；categoryId/keyword 可选） */
+  adminGoodsList(data) {
+    const d = data || {}
+    return callCloud('goodsAdminList', {
+      categoryId: d.categoryId,
+      keyword: d.keyword
+    })
+  },
+
+  /** 新增 / 编辑商品（不带 id = 新增；没传的字段沿用旧值，可只传 { id, enabled } 切上下架） */
+  adminGoodsUpsert: (data) => callCloud('goodsUpsert', data || {}),
+
+  /** 下架商品（软删：enabled=false，可重新上架） */
+  adminGoodsDelete: (id) => callCloud('goodsDelete', { id }),
+
+  /** 保存配送设置（距离阶梯 / 不送区域 / 距离上限 / 蛋糕免运费） */
+  adminDeliverySave: (rule) => callCloud('deliveryRuleSave', rule || {}),
+
+  /** 「运费待确认」订单的运费补录：只传一个 freight，总额由服务端重算 */
+  adminOrderFreightConfirm: (id, freight) =>
+    callCloud('orderFreightConfirm', { id, freight }),
+
   // 2026-09-26 阶段二：已删除 orderPayV2（余额支付）与 scoreLogs（积分记录）方法。
   // 会员卡 / 积分 / 余额体系整体移除，云函数对应 action 也已删除。
 

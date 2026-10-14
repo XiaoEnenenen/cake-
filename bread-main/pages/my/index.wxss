@@ -289,6 +289,37 @@
   text-decoration: underline;
 }
 
+/* ===== 阶段 10：店主中心入口 =====
+   只在 isShopAdmin() 为真时渲染（普通顾客看不到这一行）。
+   图标不用图片资源，避免"多一张图就必须被引用"的负担。 */
+.list-item-admin {
+  background-color: #fffdf2;
+}
+
+.list-icon-admin {
+  width: 44rpx;
+  height: 44rpx;
+  line-height: 44rpx;
+  text-align: center;
+  border-radius: 10rpx;
+  background-color: #ffd100;
+  color: #1f1f1f;
+  font-size: 26rpx;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+/* 原始 openid（仅开发版/体验版显示，用于填店主白名单） */
+.store-openid {
+  margin-top: 8rpx;
+  padding: 0 30rpx;
+  font-size: 22rpx;
+  line-height: 34rpx;
+  color: #b3b3b3;
+  word-break: break-all;
+  text-align: center;
+}
+
 /* ===== 底部留白（给自定义 tabbar 让位）===== */
 .bottom {
   height: 180rpx;

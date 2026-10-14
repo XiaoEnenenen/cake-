@@ -1,5 +1,16 @@
 # cloud-data — 微信云开发数据准备
 
+> 🔴 **2026-10-14（阶段 10）口径切换：云库 = 唯一事实源**
+>
+> 阶段 10 起店主可以在小程序「店主中心 → 商品管理」里自己改价、换图、上下架。
+> **她在 App 里改过商品之后，不要再跑 `tools/build-goods.js` 重导覆盖** ——
+> 那条链路（改 `goods-real.source.json` → 跑脚本 → 控制台 upsert 导入）会把她的修改
+> 原样盖回去，而她以为改成功了（这是最容易发生、又最难察觉的一次"数据回退"）。
+>
+> 源文件现在只用于三种情况：**① 首次初始化建库 ② 换云环境迁移 ③ 批量改价**。
+> 真要批量改价，先导出一份云库 `goods` 当基线，改完再核对有没有把她这段时间的修改覆盖掉。
+> （工具层暂未实现"已存在的 `_id` 不覆盖"，所以纪律落在人身上，写在这里。）
+
 这个目录里的文件**不参与小程序运行**，是给微信云开发建库用的资料与导入模板。
 
 放在这里的目的：等你拿到自己的小程序 AppID、开通云开发后，可以直接照做，
@@ -17,7 +28,7 @@
 | `goods-sample.jsonl` / `goods-sample.json` | **5 个测试商品**（先跑通流程用） |
 | `banner.jsonl` / `banner.json` | **2 条轮播图** |
 | `app-config.jsonl` / `app-config.json` | **3 条店铺配置**（`mallName` 等），可选导入 |
-| `delivery-rule.sample.jsonl` / `.json` | **配送规则模板**（`app_config` 集合里 `key = 'delivery_rule'` 的那条记录）——阶段 8 起运费/外送范围可配，见下方「配送规则怎么改」 |
+| `delivery-rule.sample.jsonl` / `.json` | **配送规则模板**（`app_config` 集合里 `key = 'delivery_rule'` 的那条记录）——阶段 8 起运费/外送范围可配，见下方「配送规则怎么改」。⚠️ 这份模板**故意只写 `area` / `freight` 两节**（`tests/test-delivery.js` 有断言守着：不写 `advance` 这类"云库不生效"的节，防止有人以为改了就有用）。2026-10-14（阶段 10）起**日常改配送费请用「店主中心 → 配送设置」**，它写出的才是完整结构 |
 | `goods-real.jsonl` / `goods-real.json` | **真实商品**（由 `tools/build-goods.js` 生成，见 tools/README） |
 | `goods-real.source.json` | 真实商品的**人写源文件**（改商品只改这个，再跑脚本） |
 

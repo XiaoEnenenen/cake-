@@ -1,0 +1,262 @@
+/* 店主端 · 商品新增/编辑（阶段 10） */
+.age-page {
+  min-height: 100vh;
+  padding: 20rpx 0 0;
+  box-sizing: border-box;
+}
+
+.age-guard {
+  margin-top: 200rpx;
+  text-align: center;
+}
+.age-guard-title {
+  font-size: 34rpx;
+  font-weight: 600;
+  color: #1f1f1f;
+}
+.age-guard-sub {
+  margin-top: 16rpx;
+  font-size: 26rpx;
+  color: #8a8a8a;
+}
+
+.age-hint {
+  padding: 120rpx 0;
+  text-align: center;
+  font-size: 28rpx;
+  color: #8a8a8a;
+}
+.age-error {
+  margin: 40rpx 24rpx;
+  padding: 60rpx 0;
+  text-align: center;
+  background-color: #ffffff;
+  border-radius: 16rpx;
+}
+.age-error-text {
+  font-size: 28rpx;
+  color: #8a8a8a;
+}
+.age-retry {
+  display: inline-block;
+  margin-top: 24rpx;
+  padding: 12rpx 40rpx;
+  font-size: 28rpx;
+  background-color: #ffd100;
+  border-radius: 100rpx;
+  color: #1f1f1f;
+}
+
+.age-card {
+  margin: 0 24rpx 20rpx;
+  padding: 24rpx;
+  background-color: #ffffff;
+  border-radius: 16rpx;
+}
+.age-card-title {
+  font-size: 30rpx;
+  font-weight: 600;
+  color: #1f1f1f;
+  padding-bottom: 10rpx;
+}
+
+.age-field {
+  display: flex;
+  align-items: center;
+  padding: 20rpx 0;
+  border-bottom: 1rpx solid #f2f2f2;
+}
+.age-field-col {
+  display: block;
+}
+.age-label {
+  width: 220rpx;
+  flex-shrink: 0;
+  font-size: 28rpx;
+  color: #3c3c3c;
+}
+.age-input {
+  flex: 1;
+  font-size: 28rpx;
+  color: #1f1f1f;
+}
+.age-picker {
+  font-size: 28rpx;
+  color: #1f1f1f;
+}
+.age-textarea {
+  width: 100%;
+  height: 120rpx;
+  margin-top: 12rpx;
+  font-size: 27rpx;
+  line-height: 38rpx;
+  color: #1f1f1f;
+}
+.age-textarea-tall {
+  height: 260rpx;
+}
+.age-field-tip {
+  padding: 12rpx 0 0;
+  font-size: 22rpx;
+  line-height: 32rpx;
+  color: #8a8a8a;
+}
+
+/* 图片 */
+.age-pics {
+  display: flex;
+  flex-wrap: wrap;
+  padding-top: 16rpx;
+}
+.age-pic-wrap {
+  position: relative;
+  width: 180rpx;
+  height: 180rpx;
+  margin: 0 16rpx 16rpx 0;
+}
+.age-pic {
+  width: 180rpx;
+  height: 180rpx;
+  border-radius: 12rpx;
+  background-color: #f5f5f5;
+}
+.age-pic-del {
+  position: absolute;
+  right: -10rpx;
+  top: -10rpx;
+  width: 44rpx;
+  height: 44rpx;
+  line-height: 44rpx;
+  text-align: center;
+  font-size: 26rpx;
+  color: #ffffff;
+  background-color: rgba(0, 0, 0, 0.6);
+  border-radius: 50%;
+}
+.age-pic-add {
+  width: 180rpx;
+  height: 180rpx;
+  border: 1rpx dashed #d9d9d9;
+  border-radius: 12rpx;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+.age-pic-add-plus {
+  font-size: 46rpx;
+  color: #b3b3b3;
+  line-height: 50rpx;
+}
+.age-pic-add-text {
+  margin-top: 6rpx;
+  font-size: 22rpx;
+  color: #8a8a8a;
+}
+.age-pic-tip {
+  padding-top: 8rpx;
+  font-size: 22rpx;
+  line-height: 32rpx;
+  color: #8a8a8a;
+}
+
+/* 规格组 */
+.age-group {
+  margin-top: 20rpx;
+  padding: 20rpx;
+  background-color: #fafafa;
+  border-radius: 12rpx;
+}
+.age-group-head {
+  display: flex;
+  align-items: center;
+}
+.age-input-group {
+  font-weight: 600;
+}
+.age-group-del {
+  flex-shrink: 0;
+  margin-left: 16rpx;
+  padding: 10rpx 20rpx;
+  font-size: 24rpx;
+  color: #c0392b;
+  border: 1rpx solid #ffb3a7;
+  border-radius: 100rpx;
+}
+.age-opt {
+  display: flex;
+  align-items: center;
+  margin-top: 16rpx;
+}
+.age-input-opt {
+  flex: 3;
+}
+.age-input-delta {
+  flex: 1;
+  margin-left: 16rpx;
+  text-align: right;
+  color: #ff4b33;
+}
+.age-opt-del {
+  flex-shrink: 0;
+  width: 56rpx;
+  text-align: right;
+  font-size: 26rpx;
+  color: #b3b3b3;
+}
+.age-add-opt {
+  margin-top: 18rpx;
+  font-size: 26rpx;
+  color: #8a6d00;
+}
+.age-add-group {
+  margin-top: 24rpx;
+  padding: 22rpx 0;
+  text-align: center;
+  font-size: 28rpx;
+  color: #1f1f1f;
+  font-weight: 600;
+  background-color: #fff7d6;
+  border-radius: 12rpx;
+}
+
+/* 售卖设置 */
+.age-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20rpx 0;
+  border-bottom: 1rpx solid #f2f2f2;
+}
+.age-row-label {
+  font-size: 28rpx;
+  color: #3c3c3c;
+}
+
+/* 底部保存栏 */
+.age-bottom-holder {
+  height: 160rpx;
+}
+.age-bottom-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 16rpx 24rpx;
+  padding-bottom: calc(16rpx + env(safe-area-inset-bottom));
+  background-color: #ffffff;
+  box-shadow: 0 -4rpx 16rpx rgba(0, 0, 0, 0.06);
+}
+.age-save {
+  height: 88rpx;
+  line-height: 88rpx;
+  text-align: center;
+  font-size: 30rpx;
+  font-weight: 600;
+  color: #1f1f1f;
+  background-color: #ffd100;
+  border-radius: 100rpx;
+}
+.age-save-disabled {
+  opacity: 0.6;
+}

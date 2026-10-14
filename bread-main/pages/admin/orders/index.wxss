@@ -1,0 +1,296 @@
+/* 店主端 · 订单管理（阶段 10） */
+.ao-page {
+  min-height: 100vh;
+  padding: 0 0 60rpx;
+  box-sizing: border-box;
+}
+
+.ao-guard {
+  margin-top: 200rpx;
+  text-align: center;
+}
+.ao-guard-title {
+  font-size: 34rpx;
+  font-weight: 600;
+  color: #1f1f1f;
+}
+.ao-guard-sub {
+  margin-top: 16rpx;
+  font-size: 26rpx;
+  color: #8a8a8a;
+}
+
+/* 状态筛选 */
+.ao-tabs {
+  display: flex;
+  background-color: #ffffff;
+  border-bottom: 1rpx solid #ebebeb;
+}
+.ao-tab {
+  flex: 1;
+  padding: 24rpx 0 20rpx;
+  text-align: center;
+  position: relative;
+}
+.ao-tab-label {
+  font-size: 28rpx;
+  color: #3c3c3c;
+}
+.ao-tab-count {
+  margin-top: 6rpx;
+  font-size: 24rpx;
+  color: #8a8a8a;
+}
+.ao-tab-active .ao-tab-label {
+  color: #1f1f1f;
+  font-weight: 600;
+}
+.ao-tab-active .ao-tab-count {
+  color: #ff4b33;
+}
+.ao-tab-active::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: 64rpx;
+  height: 6rpx;
+  margin-left: -32rpx;
+  background-color: #ffd100;
+  border-radius: 6rpx;
+}
+
+.ao-hint {
+  padding: 120rpx 0;
+  text-align: center;
+  font-size: 28rpx;
+  color: #8a8a8a;
+}
+.ao-error {
+  margin: 40rpx 24rpx;
+  padding: 60rpx 0;
+  text-align: center;
+  background-color: #ffffff;
+  border-radius: 16rpx;
+}
+.ao-error-text {
+  font-size: 28rpx;
+  color: #8a8a8a;
+}
+.ao-retry {
+  display: inline-block;
+  margin-top: 24rpx;
+  padding: 12rpx 40rpx;
+  font-size: 28rpx;
+  background-color: #ffd100;
+  border-radius: 100rpx;
+  color: #1f1f1f;
+}
+
+/* 订单卡片 */
+.ao-card {
+  margin: 20rpx 24rpx 0;
+  padding: 24rpx;
+  background-color: #ffffff;
+  border-radius: 16rpx;
+}
+.ao-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 18rpx;
+  border-bottom: 1rpx solid #f2f2f2;
+}
+.ao-badge {
+  padding: 6rpx 18rpx;
+  background-color: #ffd100;
+  border-radius: 100rpx;
+  font-size: 26rpx;
+  font-weight: 600;
+  color: #1f1f1f;
+}
+.ao-status {
+  font-size: 26rpx;
+  color: #ff4b33;
+  font-weight: 600;
+}
+
+.ao-line {
+  display: flex;
+  margin-top: 14rpx;
+  font-size: 26rpx;
+  line-height: 36rpx;
+}
+.ao-label {
+  width: 130rpx;
+  flex-shrink: 0;
+  color: #8a8a8a;
+}
+.ao-value {
+  flex: 1;
+  min-width: 0;
+  color: #3c3c3c;
+  word-break: break-all;
+}
+.ao-value-strong {
+  font-weight: 600;
+  color: #1f1f1f;
+}
+.ao-value-remark {
+  color: #ff4b33;
+}
+
+/* 「为什么这一单还不能完成」的状态说明（支付未接入时避免店主以为 App 坏了） */
+.ao-statushint {
+  margin-top: 14rpx;
+  padding: 14rpx 18rpx;
+  background-color: #fff7d6;
+  border-radius: 10rpx;
+  font-size: 22rpx;
+  line-height: 32rpx;
+  color: #8a6d00;
+}
+
+.ao-money {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 18rpx;
+  padding-top: 16rpx;
+  border-top: 1rpx solid #f2f2f2;
+  font-size: 24rpx;
+  color: #8a8a8a;
+}
+.ao-money-item {
+  margin-right: 22rpx;
+}
+.ao-money-total {
+  margin-left: auto;
+  font-size: 28rpx;
+  font-weight: 600;
+  color: #ff4b33;
+}
+
+.ao-freight-warn {
+  margin-top: 16rpx;
+  padding: 16rpx 18rpx;
+  background-color: #fff1f0;
+  border-radius: 10rpx;
+  font-size: 24rpx;
+  line-height: 34rpx;
+  color: #c0392b;
+}
+
+.ao-actions {
+  display: flex;
+  flex-wrap: wrap;
+  margin-top: 20rpx;
+}
+.ao-btn {
+  margin: 12rpx 16rpx 0 0;
+  padding: 14rpx 30rpx;
+  font-size: 26rpx;
+  color: #3c3c3c;
+  border: 1rpx solid #d9d9d9;
+  border-radius: 100rpx;
+  background-color: #ffffff;
+}
+.ao-btn-warn {
+  color: #c0392b;
+  border-color: #ffb3a7;
+  background-color: #fff1f0;
+}
+.ao-btn-primary {
+  color: #1f1f1f;
+  font-weight: 600;
+  border-color: #ffd100;
+  background-color: #ffd100;
+}
+
+.ao-more {
+  padding: 40rpx 0;
+  text-align: center;
+  font-size: 24rpx;
+  color: #8a8a8a;
+}
+
+/* 运费补录弹层 */
+.ao-mask {
+  position: fixed;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.45);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.ao-dialog {
+  width: 600rpx;
+  padding: 36rpx 32rpx 28rpx;
+  background-color: #ffffff;
+  border-radius: 20rpx;
+  box-sizing: border-box;
+}
+.ao-dialog-title {
+  font-size: 32rpx;
+  font-weight: 600;
+  color: #1f1f1f;
+}
+.ao-dialog-sub {
+  margin-top: 12rpx;
+  font-size: 24rpx;
+  line-height: 34rpx;
+  color: #8a8a8a;
+}
+.ao-dialog-warn {
+  color: #c0392b;
+}
+.ao-dialog-row {
+  display: flex;
+  align-items: center;
+  margin-top: 24rpx;
+  padding-bottom: 16rpx;
+  border-bottom: 1rpx solid #ebebeb;
+}
+.ao-dialog-label {
+  width: 200rpx;
+  font-size: 28rpx;
+  color: #3c3c3c;
+}
+.ao-dialog-input {
+  flex: 1;
+  font-size: 32rpx;
+  font-weight: 600;
+  color: #1f1f1f;
+}
+.ao-dialog-tip {
+  margin-top: 16rpx;
+  font-size: 22rpx;
+  color: #b3b3b3;
+}
+.ao-dialog-actions {
+  display: flex;
+  margin-top: 30rpx;
+}
+.ao-dialog-btn {
+  flex: 1;
+  height: 80rpx;
+  line-height: 80rpx;
+  text-align: center;
+  font-size: 28rpx;
+  color: #3c3c3c;
+  background-color: #f5f5f5;
+  border-radius: 100rpx;
+}
+.ao-dialog-btn-primary {
+  margin-left: 20rpx;
+  background-color: #ffd100;
+  color: #1f1f1f;
+  font-weight: 600;
+}
+.ao-dialog-btn-disabled {
+  opacity: 0.6;
+}

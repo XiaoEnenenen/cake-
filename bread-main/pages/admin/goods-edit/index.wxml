@@ -1,0 +1,231 @@
+<!-- 店主端 · 商品新增/编辑（阶段 10）：改价、换图、规格组、上下架 -->
+<view class="age-page">
+  <view wx:if="{{ !isAdminUser }}" class="age-guard">
+    <view class="age-guard-title">无店主权限</view>
+    <view class="age-guard-sub">该入口仅店主本人可见可用</view>
+  </view>
+
+  <view wx:elif="{{ loading }}" class="age-hint">正在读取商品…</view>
+
+  <view wx:elif="{{ loadError }}" class="age-error">
+    <view class="age-error-text">商品读取失败（可能已被删除），请返回列表重试</view>
+    <view class="age-retry" bindtap="retryLoad">点击重试</view>
+  </view>
+
+  <block wx:else>
+    <!-- ===== 基本信息 ===== -->
+    <view class="age-card">
+      <view class="age-card-title">{{ isCreate ? '新增商品' : '编辑商品' }}</view>
+
+      <view class="age-field">
+        <view class="age-label">商品名称</view>
+        <input
+          class="age-input"
+          placeholder="例如：慕斯围边水果小蛋糕"
+          value="{{ name }}"
+          maxlength="40"
+          bindinput="onNameInput"
+        />
+      </view>
+
+      <view class="age-field">
+        <view class="age-label">分类</view>
+        <picker
+          mode="selector"
+          range="{{ categoryNames }}"
+          value="{{ categoryIndex }}"
+          bindchange="onCategoryChange"
+        >
+          <view class="age-picker">{{ categoryNames[categoryIndex] || '请选择分类' }} ▾</view>
+        </picker>
+      </view>
+
+      <view class="age-field">
+        <view class="age-label">价格（元）</view>
+        <input
+          class="age-input"
+          type="digit"
+          placeholder="例如 168"
+          value="{{ minPrice }}"
+          bindinput="onPriceInput"
+        />
+      </view>
+      <view class="age-field-tip">这是**基础价**：顾客选规格时的最终价 = 基础价 + 各选中规格的加价。</view>
+
+      <view class="age-field">
+        <view class="age-label">单位</view>
+        <input class="age-input" value="{{ unit }}" maxlength="6" bindinput="onUnitInput" />
+      </view>
+
+      <view class="age-field">
+        <view class="age-label">简介</view>
+        <input
+          class="age-input"
+          placeholder="例如：动物奶油 / 约400克"
+          value="{{ characteristic }}"
+          maxlength="60"
+          bindinput="onCharInput"
+        />
+      </view>
+
+      <view class="age-field age-field-col">
+        <view class="age-label">购买须知</view>
+        <textarea
+          class="age-textarea"
+          placeholder="例如：生日蛋糕提前 2-3 小时预定（结算页顶部会显示）"
+          value="{{ purchaseNotes }}"
+          maxlength="60"
+          bindinput="onNoteInput"
+        />
+      </view>
+
+      <view class="age-field age-field-col">
+        <view class="age-label">详情描述</view>
+        <textarea
+          class="age-textarea age-textarea-tall"
+          placeholder="可以写主料、奶油类型、蛋糕胚、适合场景等；换行会自动分段。"
+          value="{{ content }}"
+          maxlength="5000"
+          bindinput="onContentInput"
+        />
+      </view>
+    </view>
+
+    <!-- ===== 图片 ===== -->
+    <view class="age-card">
+      <view class="age-card-title">商品图片（第一张是列表缩略图）</view>
+      <view class="age-pics">
+        <view wx:for="{{ pics }}" wx:key="*this" class="age-pic-wrap">
+          <image class="age-pic" mode="aspectFill" src="{{ item }}" data-index="{{ index }}" bindtap="previewPic"></image>
+          <view class="age-pic-del" data-index="{{ index }}" catchtap="removePic">✕</view>
+        </view>
+        <view wx:if="{{ pics.length < 5 }}" class="age-pic-add" bindtap="pickImage">
+          <view class="age-pic-add-plus">＋</view>
+          <view class="age-pic-add-text">{{ uploading ? '上传中…' : '加图片' }}</view>
+        </view>
+      </view>
+      <view class="age-pic-tip">图片会上传到云存储；**没上传成功不能保存**（否则顾客端是裂图）。</view>
+    </view>
+
+    <!-- ===== 规格组 ===== -->
+    <view class="age-card">
+      <view class="age-card-title">规格组（选填）</view>
+      <view class="age-field-tip">
+        蛋糕常用「磅数 + 口味」，加价型（夹心、奶油）也放这里：选项的加价会加到基础价上。
+        没有规格的商品不用加。
+      </view>
+
+      <view wx:for="{{ specGroups }}" wx:key="id" wx:for-item="group" wx:for-index="gi" class="age-group">
+        <view class="age-group-head">
+          <input
+            class="age-input age-input-group"
+            placeholder="规格组名称，例如：磅数"
+            value="{{ group.name }}"
+            maxlength="20"
+            data-gi="{{ gi }}"
+            bindinput="onGroupNameInput"
+          />
+          <view class="age-group-del" data-gi="{{ gi }}" catchtap="removeGroup">删除本组</view>
+        </view>
+
+        <view
+          wx:for="{{ group.childsCurGoods }}"
+          wx:key="id"
+          wx:for-item="opt"
+          wx:for-index="oi"
+          class="age-opt"
+        >
+          <input
+            class="age-input age-input-opt"
+            placeholder="选项名，例如：6寸"
+            value="{{ opt.name }}"
+            maxlength="20"
+            data-gi="{{ gi }}"
+            data-oi="{{ oi }}"
+            bindinput="onOptionNameInput"
+          />
+          <input
+            class="age-input age-input-delta"
+            type="digit"
+            placeholder="加价"
+            value="{{ opt.priceDelta }}"
+            data-gi="{{ gi }}"
+            data-oi="{{ oi }}"
+            bindinput="onOptionDeltaInput"
+          />
+          <view class="age-opt-del" data-gi="{{ gi }}" data-oi="{{ oi }}" catchtap="removeOption">✕</view>
+        </view>
+
+        <view class="age-add-opt" data-gi="{{ gi }}" catchtap="addOption">＋ 加一个选项</view>
+      </view>
+
+      <view class="age-add-group" bindtap="addGroup">＋ 加一组规格</view>
+      <view wx:if="{{ specGroups.length }}" class="age-field-tip">
+        ⚠️ 规格组/选项的名称可以随时改；但「磅数」这类被配送规则用来识别尺寸的组名要谨慎改
+        （改了就认不出"6寸及以上免配送费"）。
+      </view>
+    </view>
+
+    <!-- ===== 售卖设置 ===== -->
+    <view class="age-card">
+      <view class="age-card-title">售卖设置</view>
+
+      <view class="age-row">
+        <view class="age-row-label">上架（顾客可见）</view>
+        <switch checked="{{ enabled }}" color="#ffd100" bindchange="onEnabledChange" />
+      </view>
+
+      <view class="age-field">
+        <view class="age-label">排序（越小越靠前）</view>
+        <input
+          class="age-input"
+          type="number"
+          placeholder="例如 10"
+          value="{{ sort }}"
+          bindinput="onSortInput"
+        />
+      </view>
+
+      <view class="age-field">
+        <view class="age-label">自取立减（元/件）</view>
+        <input
+          class="age-input"
+          type="digit"
+          placeholder="不填 = 不区分自提/外送"
+          value="{{ pickupDiscount }}"
+          bindinput="onDiscountInput"
+        />
+      </view>
+      <view class="age-field-tip">填了之后顾客选「自提」时每件减这么多（美团上的"外送 178 / 自取 168"就是 10）。</view>
+
+      <view class="age-field">
+        <view class="age-label">打包费（元/件）</view>
+        <input
+          class="age-input"
+          type="digit"
+          placeholder="不填 = 不收"
+          value="{{ packingFee }}"
+          bindinput="onPackingInput"
+        />
+      </view>
+
+      <view class="age-field">
+        <view class="age-label">最少购买（份）</view>
+        <input
+          class="age-input"
+          type="number"
+          placeholder="不填 = 1 份起购"
+          value="{{ minBuyNumber }}"
+          bindinput="onMinBuyInput"
+        />
+      </view>
+    </view>
+
+    <view class="age-bottom-holder"></view>
+    <view class="age-bottom-bar">
+      <view class="age-save {{ saving ? 'age-save-disabled' : '' }}" bindtap="save">
+        {{ saving ? '保存中…' : (isCreate ? '新增商品' : '保存修改') }}
+      </view>
+    </view>
+  </block>
+</view>

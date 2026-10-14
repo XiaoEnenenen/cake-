@@ -1,0 +1,167 @@
+<!-- 店主端 · 配送设置（阶段 10）：距离阶梯 / 不送区域 / 距离上限 / 蛋糕免配送费 -->
+<view class="ad-page">
+  <view wx:if="{{ !isAdminUser }}" class="ad-guard">
+    <view class="ad-guard-title">无店主权限</view>
+    <view class="ad-guard-sub">该入口仅店主本人可见可用</view>
+  </view>
+
+  <view wx:elif="{{ loading }}" class="ad-hint">正在读取配送规则…</view>
+
+  <view wx:elif="{{ loadError }}" class="ad-error">
+    <view class="ad-error-text">配送规则读取失败，请检查网络后重试</view>
+    <view class="ad-retry" bindtap="retryLoad">点击重试</view>
+  </view>
+
+  <block wx:else>
+    <!-- 当前生效规则摘要 -->
+    <view class="ad-card">
+      <view class="ad-card-title">当前生效规则</view>
+      <view class="ad-summary">{{ summaryText }}</view>
+    </view>
+
+    <!-- 距离阶梯 -->
+    <view class="ad-card">
+      <view class="ad-card-title">距离阶梯运费</view>
+      <view class="ad-tip">
+        按下单时算出的距离取档：从第一档往下比，命中哪档就按哪档收。最后一档的距离上限留空 = 「以上全部」。
+      </view>
+
+      <view wx:for="{{ tiers }}" wx:key="index" class="ad-tier">
+        <view class="ad-tier-head">
+          <view class="ad-tier-no">第 {{ index + 1 }} 档</view>
+          <view class="ad-tier-del" data-index="{{ index }}" catchtap="removeTier">删除</view>
+        </view>
+        <view class="ad-tier-row">
+          <view class="ad-tier-label">距离上限（公里）</view>
+          <input
+            class="ad-tier-input"
+            type="digit"
+            placeholder="留空 = 不限"
+            value="{{ item.maxKm }}"
+            data-index="{{ index }}"
+            data-field="maxKm"
+            bindinput="onTierInput"
+          />
+        </view>
+        <view class="ad-tier-row">
+          <view class="ad-tier-label">运费（元）</view>
+          <input
+            class="ad-tier-input"
+            type="digit"
+            placeholder="留空 = 运费待确认"
+            value="{{ item.fee }}"
+            data-index="{{ index }}"
+            data-field="fee"
+            bindinput="onTierInput"
+          />
+        </view>
+        <view class="ad-tier-row">
+          <view class="ad-tier-label">免运费门槛（元）</view>
+          <input
+            class="ad-tier-input"
+            type="digit"
+            placeholder="留空 = 不设门槛"
+            value="{{ item.freeAmount }}"
+            data-index="{{ index }}"
+            data-field="freeAmount"
+            bindinput="onTierInput"
+          />
+        </view>
+        <view class="ad-tier-row">
+          <view class="ad-tier-label">待确认文案</view>
+          <input
+            class="ad-tier-input"
+            placeholder="运费留空时给顾客看的说明"
+            value="{{ item.tip }}"
+            data-index="{{ index }}"
+            data-field="tip"
+            bindinput="onTierInput"
+          />
+        </view>
+        <view class="ad-tier-sum">{{ item.summary }}</view>
+      </view>
+
+      <view class="ad-add" bindtap="addTier">＋ 加一档</view>
+    </view>
+
+    <!-- 配送范围与不送区域 -->
+    <view class="ad-card">
+      <view class="ad-card-title">配送范围（能送的片区）</view>
+      <view class="ad-tip">
+        顾客「收货地址的文字」里包含下面任一个词，才算在配送片区内（每行一个，也可用逗号分隔）。
+        ⚠️ 请写完整专名（如「太平新城」「山水融城」）；写「西山」「太平」这类短词会把片区外的地址也放进来，
+        系统会拒绝少于 3 个字的词。
+      </view>
+      <textarea
+        class="ad-textarea"
+        placeholder="太平新城、山水融城、太桃公路"
+        value="{{ keywordsText }}"
+        bindinput="onKeywordsInput"
+      ></textarea>
+    </view>
+
+    <view class="ad-card">
+      <view class="ad-card-title">不送区域（黑名单）</view>
+      <view class="ad-tip">命中下面任一个词的收货地址不能外送（每行一个，留空 = 没有不送区域）。</view>
+      <textarea
+        class="ad-textarea"
+        placeholder="例如：某某小区、某某路"
+        value="{{ excludeText }}"
+        bindinput="onExcludeInput"
+      ></textarea>
+    </view>
+
+    <view class="ad-card">
+      <view class="ad-card-title">外送距离上限</view>
+      <view class="ad-tip">超过这个距离不允许外送（顾客只能选自提）。留空 = 不限制（超过最后一档按「运费待确认」处理）。</view>
+      <view class="ad-field">
+        <view class="ad-label">上限（公里）</view>
+        <input
+          class="ad-input"
+          type="digit"
+          placeholder="留空 = 不限制"
+          value="{{ forbidBeyondKm }}"
+          bindinput="onForbidInput"
+        />
+      </view>
+    </view>
+
+    <!-- 蛋糕免配送费 -->
+    <view class="ad-card">
+      <view class="ad-card-title">蛋糕免配送费</view>
+      <view class="ad-row">
+        <view class="ad-row-label">启用（6 寸及以上蛋糕近距免运费）</view>
+        <switch checked="{{ cakeEnabled }}" color="#ffd100" bindchange="onCakeEnabledChange" />
+      </view>
+      <view class="ad-field">
+        <view class="ad-label">免运费距离（公里）</view>
+        <input
+          class="ad-input"
+          type="digit"
+          value="{{ cakeFreeWithinKm }}"
+          bindinput="onCakeKmInput"
+        />
+      </view>
+      <view class="ad-field">
+        <view class="ad-label">最小尺寸（寸）</view>
+        <input
+          class="ad-input"
+          type="digit"
+          value="{{ cakeMinSizeInch }}"
+          bindinput="onCakeInchInput"
+        />
+      </view>
+      <view class="ad-row">
+        <view class="ad-row-label">无条件免运费（不看是否满门槛）</view>
+        <switch checked="{{ cakeOverrideThreshold }}" color="#ffd100" bindchange="onCakeOverrideChange" />
+      </view>
+    </view>
+
+    <view class="ad-bottom-holder"></view>
+    <view class="ad-bottom-bar">
+      <view class="ad-save {{ saving ? 'ad-save-disabled' : '' }}" bindtap="save">
+        {{ saving ? '保存中…' : '保存并立即生效' }}
+      </view>
+    </view>
+  </block>
+</view>

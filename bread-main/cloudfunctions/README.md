@@ -39,7 +39,7 @@ cloudfunctions/
 
 ## 已实现的接口
 
-> **路由表实际可调用的 action 共 24 个**（`handlers.js` 的 `handlers` 导出对象，
+> **路由表实际可调用的 action 共 29 个**（`handlers.js` 的 `handlers` 导出对象，
 > 由 `tests/test-stage5.js` 断言数量与本文档一致）。下表多出的 `importData`
 > 已不在路由表里，仅通过 `module.exports` 暴露给云控制台/本地测试。
 
@@ -67,6 +67,11 @@ cloudfunctions/
 | `orderDelete` | `orderDelete` | 删除订单 |
 | `orderFinish` | `orderFinish` | 完成订单（店主手动，取代原 `orderHx` 扫码核销） |
 | `orderAdminList` | `orderAdminList` | **店主视角订单列表**（2026-10-14 新增，T-3）：跨顾客查询 + `requireAdmin` 鉴权，带收货人/电话/地址/期望时间；**不返回 `_openid`** |
+| `goodsAdminList` | — | **店主视角商品列表**（2026-10-14 阶段 10）：含**已下架**商品（顾客端 `goodsList` 只返回上架的，下架后就找不回来了）+ 分类下拉 + 关键词搜索；`requireAdmin` |
+| `goodsUpsert` | — | **新增/编辑商品**（阶段 10）：名称/分类/价格/图片/规格组/上下架/排序/自取立减/打包费/最少购买；**没传的字段沿用旧值**（可只传 `{id, enabled}` 切上下架）；`requireAdmin` + 入参白名单校验 + `updBy/updTime` 审计 |
+| `goodsDelete` | — | **下架商品**（阶段 10，软删）：只把 `enabled` 置 false，**不物理删除**（可随时重新上架，历史订单是快照不受影响）；`requireAdmin` |
+| `deliveryRuleSave` | — | **保存配送设置**（阶段 10，写 `app_config.delivery_rule`）：距离阶梯 / 不送区域 / 外送距离上限 / 配送范围关键词 / 蛋糕免运费；**先显式校验再归一化**（非法值报错拒绝，不静默回退默认值）；`requireAdmin` |
+| `orderFreightConfirm` | — | **运费补录**（阶段 10）：「运费待确认」的外送单，店主电话谈好后写入 `freight` 并由服务端重算 `amountReal = goodsAmount + packingFee + freight`；只对下单时运费待确认（或已补录过）的未完成订单开放；`requireAdmin` + 审计 |
 | `wxpay` | `wxpay` | 微信支付统一下单（**当前返回"未接入"**，需先申请商户号，阶段一未接线） |
 | `fetchShops` | `fetchShops` | 单店模式兼容桩，固定返回空数组（前端已无调用方） |
 | `shopSubdetail` | `shopSubdetail` | 单店模式兼容桩，固定返回失败（`pages/current-order` 拨号取号用） |
@@ -120,8 +125,12 @@ const res = await API.goodsv2({ categoryId: cid })   // 原来：WXAPI.goodsv2(.
 > 经核对，`utils/tools.js` **已不存在**（全项目无该文件）。
 >
 > **2026-10-12 阶段 5.7 再次核对**（`tests/test-stage5.js` 会重新数一遍并断言本文档的数字）：
-> 实际接线为 **8 个页面** + `utils/auth.js` + `utils/pay.js` + `utils/admin.js` + `components/bind-mobile` + `app.js`。
-> 8 个页面是：`about-us/detail`、`current-order`、`goods-details`、`index`、`my`、`order-view`、`orders`、`pay`。
+> **2026-10-14 阶段 10 更新**：新增 5 个店主端页面后，实际接线为 **13 个页面** +
+> `utils/auth.js` + `utils/pay.js` + `utils/admin.js` + `components/bind-mobile` + `app.js`。
+> 13 个页面是：`about-us/detail`、`current-order`、`goods-details`、`index`、`my`、
+> `order-view`、`orders`、`pay`，以及阶段 10 的 5 个店主端页面
+> `admin/index`、`admin/orders/index`、`admin/goods/index`、`admin/goods-edit/index`、
+> `admin/delivery/index`（都不进 tabBar，普通顾客看不到入口）。
 > （此前这里写的「13 个页面」是 api 工厂时代的数字，从未复核过；报告 E-07 已记录该文档与代码不符。）
 >
 > `utils/pay.js` 的支付统一下单仍未接线（见文末），云开发通道会返回"未接入"文案。

@@ -26,11 +26,28 @@ const LOC = require('../../utils/location')
 const OS = require('../../utils/order-status')
 const FMT = require('../../utils/format')
 const LOG = require('../../utils/log')
+// 阶段 10：店主中心入口的显隐判断（只是展示判断，鉴权在云函数 requireAdmin）
+const ADMIN = require('../../utils/admin')
 const app = getApp()
 
 // 订单入口（阶段 4.1）：状态与入口定义统一放在 utils/order-status.js，
 // 本页不再自己维护一份（原来这里还写着"后端存在 status=2 与 4"的注释）。
 const ORDER_ENTRIES = OS.ORDER_ENTRIES
+
+/**
+ * 阶段 10：按当前用户 openid 判断是否为店主（决定「店主中心」入口显不显示）。
+ * 为什么要包一层 try/catch：utils/admin.js 依赖 storage 与 wx 环境，
+ *   任何异常都不该把「我的」页的资料展示带崩 —— 取不到就按"非店主"处理（宁可不显示）。
+ */
+function isAdminByOpenid(openid) {
+  try {
+    if (!ADMIN || typeof ADMIN.isAdminOpenid !== 'function') return false
+    return ADMIN.isAdminOpenid(openid)
+  } catch (e) {
+    LOG.error('[my] 店主身份判断失败，按非店主处理', e)
+    return false
+  }
+}
 
 Page({
   data: {
@@ -69,7 +86,14 @@ Page({
     defaultAddressText: '',
     // 是否是开发版 / 体验版：用于显示「校准门店坐标」这个店主专用入口
     //（正式版为 false，顾客看不到）
-    isDevEnv: false
+    isDevEnv: false,
+    // ===== 阶段 10：店主中心入口 =====
+    // 仅当 isShopAdmin() 为真时渲染（读 storage 的白名单，**只是展示判断**；
+    // 真正的权限在云函数每个店主 action 的 requireAdmin）。
+    isAdminUser: false,
+    // 原始 openid：只在开发版 / 体验版显示，用于把它填进店主白名单
+    // （正式版顾客永远看不到；顾客界面用的是不可反推的短编号 userNo）
+    myOpenid: ''
   },
 
   onLoad() {
@@ -80,6 +104,18 @@ Page({
   onShow() {
     this.loadShopConfig()
     this.loadDefaultAddress()
+    // 阶段 10 复核整改：app.js 写白名单 storage 与本次 userDetail 是并发的 ——
+    // 先确保白名单到手再判断身份，否则刚配好白名单的店主第一次进来会看不到「店主中心」。
+    this.ensureWhitelistThenLoad()
+  },
+
+  /** 见上：白名单缺失时补一次 appConfig（拿到就写 storage，之后纯本地判断） */
+  async ensureWhitelistThenLoad() {
+    try {
+      if (ADMIN && typeof ADMIN.ensureWhitelist === 'function') await ADMIN.ensureWhitelist()
+    } catch (e) {
+      LOG.error('[my] 读取店主白名单失败，按非店主处理', e)
+    }
     // 阶段 5.6 复核整改：AUTH.authorize() 在云函数不通时会 throw，
     // 原来没有 .catch → 未处理的 Promise rejection（真机上还伴随一条报错）。
     // 2026-10-14 审查修复：失败时**不能只是静默吞掉** —— 原来卡片会永远停在
@@ -142,7 +178,13 @@ Page({
         userInfo: base,
         profileError: false,
         // 阶段 5.5 / P-12：列表里显示短编号，不显示原始 OPENID
-        userNo: FMT.shortUserNo(base.id || '')
+        userNo: FMT.shortUserNo(base.id || ''),
+        // ===== 阶段 10 =====
+        // 店主中心入口的显隐。注意：这只是"要不要显示入口"，不是鉴权 ——
+        // 云函数每个店主 action 都会用 ctx.openid 在服务端重新校验白名单。
+        isAdminUser: isAdminByOpenid(base.id),
+        // 原始 openid 只在开发版 / 体验版回填（用于填白名单），正式版为空串
+        myOpenid: this.data.isDevEnv ? String(base.id || '') : ''
       })
       return
     }
@@ -296,6 +338,28 @@ Page({
   goShopLocator() {
     wx.navigateTo({
       url: '/pages/shop-locator/index'
+    })
+  },
+
+  // ===== 阶段 10：店主中心 =====
+  // 入口只在 isAdminUser 为真时渲染；即使有人手动改 storage 把入口点出来，
+  // 云函数侧的 requireAdmin 也会拒绝所有店主接口（前端改不掉权限）。
+  goAdmin() {
+    wx.navigateTo({
+      url: '/pages/admin/index'
+    })
+  },
+
+  /** 复制原始 openid（仅开发版 / 体验版可见），用于填 shop-config.js 的 adminOpenids */
+  copyMyOpenid() {
+    const openid = this.data.myOpenid
+    if (!openid) {
+      wx.showToast({ title: '还没读到 openid，请稍后重试', icon: 'none' })
+      return
+    }
+    wx.setClipboardData({
+      data: openid,
+      success: () => wx.showToast({ title: '已复制，发给开发者即可', icon: 'none' })
     })
   },
 

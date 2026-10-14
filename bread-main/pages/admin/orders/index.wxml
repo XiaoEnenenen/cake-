@@ -1,0 +1,148 @@
+<!-- 店主端 · 订单管理（阶段 10）：跨顾客订单 + 接单动作。普通顾客看不到入口 -->
+<view class="ao-page">
+  <view wx:if="{{ !isAdminUser }}" class="ao-guard">
+    <view class="ao-guard-title">无店主权限</view>
+    <view class="ao-guard-sub">该入口仅店主本人可见可用</view>
+  </view>
+
+  <block wx:else>
+    <!-- 状态筛选：待处理（待支付+制作中）/ 已完成 / 全部 -->
+    <view class="ao-tabs">
+      <view
+        wx:for="{{ tabs }}"
+        wx:key="key"
+        class="ao-tab {{ tabIndex == index ? 'ao-tab-active' : '' }}"
+        data-index="{{ index }}"
+        bindtap="switchTab"
+      >
+        <view class="ao-tab-label">{{ item.label }}</view>
+        <view class="ao-tab-count">{{ item.count }}</view>
+      </view>
+    </view>
+
+    <view wx:if="{{ loading }}" class="ao-hint">正在读取订单…</view>
+
+    <view wx:elif="{{ loadError }}" class="ao-error">
+      <view class="ao-error-text">订单读取失败，请检查网络后重试</view>
+      <view class="ao-retry" bindtap="retryLoad">点击重试</view>
+    </view>
+
+    <view wx:elif="{{ orderList.length == 0 }}" class="ao-hint">
+      这一组暂时没有订单
+    </view>
+
+    <block wx:else>
+      <view wx:for="{{ orderList }}" wx:key="id" class="ao-card">
+        <view class="ao-card-head">
+          <view class="ao-badge">{{ item.badgeText }}</view>
+          <view class="ao-status">{{ item.statusStr }}</view>
+        </view>
+
+        <view class="ao-line">
+          <view class="ao-label">下单时间</view>
+          <view class="ao-value">{{ item.dateText }}</view>
+        </view>
+        <view class="ao-line">
+          <view class="ao-label">期望时间</view>
+          <view class="ao-value ao-value-strong">{{ item.expectTime || '未填' }}</view>
+        </view>
+        <view class="ao-line">
+          <view class="ao-label">商品</view>
+          <view class="ao-value">{{ item.goodsSummary }}</view>
+        </view>
+        <view class="ao-line">
+          <view class="ao-label">收货人</view>
+          <view class="ao-value">{{ item.contactName || '—' }} {{ item.contactPhone }}</view>
+        </view>
+        <view wx:if="{{ item.isDelivery }}" class="ao-line">
+          <view class="ao-label">地址</view>
+          <view class="ao-value">{{ item.addressText || '—' }}</view>
+        </view>
+        <view wx:if="{{ item.distanceText }}" class="ao-line">
+          <view class="ao-label">距离</view>
+          <view class="ao-value">{{ item.distanceText }}</view>
+        </view>
+        <view wx:if="{{ item.remark }}" class="ao-line">
+          <view class="ao-label">备注</view>
+          <view class="ao-value ao-value-remark">{{ item.remark }}</view>
+        </view>
+        <!-- 「为什么这一单还不能完成」：支付未接入时订单只会停在待支付，必须说清楚 -->
+        <view wx:if="{{ item.statusHint }}" class="ao-statushint">{{ item.statusHint }}</view>
+
+        <view class="ao-money">
+          <view class="ao-money-item">商品 {{ item.goodsAmountText }}</view>
+          <view class="ao-money-item">打包 {{ item.packingFeeText }}</view>
+          <view class="ao-money-item">配送 {{ item.freightText }}</view>
+          <view class="ao-money-total">实付 {{ item.amountText }}</view>
+        </view>
+
+        <!-- 「运费待确认」的订单：醒目提示 + 补录入口（金额由服务端重算） -->
+        <view wx:if="{{ item.needFreight }}" class="ao-freight-warn">
+          该单运费下单时未确定（{{ item.deliveryQuote.freightText }}），电话谈好后点下面「确认运费」补录
+        </view>
+
+        <view class="ao-actions">
+          <view class="ao-btn" data-index="{{ index }}" catchtap="callCustomer">拨打电话</view>
+          <view
+            wx:if="{{ item.isDelivery }}"
+            class="ao-btn"
+            data-index="{{ index }}"
+            catchtap="navToCustomer"
+          >一键导航</view>
+          <view
+            wx:if="{{ item.isDelivery && !item.hasAddress }}"
+            class="ao-btn"
+            data-index="{{ index }}"
+            catchtap="copyAddress"
+          >复制地址</view>
+          <view
+            wx:if="{{ item.needFreight }}"
+            class="ao-btn ao-btn-warn"
+            data-index="{{ index }}"
+            catchtap="openFreight"
+          >确认运费</view>
+          <view
+            wx:if="{{ item.canFinish }}"
+            class="ao-btn ao-btn-primary"
+            data-index="{{ index }}"
+            catchtap="finishOrder"
+          >完成订单</view>
+        </view>
+      </view>
+
+      <view wx:if="{{ loadingMore }}" class="ao-more">正在加载更多…</view>
+      <view wx:elif="{{ hasMore }}" class="ao-more" bindtap="onReachBottom">上拉或点击加载更多</view>
+      <view wx:else class="ao-more">共 {{ total }} 单，已全部显示</view>
+    </block>
+  </block>
+
+  <!-- 运费补录弹层 -->
+  <view wx:if="{{ freightOrder }}" class="ao-mask" bindtap="closeFreight">
+    <view class="ao-dialog" catchtap="noop">
+      <view class="ao-dialog-title">确认这一单的配送费</view>
+      <view class="ao-dialog-sub">{{ freightOrder.contactName }} · {{ freightOrder.addressText }}</view>
+      <view class="ao-dialog-sub">商品金额 {{ freightOrder.goodsAmountText }}，打包费 {{ freightOrder.packingFeeText }}</view>
+      <view wx:if="{{ freightOrder.deliveryQuote.freightConfirmed }}" class="ao-dialog-sub ao-dialog-warn">
+        注意：这一单的配送费已经确认过（当前 ¥{{ freightOrder.freight }}，实付 {{ freightOrder.amountText }}），保存会改动顾客的实付金额
+      </view>
+      <view class="ao-dialog-row">
+        <view class="ao-dialog-label">配送费（元）</view>
+        <input
+          class="ao-dialog-input"
+          type="digit"
+          placeholder="例如 18"
+          value="{{ freightInput }}"
+          bindinput="onFreightInput"
+        />
+      </view>
+      <view class="ao-dialog-tip">实付金额由服务端重算：商品 + 打包费 + 这里的配送费</view>
+      <view class="ao-dialog-actions">
+        <view class="ao-dialog-btn" bindtap="closeFreight">取消</view>
+        <view
+          class="ao-dialog-btn ao-dialog-btn-primary {{ freightSaving ? 'ao-dialog-btn-disabled' : '' }}"
+          bindtap="confirmFreight"
+        >{{ freightSaving ? '保存中…' : '保存' }}</view>
+      </view>
+    </view>
+  </view>
+</view>

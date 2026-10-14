@@ -13,7 +13,12 @@
     "pages/about-us/detail",
     "pages/address/index",
     "pages/address/edit",
-    "pages/shop-locator/index"
+    "pages/shop-locator/index",
+    "pages/admin/index",
+    "pages/admin/orders/index",
+    "pages/admin/goods/index",
+    "pages/admin/goods-edit/index",
+    "pages/admin/delivery/index"
   ],
   "requiredPrivateInfos": [
     "getLocation",

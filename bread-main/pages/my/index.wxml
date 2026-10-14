@@ -123,6 +123,16 @@
 
 <!-- ===== 3. 常用功能 ===== -->
 <view class="section">
+  <!-- 阶段 10：店主中心（只有店主本人看得到；普通顾客的界面保持干净） -->
+  <view wx:if="{{ isAdminUser }}" class="list-item list-item-admin" bindtap="goAdmin">
+    <view class="list-icon list-icon-admin">店</view>
+    <view class="list-body">
+      <view class="list-title">店主中心</view>
+      <view class="list-sub">改商品、看订单、调配送费</view>
+    </view>
+    <view class="list-arrow"></view>
+  </view>
+
   <view class="list-item" bindtap="goAddress">
     <image class="list-icon" mode="aspectFit" src="/images/user-icon-edit@2x.png"></image>
     <view class="list-body">
@@ -192,6 +202,13 @@
     <view wx:if="{{ isDevEnv }}" class="store-locator-entry" bindtap="goShopLocator">
       校准门店坐标（店主专用，正式版不显示）
     </view>
+
+    <!-- 店主专用：复制原始 openid（只在开发版 / 体验版显示）——
+         启用店主端的第一步就是把它填进 cloudfunctions/api/shop-config.js 的 adminOpenids -->
+    <view wx:if="{{ isDevEnv }}" class="store-locator-entry" bindtap="copyMyOpenid">
+      {{ myOpenid ? '复制我的 openid（填店主白名单用）' : '读取我的 openid…' }}
+    </view>
+    <view wx:if="{{ isDevEnv && myOpenid }}" class="store-openid">{{ myOpenid }}</view>
   </view>
 </view>
 

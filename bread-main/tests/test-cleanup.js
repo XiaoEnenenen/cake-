@@ -234,7 +234,14 @@ function main() {
   check('★ README 的页面数 = 代码里实际 require api-map 的页面数',
     !!claimed && Number(claimed[1]) === wiredPages.length,
     { readme: claimed && claimed[1], actual: wiredPages.length, pages: wiredPages })
-  check('README 不再把「13 个页面」当作当前事实陈述', !/实际接线为\s*13\s*个页面/.test(readme))
+  // 6.1b 逐个页面都要在 README 里被点到名（防止"数字对了但清单漏了一个"）
+  //   页面路径在 README 里可能写作 `my` / `my/index`（去掉 `pages/` 前缀与 `.js`），两种都接受。
+  const unlistedPages = wiredPages.filter((p) => {
+    const short = p.replace(/^pages\//, '').replace(/\.js$/, '')
+    return readme.indexOf(short) < 0 && readme.indexOf(short.replace(/\/index$/, '')) < 0
+  })
+  check('★ README 逐个列出了所有接线页面（' + wiredPages.length + ' 个）',
+    unlistedPages.length === 0, unlistedPages)
 
   // 6.2 公开 action 数
   const handlers = require('../cloudfunctions/api/handlers')
@@ -403,6 +410,37 @@ function main() {
   }
   check('★ wxml 用到的顶层 data 字段都在 data 里声明',
     missingFields.length === 0, missingFields)
+
+  // =========================================================================
+  console.log('\n=== 7.1) 相对路径 require 必须能解析（页面白屏的头号原因）===')
+  // =========================================================================
+  // 背景（2026-10-14 真机实测踩到）：`pages/admin/goods/index.js` 写成了
+  //   `require('../../utils/api-map')` —— 它比 `pages/admin/index.js` 深一层，
+  //   正确写法是 `../../../utils/api-map`。小程序里这个错误**不会让整包编译失败**：
+  //   页面照样能打开、导航栏标题照样显示，但 JS 在模块加载阶段就抛错，正文一片空白
+  //   （店主看到的就是"点进去啥都没有"）。上面的 vm 编译检查查不出这种错。
+  //   所以这里把每个相对 require 按真实文件系统解析一遍。
+  const relReqFiles = walk('pages', []).concat(walk('utils', []), walk('components', []))
+    .filter((f) => f.endsWith('.js'))
+    // 排除第三方压缩组件（parser）：它内部用 `try { require('./emoji.js') } catch {}`
+    // 做**可选的**能力探测（模块不存在是预期行为），不是路径写错。
+    .filter((f) => f.indexOf('parser.20200414.min/') < 0)
+  const badRequires = []
+  for (const f of relReqFiles) {
+    const re = /require\(\s*['"](\.[^'"]+)['"]\s*\)/g
+    let m
+    const text = src(f)
+    while ((m = re.exec(text))) {
+      const target = path.resolve(path.dirname(path.join(ROOT, f)), m[1])
+      const ok = fs.existsSync(target) || fs.existsSync(target + '.js') ||
+        fs.existsSync(path.join(target, 'index.js'))
+      if (!ok) badRequires.push(f + ' → ' + m[1])
+    }
+  }
+  check('★ 页面/utils/components 里的相对路径 require 都能解析（' + relReqFiles.length + ' 个文件）',
+    badRequires.length === 0, badRequires)
+  check('该检查确实扫到了 require（防止正则写错导致恒真）',
+    relReqFiles.some((f) => /require\(\s*['"]\./.test(src(f))))
 
   // =========================================================================
   console.log('\n=== 8) 云端导入数据：.json 与 .jsonl 必须一致 ===')

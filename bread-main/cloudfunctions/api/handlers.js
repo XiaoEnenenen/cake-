@@ -507,6 +507,804 @@ async function goodsDetail(payload, ctx) {
 }
 
 // ===========================================================================
+// 店主端（阶段 10）：商品自助管理 / 配送规则 / 运费补录
+// ---------------------------------------------------------------------------
+// 四条硬性纪律（阶段二安全整改的教训，每个店主写接口都要做到）：
+//   1) **第一行就是 requireAdmin(ctx)** —— 白名单在服务端比对（ctx.openid 由云函数
+//      自动注入，前端改不掉）。前端只决定"入口显不显示"，绝不能当鉴权；
+//   2) **入参白名单化**：只接受下面显式列出的字段与取值域，其它字段一律忽略；
+//   3) **金额只认服务端**：商品价与运费都由服务端重算，不接受前端算好的总额；
+//   4) **不物理删除**：下架 = enabled:false（历史订单是快照，不受影响）。
+//
+// 为什么口径是"云库 = 唯一事实源"：店主在 App 里改过商品之后，
+//   `cloud-data/goods-real.source.json` 不能再"重跑脚本 + 重导"覆盖她的修改（见
+//   cloud-data/README.md 与 tools/README.md 顶部的警告）。
+// ===========================================================================
+const GOODS_NAME_MAX = 40
+const GOODS_SHORT_TEXT_MAX = 60
+const GOODS_CONTENT_MAX = 5000
+const GOODS_PIC_URL_MAX = 500
+const GOODS_PICS_MAX = 5
+const GOODS_SPEC_GROUPS_MAX = 8
+const GOODS_SPEC_OPTIONS_MAX = 20
+const GOODS_PRICE_MAX = 99999
+const GOODS_FEE_MAX = 999
+const GOODS_SORT_MAX = 9999
+const GOODS_MIN_BUY_MAX = 99
+const GOODS_SPEC_ID_RE = /^[A-Za-z0-9_-]{1,32}$/
+
+// 配送规则（deliveryRuleSave）
+const DELIVERY_KEYWORD_MIN_LEN = 3 // 短词（如「西山」「太平」）会把片区外的地址也放进来
+const DELIVERY_KEYWORD_MAX_LEN = 20
+const DELIVERY_KEYWORDS_MAX = 30
+const DELIVERY_TIERS_MAX = 6
+const DELIVERY_KM_MAX = 100
+const DELIVERY_TIP_MAX = 60
+
+/** 是否显式传了该字段（区分"没传 = 沿用旧值"与"传了空 = 清空"） */
+function hasField(obj, key) {
+  return Object.prototype.hasOwnProperty.call(obj || {}, key)
+}
+
+/** 金额归一化：有限数、两位小数、区间校验 */
+function normalizeMoney(raw, opts) {
+  const o = opts || {}
+  if (raw === undefined || raw === null || raw === '') {
+    return o.optional ? { ok: true, value: undefined } : { ok: false, msg: o.msg || '请填写金额' }
+  }
+  const n = Number(raw)
+  if (!isFinite(n)) return { ok: false, msg: o.msg || '金额必须是数字' }
+  if (n < 0) return { ok: false, msg: o.msg || '金额不能为负数' }
+  if (o.minExclusive !== undefined && n <= o.minExclusive) {
+    return { ok: false, msg: o.msg || ('金额必须大于 ' + o.minExclusive) }
+  }
+  if (o.max !== undefined && n > o.max) return { ok: false, msg: o.msg || ('金额不能超过 ' + o.max) }
+  return { ok: true, value: Math.round(n * 100) / 100 }
+}
+
+/** 非负整数归一化 */
+function normalizeInt(raw, opts) {
+  const o = opts || {}
+  if (raw === undefined || raw === null || raw === '') {
+    return o.optional ? { ok: true, value: undefined } : { ok: false, msg: o.msg || '请填写整数' }
+  }
+  const n = Number(raw)
+  if (!isFinite(n) || Math.floor(n) !== n) return { ok: false, msg: o.msg || '必须是整数' }
+  if (o.min !== undefined && n < o.min) return { ok: false, msg: o.msg || ('不能小于 ' + o.min) }
+  if (o.max !== undefined && n > o.max) return { ok: false, msg: o.msg || ('不能大于 ' + o.max) }
+  return { ok: true, value: n }
+}
+
+/** 文本归一化（长度上限 + 是否必填） */
+function normalizeText(raw, opts) {
+  const o = opts || {}
+  const s = String(raw === undefined || raw === null ? '' : raw).trim()
+  if (!s) return o.optional ? { ok: true, value: '' } : { ok: false, msg: o.msg || '不能为空' }
+  if (o.max && s.length > o.max) return { ok: false, msg: o.msg || ('最多 ' + o.max + ' 个字') }
+  return { ok: true, value: s }
+}
+
+/**
+ * 图片地址归一化。
+ * ★ 关键防呆：`wxfile://` / `http://tmp` / `blob:` 是**本地临时路径**，
+ *   说明「还没上传成功」——写进库里顾客看到的就是裂图（与「我的」页头像同一类坑）。
+ */
+function normalizePicUrl(raw) {
+  const s = String(raw === undefined || raw === null ? '' : raw).trim()
+  if (!s) return { ok: false, msg: '请先上传商品图片' }
+  if (s.length > GOODS_PIC_URL_MAX) return { ok: false, msg: '图片地址过长' }
+  if (/^(wxfile:|http:\/\/tmp|https:\/\/tmp|blob:)/i.test(s)) {
+    return { ok: false, msg: '图片还没上传成功，请重新上传后再保存' }
+  }
+  return { ok: true, value: s }
+}
+
+/** 图片数组归一化（兼容字符串与 { pic } 两种历史结构） */
+function normalizePicList(raw) {
+  if (!Array.isArray(raw)) return { ok: false, msg: '图片列表格式不正确' }
+  const out = []
+  for (const item of raw) {
+    const url = typeof item === 'string' ? item : (item && item.pic) || ''
+    const s = String(url || '').trim()
+    if (!s) continue
+    if (out.indexOf(s) < 0) out.push(s)
+  }
+  if (out.length > GOODS_PICS_MAX) return { ok: false, msg: '最多上传 ' + GOODS_PICS_MAX + ' 张图片' }
+  for (const s of out) {
+    const r = normalizePicUrl(s)
+    if (!r.ok) return r
+  }
+  if (!out.length) return { ok: false, msg: '请先上传商品图片' }
+  return { ok: true, value: out }
+}
+
+/**
+ * 规格组归一化（阶段 9 起支持任意多组：磅数 / 口味 / 夹心一 / 奶油类型…）
+ * 校验点（每条都是"写坏了顾客就买错"的地方）：
+ *   · 组 id / 选项 id 必须唯一且是安全字符（前端拼 sku 与计价都靠它）；
+ *   · 每组至少 1 个选项、组名必填；
+ *   · priceDelta 必须是不小于 0 的有限数（负数会算出负价）。
+ */
+function normalizeSpecGroups(raw) {
+  if (raw === undefined || raw === null) return { ok: true, value: undefined }
+  if (!Array.isArray(raw)) return { ok: false, msg: '规格组格式不正确' }
+  if (raw.length > GOODS_SPEC_GROUPS_MAX) {
+    return { ok: false, msg: '规格组最多 ' + GOODS_SPEC_GROUPS_MAX + ' 组' }
+  }
+  const groups = []
+  const groupIds = {}
+  for (const g of raw) {
+    if (!g || typeof g !== 'object') return { ok: false, msg: '规格组格式不正确' }
+    const gid = String(g.id === undefined || g.id === null ? '' : g.id).trim()
+    if (!gid) return { ok: false, msg: '规格组缺少 id' }
+    if (!GOODS_SPEC_ID_RE.test(gid)) {
+      return { ok: false, msg: '规格组 id「' + gid + '」只能用字母/数字/下划线/短横线（最多 32 位）' }
+    }
+    if (groupIds[gid]) return { ok: false, msg: '规格组 id 重复：' + gid }
+    groupIds[gid] = true
+    const gname = normalizeText(g.name, { max: 20, msg: '请填写规格组名称（最多 20 字）' })
+    if (!gname.ok) return gname
+    const opts = Array.isArray(g.childsCurGoods) ? g.childsCurGoods : []
+    if (!opts.length) return { ok: false, msg: '规格组「' + gname.value + '」至少要有 1 个选项' }
+    if (opts.length > GOODS_SPEC_OPTIONS_MAX) {
+      return { ok: false, msg: '规格组「' + gname.value + '」最多 ' + GOODS_SPEC_OPTIONS_MAX + ' 个选项' }
+    }
+    const childs = []
+    const optIds = {}
+    for (const o of opts) {
+      if (!o || typeof o !== 'object') return { ok: false, msg: '规格选项格式不正确' }
+      const oid = String(o.id === undefined || o.id === null ? '' : o.id).trim()
+      if (!oid) return { ok: false, msg: '规格组「' + gname.value + '」里有选项缺少 id' }
+      if (!GOODS_SPEC_ID_RE.test(oid)) {
+        return { ok: false, msg: '选项 id「' + oid + '」只能用字母/数字/下划线/短横线（最多 32 位）' }
+      }
+      if (optIds[oid]) return { ok: false, msg: '规格组「' + gname.value + '」的选项 id 重复：' + oid }
+      optIds[oid] = true
+      const oname = normalizeText(o.name, { max: 20, msg: '规格组「' + gname.value + '」里有选项缺少名称' })
+      if (!oname.ok) return oname
+      const delta = normalizeMoney(
+        o.priceDelta === undefined || o.priceDelta === null || o.priceDelta === '' ? 0 : o.priceDelta,
+        { max: GOODS_PRICE_MAX, msg: '选项「' + oname.value + '」的加价必须是不小于 0 的数字' }
+      )
+      if (!delta.ok) return delta
+      childs.push({ id: oid, name: oname.value, priceDelta: delta.value })
+    }
+    groups.push({ id: gid, name: gname.value, childsCurGoods: childs })
+  }
+  return { ok: true, value: groups }
+}
+
+/** 店主视图：编辑页需要的字段一次给全（含已下架商品） */
+function goodsAdminView(g) {
+  const pics = Array.isArray(g.pics)
+    ? g.pics.map((x) => (typeof x === 'string' ? x : (x && x.pic) || '')).filter(Boolean)
+    : []
+  const pic = String(g.pic || pics[0] || '')
+  const properties = Array.isArray(g.properties) ? g.properties : []
+  // 价格区间：编辑页与列表页都要显示，避免店主自己心算
+  let minTotal = Number(g.minPrice) || 0
+  let maxTotal = minTotal
+  properties.forEach((grp) => {
+    const deltas = ((grp && grp.childsCurGoods) || []).map((c) => Number(c && c.priceDelta) || 0)
+    if (!deltas.length) return
+    maxTotal += Math.max.apply(null, deltas)
+  })
+  return {
+    id: g._id,
+    categoryId: g.categoryId,
+    name: g.name,
+    pic: pic,
+    pics: pics.length ? pics : (pic ? [pic] : []),
+    characteristic: g.characteristic || '',
+    content: g.content || '',
+    minPrice: Number(g.minPrice) || 0,
+    maxPrice: Math.round(maxTotal * 100) / 100,
+    unit: g.unit || '个',
+    purchaseNotes: g.purchaseNotes || '',
+    sort: Number(g.sort) || 0,
+    enabled: g.enabled !== false,
+    // 阶段 9 的三个可选开关（默认全关 = 与历史金额一致）
+    pickupDiscount: Number(g.pickupDiscount) || 0,
+    packingFee: packingFeeOf(g),
+    minBuyNumber: minBuyNumberOf(g),
+    properties,
+    specGroupCount: properties.length,
+    updTime: g.updTime || 0
+  }
+}
+
+/**
+ * 店主视角商品列表（含**已下架**商品）。
+ * 与顾客端 goodsList 的区别：不过滤 enabled —— 否则店主下架一个商品后
+ * 就再也找不到它、无法重新上架（"删除了就消失"）。
+ * 参数：{ categoryId?, keyword? }
+ */
+async function goodsAdminList(payload, ctx) {
+  const denied = requireAdmin(ctx)
+  if (denied) return denied
+
+  const p = payload || {}
+  const categoryId = p.categoryId === undefined || p.categoryId === null ? '' : String(p.categoryId)
+  const keyword = String(p.keyword || '').trim().toLowerCase()
+
+  const docs = await ctx.db.find('goods', {}, { sort: 1, field: 'sort' })
+  const cats = await ctx.db.find('category', {}, { sort: 1, field: 'sort' })
+  const catName = {}
+  cats.forEach((c) => { catName[c._id] = c.name })
+
+  const list = docs
+    .filter((g) => !categoryId || categoryId === '0' || String(g.categoryId) === categoryId)
+    .filter((g) => !keyword || String(g.name || '').toLowerCase().indexOf(keyword) >= 0)
+    .map((g) => Object.assign(goodsAdminView(g), { categoryName: catName[g.categoryId] || '' }))
+
+  return ok({
+    result: list,
+    total: list.length,
+    onSale: list.filter((x) => x.enabled).length,
+    offSale: list.filter((x) => !x.enabled).length,
+    categories: cats.map((c) => ({
+      id: c._id,
+      name: c.name,
+      sort: c.sort,
+      // ⚠️ 这里**返回全部**分类（含 enabled:false 的），由前端加"（已停用）"后缀。
+      //   为什么不像顾客端那样过滤：如果某个商品属于已停用的分类，过滤后编辑页
+      //   的 picker 找不到它 → 回落到第一项 → 店主**只改个价**就会把商品悄悄挪到
+      //   别的分类去（顾客端直接看不到）。宁可让她看见"这个商品挂在一个停用分类下"。
+      enabled: c.enabled !== false
+    }))
+  })
+}
+
+/**
+ * 新增 / 编辑商品（店主端唯一写入口）
+ * ---------------------------------------------------------------------------
+ * 参数：{ id?, name?, categoryId?, minPrice?, unit?, pic?, pics?, characteristic?,
+ *        content?, purchaseNotes?, sort?, enabled?, pickupDiscount?, packingFee?,
+ *        minBuyNumber?, properties? }
+ *   · 不带 id = 新增；带 id = 编辑；
+ *   · **没传的字段沿用库里的旧值** —— 这样"只切上下架"只需传 { id, enabled }，
+ *     不必把整个表单回传（少一个"回传途中把别的字段写坏"的机会）；
+ *   · 新增时必填：name / categoryId / pic / minPrice。
+ */
+async function goodsUpsert(payload, ctx) {
+  const denied = requireAdmin(ctx)
+  if (denied) return denied
+
+  const p = payload || {}
+  const id = String(p.id || p._id || '').trim()
+  const now = Date.now()
+
+  let existing = null
+  if (id) {
+    existing = await ctx.db.get('goods', id)
+    if (!existing) return fail('商品不存在（可能已被删除），请返回列表刷新')
+  }
+  const base = existing || {}
+  const creating = !existing
+
+  // ---- 只切上下架：走快速通道，**不重新校验其它字段** ----
+  // 为什么必须留这条通道：下面的字段校验是"整份文档级"的，而云库是可以人工编辑的
+  //   （文档里就让人去控制台改数据）。一旦某条商品的历史数据不满足现在的规则
+  //   （例如以前手写的选项 id 是中文、自取立减 ≥ 价格），它就会被**永久卡死**：
+  //   店主连"下架"都做不到，报错还指向一个她没动过的字段。
+  //   所以只传 { id, enabled } 时只校验 id 存在 + 布尔值（与 goodsDelete 同口径）。
+  if (existing) {
+    const changed = Object.keys(p).filter((k) => k !== 'id' && k !== '_id')
+    if (changed.length === 1 && changed[0] === 'enabled') {
+      if (typeof p.enabled !== 'boolean') return fail('上下架状态不正确')
+      await ctx.db.update('goods', existing._id, {
+        enabled: p.enabled,
+        updBy: ctx.openid,
+        updTime: now
+      })
+      return ok({
+        id: existing._id,
+        created: false,
+        goods: goodsAdminView(Object.assign({}, existing, { enabled: p.enabled, updTime: now }))
+      })
+    }
+  }
+
+  // ---- 名称 ----
+  const nameRes = normalizeText(hasField(p, 'name') ? p.name : base.name, {
+    max: GOODS_NAME_MAX,
+    msg: '请填写商品名称（最多 ' + GOODS_NAME_MAX + ' 个字）'
+  })
+  if (!nameRes.ok) return fail(nameRes.msg)
+  const name = nameRes.value
+
+  // ---- 分类（必须真实存在，防止伪造 categoryId 让商品在顾客端凭空消失）----
+  const categoryId = String(
+    (hasField(p, 'categoryId') ? p.categoryId : base.categoryId) || ''
+  ).trim()
+  if (!categoryId) return fail('请选择商品分类')
+  const cat = await ctx.db.get('category', categoryId)
+  if (!cat) return fail('分类不存在，请重新选择')
+
+  // ---- 图片 ----
+  let pics
+  if (hasField(p, 'pics') || hasField(p, 'pic')) {
+    const rawList = hasField(p, 'pics')
+      ? p.pics
+      : [hasField(p, 'pic') ? p.pic : base.pic]
+    const listRes = normalizePicList(rawList)
+    if (!listRes.ok) return fail(listRes.msg)
+    pics = listRes.value
+  } else {
+    const listRes = normalizePicList(Array.isArray(base.pics) && base.pics.length ? base.pics : [base.pic])
+    if (!listRes.ok) return fail(listRes.msg)
+    pics = listRes.value
+  }
+  const pic = pics[0]
+
+  // ---- 价格 / 单位 / 排序 / 上下架 ----
+  const priceRes = normalizeMoney(hasField(p, 'minPrice') ? p.minPrice : base.minPrice, {
+    minExclusive: 0,
+    max: GOODS_PRICE_MAX,
+    msg: '价格必须大于 0 且不超过 ' + GOODS_PRICE_MAX + ' 元'
+  })
+  if (!priceRes.ok) return fail(priceRes.msg)
+
+  const unitRes = normalizeText(hasField(p, 'unit') ? p.unit : (base.unit || '个'), {
+    max: 6,
+    msg: '单位最多 6 个字'
+  })
+  if (!unitRes.ok) return fail(unitRes.msg)
+
+  const sortRes = normalizeInt(hasField(p, 'sort') ? p.sort : (base.sort === undefined ? 10 : base.sort), {
+    min: 0,
+    max: GOODS_SORT_MAX,
+    optional: true,
+    msg: '排序必须是 0 ~ ' + GOODS_SORT_MAX + ' 的整数'
+  })
+  if (!sortRes.ok) return fail(sortRes.msg)
+
+  const enabledRaw = hasField(p, 'enabled') ? p.enabled : (creating ? true : base.enabled !== false)
+  if (typeof enabledRaw !== 'boolean') return fail('上下架状态不正确')
+  const enabled = enabledRaw
+
+  // ---- 阶段 9 三个开关（默认 0 / 0 / 1 = 与历史金额完全一致）----
+  const discountRes = normalizeMoney(
+    hasField(p, 'pickupDiscount') ? p.pickupDiscount : (base.pickupDiscount || 0),
+    { max: GOODS_FEE_MAX, msg: '自取立减必须是 0 ~ ' + GOODS_FEE_MAX + ' 元' }
+  )
+  if (!discountRes.ok) return fail(discountRes.msg)
+  // 立减不能 ≥ 最低价：否则自提时每件都减到 0（服务端会兜底，但那是配置错误）
+  if (discountRes.value >= priceRes.value) {
+    return fail('自取立减不能大于等于商品价格（当前价 ' + priceRes.value + ' 元）')
+  }
+
+  const packingRes = normalizeMoney(
+    hasField(p, 'packingFee') ? p.packingFee : (base.packingFee || 0),
+    { max: GOODS_FEE_MAX, msg: '打包费必须是 0 ~ ' + GOODS_FEE_MAX + ' 元' }
+  )
+  if (!packingRes.ok) return fail(packingRes.msg)
+
+  const minBuyRes = normalizeInt(
+    hasField(p, 'minBuyNumber') ? p.minBuyNumber : (base.minBuyNumber === undefined ? 1 : base.minBuyNumber),
+    { min: 1, max: GOODS_MIN_BUY_MAX, msg: '最少购买份数必须是 1 ~ ' + GOODS_MIN_BUY_MAX + ' 的整数' }
+  )
+  if (!minBuyRes.ok) return fail(minBuyRes.msg)
+
+  // ---- 规格组 ----
+  const specRes = normalizeSpecGroups(hasField(p, 'properties') ? p.properties : base.properties)
+  if (!specRes.ok) return fail(specRes.msg)
+  const properties = specRes.value === undefined
+    ? (Array.isArray(base.properties) ? base.properties : [])
+    : specRes.value
+
+  // ---- 文案 ----
+  const charRes = normalizeText(hasField(p, 'characteristic') ? p.characteristic : base.characteristic, {
+    max: GOODS_SHORT_TEXT_MAX,
+    optional: true,
+    msg: '简介最多 ' + GOODS_SHORT_TEXT_MAX + ' 个字'
+  })
+  if (!charRes.ok) return fail(charRes.msg)
+  const noteRes = normalizeText(hasField(p, 'purchaseNotes') ? p.purchaseNotes : base.purchaseNotes, {
+    max: GOODS_SHORT_TEXT_MAX,
+    optional: true,
+    msg: '购买须知最多 ' + GOODS_SHORT_TEXT_MAX + ' 个字'
+  })
+  if (!noteRes.ok) return fail(noteRes.msg)
+  const contentRes = normalizeText(hasField(p, 'content') ? p.content : base.content, {
+    max: GOODS_CONTENT_MAX,
+    optional: true,
+    msg: '详情最多 ' + GOODS_CONTENT_MAX + ' 个字'
+  })
+  if (!contentRes.ok) return fail(contentRes.msg)
+  // 详情以富文本存储（parser 组件渲染）：店主在 textarea 里写纯文字时补上段落标签，
+  // 否则顾客端详情页会显示成一整行没有换行的文字。
+  // ⚠️ 判断"是不是富文本"要看**有没有真实标签**，不能只看有没有 `<` ——
+  //   店主完全可能写「6寸<8寸 都可以」这种比较符号，那种情况也要给她分段。
+  let content = contentRes.value
+  if (content && !/<(p|br|div|span|img|strong|em|ul|ol|li|h[1-6])\b[^>]*>/i.test(content)) {
+    content = content
+      .split(/\n+/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => '<p>' + line + '</p>')
+      .join('')
+  }
+
+  const doc = {
+    categoryId,
+    name,
+    pic,
+    pics,
+    characteristic: charRes.value,
+    content,
+    minPrice: priceRes.value,
+    unit: unitRes.value,
+    purchaseNotes: noteRes.value,
+    sort: sortRes.value,
+    enabled,
+    pickupDiscount: discountRes.value,
+    packingFee: packingRes.value,
+    minBuyNumber: minBuyRes.value,
+    properties,
+    updBy: ctx.openid,
+    updTime: now
+  }
+
+  let saved
+  if (creating) {
+    doc.createBy = ctx.openid
+    doc.createTime = now
+    const added = await ctx.db.add('goods', doc)
+    saved = Object.assign({}, doc, { _id: (added && added._id) || doc._id })
+  } else {
+    await ctx.db.update('goods', existing._id, doc)
+    saved = Object.assign({}, existing, doc)
+    saved._id = existing._id
+  }
+
+  return ok({
+    id: saved._id,
+    created: creating,
+    goods: goodsAdminView(saved)
+  })
+}
+
+/**
+ * 下架商品（软删）。
+ * ⚠️ 刻意**不做物理删除**：历史订单里存的是商品快照，物理删掉商品不影响历史订单，
+ *    但会让"店主手滑删了"变成不可恢复；下架则随时能重新上架，且顾客端立即不可见。
+ */
+async function goodsDelete(payload, ctx) {
+  const denied = requireAdmin(ctx)
+  if (denied) return denied
+
+  const id = payload && (payload.id || payload._id)
+  if (!id) return fail('缺少商品 id')
+  const g = await ctx.db.get('goods', id)
+  if (!g) return fail('商品不存在')
+  if (g.enabled === false) return ok({ id: g._id, name: g.name, enabled: false, already: true })
+
+  await ctx.db.update('goods', g._id, {
+    enabled: false,
+    updBy: ctx.openid,
+    updTime: Date.now()
+  })
+  return ok({ id: g._id, name: g.name, enabled: false })
+}
+
+// ===========================================================================
+// 店主端：配送规则保存（阶段 8 的规则真正"上云可改"）
+// ---------------------------------------------------------------------------
+// 为什么不能把前端传来的对象直接塞进云库：
+//   normalizeRule() 对非法值的行为是"逐项回退到代码默认值"——这对**读取**是对的
+//   （半截规则不会把系统带偏），但对**写入**是危险的：店主明明保存了"5 公里 10 元"，
+//   输入框写错成 'abc' 时会被静默忽略，她以为改了、实际没改（钱按旧规则收）。
+//   所以这里**先显式校验、再归一化**：不合法就报错拒绝，绝不静默吞掉。
+// ===========================================================================
+function normalizeKeywordList(raw, label) {
+  if (raw === undefined || raw === null) return { ok: true, value: undefined }
+  if (!Array.isArray(raw)) return { ok: false, msg: label + '格式不正确' }
+  if (raw.length > DELIVERY_KEYWORDS_MAX) {
+    return { ok: false, msg: label + '最多 ' + DELIVERY_KEYWORDS_MAX + ' 个' }
+  }
+  const out = []
+  for (const item of raw) {
+    const s = String(item === undefined || item === null ? '' : item).trim()
+    if (!s) continue
+    if (s.length < DELIVERY_KEYWORD_MIN_LEN) {
+      return {
+        ok: false,
+        msg: label + '里的「' + s + '」太短（至少 ' + DELIVERY_KEYWORD_MIN_LEN +
+          ' 个字）：短词会把范围外的地址也放进来，建议写完整的小区/道路名'
+      }
+    }
+    if (s.length > DELIVERY_KEYWORD_MAX_LEN) {
+      return { ok: false, msg: label + '里的「' + s.slice(0, 8) + '…」太长（最多 ' + DELIVERY_KEYWORD_MAX_LEN + ' 个字）' }
+    }
+    if (out.indexOf(s) < 0) out.push(s)
+  }
+  return { ok: true, value: out }
+}
+
+function normalizeTiersForSave(raw) {
+  if (!Array.isArray(raw) || !raw.length) return { ok: false, msg: '至少要有一档配送费' }
+  if (raw.length > DELIVERY_TIERS_MAX) {
+    return { ok: false, msg: '最多 ' + DELIVERY_TIERS_MAX + ' 档配送费' }
+  }
+  const out = []
+  const seen = {}
+  let openEnded = 0
+  for (let i = 0; i < raw.length; i++) {
+    const t = raw[i] || {}
+    const no = i + 1
+    let maxKm = null
+    if (!(t.maxKm === null || t.maxKm === undefined || t.maxKm === '')) {
+      const v = Number(t.maxKm)
+      if (!isFinite(v) || v <= 0) {
+        return { ok: false, msg: '第 ' + no + ' 档的距离上限必须大于 0（最后一段留空表示"不限"）' }
+      }
+      if (v > DELIVERY_KM_MAX) {
+        return { ok: false, msg: '第 ' + no + ' 档的距离上限过大（最多 ' + DELIVERY_KM_MAX + ' 公里）' }
+      }
+      maxKm = Math.round(v * 100) / 100
+    }
+    const feeRes = normalizeMoney(t.fee, {
+      optional: true,
+      max: GOODS_FEE_MAX,
+      msg: '第 ' + no + ' 档的运费必须是 0 ~ ' + GOODS_FEE_MAX + ' 元（留空 = 运费待确认）'
+    })
+    if (!feeRes.ok) return feeRes
+    const freeRes = normalizeMoney(t.freeAmount, {
+      optional: true,
+      max: GOODS_PRICE_MAX,
+      msg: '第 ' + no + ' 档的免运费门槛必须是 0 ~ ' + GOODS_PRICE_MAX + ' 元（留空 = 不设门槛）'
+    })
+    if (!freeRes.ok) return freeRes
+    const tipRes = normalizeText(t.tip, {
+      max: DELIVERY_TIP_MAX,
+      optional: true,
+      msg: '第 ' + no + ' 档的提示文案最多 ' + DELIVERY_TIP_MAX + ' 个字'
+    })
+    if (!tipRes.ok) return tipRes
+
+    if (maxKm === null) {
+      openEnded++
+    } else if (seen[maxKm]) {
+      return { ok: false, msg: '有两档的距离上限都是 ' + maxKm + ' 公里，请改掉一档' }
+    } else {
+      seen[maxKm] = true
+    }
+    out.push({
+      maxKm,
+      fee: feeRes.value === undefined ? null : feeRes.value,
+      freeAmount: freeRes.value === undefined ? null : freeRes.value,
+      tip: tipRes.value
+    })
+  }
+  if (openEnded > 1) {
+    return { ok: false, msg: '只能有一档"以上全部"（距离上限留空的那一档）' }
+  }
+  // 按距离升序，且"以上全部"必须排在最后
+  out.sort((a, b) => (a.maxKm === null ? Infinity : a.maxKm) - (b.maxKm === null ? Infinity : b.maxKm))
+  for (let i = 1; i < out.length; i++) {
+    if (out[i].maxKm !== null && out[i].maxKm <= out[i - 1].maxKm) {
+      return { ok: false, msg: '档位要按距离从小到大排列，第 ' + (i + 1) + ' 档的距离上限比上一档还小' }
+    }
+  }
+  return { ok: true, value: out }
+}
+
+async function deliveryRuleSave(payload, ctx) {
+  const denied = requireAdmin(ctx)
+  if (denied) return denied
+
+  const p = payload || {}
+  const now = Date.now()
+  const rule = {}
+
+  // ---- 配送区域（白名单 / 黑名单 / 距离上限）----
+  const areaIn = p.area && typeof p.area === 'object' ? p.area : null
+  if (areaIn) {
+    const area = {}
+    const kw = normalizeKeywordList(areaIn.keywords, '配送范围关键词')
+    if (!kw.ok) return fail(kw.msg)
+    if (kw.value !== undefined) {
+      // ★ 清空白名单 = 所有顾客都无法外送（checkArea 里 `keywords.some(...)` 永远不命中）。
+      //   这是个"一点就整店不能外送"的开关，不能让它悄悄生效：明确拒绝并给出替代做法。
+      if (!kw.value.length) {
+        return fail('配送范围关键词不能为空（清空后所有顾客都无法外送）。' +
+          '若只想做自提，请把「外送距离上限」设成一个很小的数字（例如 0.1 公里）')
+      }
+      area.keywords = kw.value
+    }
+    const ex = normalizeKeywordList(areaIn.excludeKeywords, '不送区域')
+    if (!ex.ok) return fail(ex.msg)
+    if (ex.value !== undefined) area.excludeKeywords = ex.value
+    if (hasField(areaIn, 'forbidBeyondKm')) {
+      if (areaIn.forbidBeyondKm === null || areaIn.forbidBeyondKm === '') {
+        area.forbidBeyondKm = null // 显式关闭「超过 X 公里不送」
+      } else {
+        const v = Number(areaIn.forbidBeyondKm)
+        if (!isFinite(v) || v <= 0 || v > DELIVERY_KM_MAX) {
+          return fail('外送距离上限必须是 0 ~ ' + DELIVERY_KM_MAX + ' 公里之间的数字（留空 = 不限制）')
+        }
+        area.forbidBeyondKm = Math.round(v * 100) / 100
+      }
+    }
+    for (const key of ['outOfAreaTip', 'excludedTip', 'beyondLimitTip', 'farAwayTip']) {
+      if (!hasField(areaIn, key)) continue
+      const r = normalizeText(areaIn[key], { max: DELIVERY_TIP_MAX, optional: true, msg: '提示文案最多 ' + DELIVERY_TIP_MAX + ' 个字' })
+      if (!r.ok) return fail(r.msg)
+      if (r.value) area[key] = r.value
+    }
+    rule.area = area
+  }
+
+  // ---- 距离阶梯运费（计费依据）----
+  if (hasField(p, 'freight')) {
+    const fIn = p.freight && typeof p.freight === 'object' ? p.freight : {}
+    const tiersRes = normalizeTiersForSave(fIn.tiers)
+    if (!tiersRes.ok) return fail(tiersRes.msg)
+    const tiers = tiersRes.value
+    const first = tiers[0]
+    const last = tiers[tiers.length - 1]
+    // 尾档语义：`beyondEnabled` 表示"超出所有上限之后还接不接单"。
+    //   fee = null 是"运费待确认"（仍接单，店主电话确认后补录），**不是拒单** ——
+    //   所以这里默认 true；要"超过 X 公里不接单"请用 area.forbidBeyondKm（页面上有这一项）。
+    //   允许显式传布尔值覆盖（给控制台/将来的 UI 留一个开关）。
+    const beyondEnabled = typeof fIn.beyondEnabled === 'boolean' ? fIn.beyondEnabled : true
+    rule.freight = {
+      tiers,
+      // 镜像键（旧代码/旧配置读它们）：与 tiers 首档/尾档保持一致，避免两处口径漂移。
+      // ⚠️ 注意：镜像值写 null 时 normalizeRule 会视为"未提供"→ 保留代码默认值
+      //    （例如首档不设免运费门槛时 withinFreeAmount 仍是默认 35）。
+      //    这不影响计费：**计费只读 tiers**（pickTier），镜像只在 tiers 缺失/非法时兜底。
+      withinFreeAmount: first.freeAmount,
+      withinFee: first.fee === null ? 0 : first.fee,
+      beyondEnabled,
+      beyondFee: last.maxKm === null ? last.fee : null,
+      beyondTip: (last.maxKm === null && last.tip) || undefined
+    }
+    // distance.freeWithinKm 是 tiers 首档的兼容镜像（两者必须相等）
+    rule.distance = { freeWithinKm: first.maxKm === null ? undefined : first.maxKm }
+    for (const key of ['beyondTip', 'unknownTip']) {
+      if (!hasField(fIn, key)) continue
+      const r = normalizeText(fIn[key], { max: DELIVERY_TIP_MAX, optional: true })
+      if (!r.ok) return fail(r.msg)
+      if (r.value) rule.freight[key] = r.value
+    }
+  }
+
+  // ---- 蛋糕免配送费规则 ----
+  if (hasField(p, 'cake')) {
+    const cIn = p.cake && typeof p.cake === 'object' ? p.cake : {}
+    const cake = {}
+    if (hasField(cIn, 'enabled')) {
+      if (typeof cIn.enabled !== 'boolean') return fail('蛋糕免配送费开关状态不正确')
+      cake.enabled = cIn.enabled
+    }
+    if (hasField(cIn, 'freeWithinKm')) {
+      const r = normalizeMoney(cIn.freeWithinKm, { max: DELIVERY_KM_MAX, msg: '蛋糕免配送费距离必须是 0 ~ ' + DELIVERY_KM_MAX + ' 公里' })
+      if (!r.ok) return fail(r.msg)
+      cake.freeWithinKm = r.value
+    }
+    if (hasField(cIn, 'minSizeInch')) {
+      const r = normalizeMoney(cIn.minSizeInch, { minExclusive: 0, max: 30, msg: '最小尺寸必须是大于 0 的寸数（最多 30）' })
+      if (!r.ok) return fail(r.msg)
+      cake.minSizeInch = r.value
+    }
+    if (hasField(cIn, 'overrideThreshold')) {
+      if (typeof cIn.overrideThreshold !== 'boolean') return fail('「无条件免运费」开关状态不正确')
+      cake.overrideThreshold = cIn.overrideThreshold
+    }
+    if (hasField(cIn, 'freeReasonText')) {
+      const r = normalizeText(cIn.freeReasonText, { max: DELIVERY_TIP_MAX, optional: true })
+      if (!r.ok) return fail(r.msg)
+      if (r.value) cake.freeReasonText = r.value
+    }
+    rule.cake = cake
+  }
+
+  if (!Object.keys(rule).length) return fail('没有需要保存的配送设置')
+
+  const normalized = delivery.normalizeRule(rule)
+  const doc = await ctx.db.findOne('app_config', { key: 'delivery_rule' })
+  if (doc && doc._id) {
+    await ctx.db.update('app_config', doc._id, {
+      key: 'delivery_rule',
+      value: normalized,
+      updBy: ctx.openid,
+      updTime: now
+    })
+  } else {
+    await ctx.db.add('app_config', {
+      key: 'delivery_rule',
+      value: normalized,
+      // 新增也写 updBy/updTime：审计字段名统一，读的时候不用分两种情况
+      createBy: ctx.openid,
+      createTime: now,
+      updBy: ctx.openid,
+      updTime: now
+    })
+  }
+  // 让本容器立即用上新规则（否则"保存后马上下一单"仍按旧规则算运费）
+  delivery.setDeliveryRule(normalized)
+  return ok({ rule: normalized })
+}
+
+// ===========================================================================
+// 店主端：运费补录（「运费待确认」订单的补款入口）
+// ---------------------------------------------------------------------------
+// 背景（用户端审查报告 §三 backlog，属阶段 10 范围）：
+//   距离超出最后一档 / 地址没有经纬度时，下单的运费是 `null`（"运费待确认"），
+//   店主电话跟顾客谈好之后**没有任何入口把这个金额写进订单** ——
+//   顾客端看到的实付金额永远不含这笔运费。
+//
+// 约束（每条都为了"钱不能被悄悄改"）：
+//   1) 只有 requireAdmin 能调；
+//   2) 只对**下单时运费待确认**（reason = beyond / unknown_distance）或已补录过的外送单开放 ——
+//      已经算清的档位运费不允许在这里改（那是另一件事，不能藏在"补录"里）；
+//   3) 金额由服务端重算 amountReal = goodsAmount + packingFee + freight
+//      （只接受一个 freight 数字，不接受前端传来的总额）；
+//   4) 写审计字段（freightConfirmBy / freightConfirmTime）。
+// ===========================================================================
+const FREIGHT_CONFIRM_MAX = GOODS_FEE_MAX
+
+async function orderFreightConfirm(payload, ctx) {
+  const denied = requireAdmin(ctx)
+  if (denied) return denied
+
+  const p = payload || {}
+  const id = p.id
+  if (!id) return fail('缺少订单 id')
+  const o = await ctx.db.get('order', id)
+  if (!o) return fail('订单不存在')
+  if ((o.deliveryMode || 'pickup') !== 'delivery') return fail('自提订单没有配送费可补录')
+
+  const quote = o.deliveryQuote || {}
+  const confirmable = quote.reason === 'beyond' ||
+    quote.reason === 'unknown_distance' ||
+    quote.freightConfirmed === true
+  if (!confirmable) {
+    return fail('该订单下单时运费已确定（' + (quote.freightText || '—') + '），无需补录')
+  }
+
+  const status = Number(o.status)
+  if (status !== ORDER_STATUS.UNPAID && status !== ORDER_STATUS.MAKING) {
+    return fail('该订单当前状态（' + statusTextOf(o.status) + '）不能改配送费')
+  }
+
+  const feeRes = normalizeMoney(p.freight, {
+    max: FREIGHT_CONFIRM_MAX,
+    msg: '配送费必须是 0 ~ ' + FREIGHT_CONFIRM_MAX + ' 元之间的数字'
+  })
+  if (!feeRes.ok) return fail(feeRes.msg)
+
+  const freight = feeRes.value
+  const goodsAmount = Number(o.goodsAmount) || 0
+  const packingFee = Number(o.packingFee) || 0
+  const amountReal = Math.round((goodsAmount + packingFee + freight) * 100) / 100
+  const now = Date.now()
+
+  await ctx.db.update('order', o._id, {
+    freight,
+    amountReal,
+    deliveryQuote: Object.assign({}, quote, {
+      freightText: freight > 0 ? '¥' + freight : '免配送费',
+      freightConfirmed: true,
+      freightConfirmedTime: now
+    }),
+    freightConfirmBy: ctx.openid,
+    freightConfirmTime: now
+  })
+
+  return ok({
+    id: o._id,
+    orderNumber: o.orderNumber,
+    freight,
+    goodsAmount,
+    packingFee,
+    amountReal
+  })
+}
+
+// ===========================================================================
 // 购物车
 // ===========================================================================
 /**
@@ -1455,7 +2253,9 @@ function adminOrderView(o) {
       distanceKm: quote.distanceKm,
       inArea: quote.inArea,
       reason: quote.reason,
-      freightText: quote.freightText
+      freightText: quote.freightText,
+      // 阶段 10：店主补录过运费没有（前端据此把"确认运费"按钮换成"已确认 ¥X"）
+      freightConfirmed: quote.freightConfirmed === true
     } : null,
     remark: o.remark || '',
     goods: goods.map((g) => ({
@@ -2097,6 +2897,13 @@ const handlers = {
   // 商品
   goodsList,
   goodsDetail,
+  // 店主端商品管理（阶段 10）：全部 requireAdmin + 入参校验 + updBy/updTime 审计
+  // goodsAdminList 与顾客端 goodsList 的区别：不过滤 enabled（下架商品也要能找回来重新上架）
+  goodsAdminList,
+  goodsUpsert,
+  goodsDelete,
+  // 店主端配送设置（阶段 8 的规则"上云可改"，保存前显式校验、不静默吞掉非法值）
+  deliveryRuleSave,
   // 购物车
   cartInfo,
   cartAdd,
@@ -2113,6 +2920,8 @@ const handlers = {
   orderAdminList,
   // 店主手动完成订单（取代原扫码核销 orderHx）
   orderFinish,
+  // 店主端运费补录（「运费待确认」订单的补款入口，阶段 10）
+  orderFreightConfirm,
   // 支付统一下单（当前返回"未接入"，不伪造支付成功）
   wxpay
 }
@@ -2167,6 +2976,12 @@ module.exports = {
   normalizeOrderNumber,
   resolveOrderSku,
   isAdmin,
+  // 阶段 10：店主端入参校验（导出便于测试直接断言边界，不必绕过 action 层）
+  normalizeSpecGroups,
+  normalizePicUrl,
+  normalizeTiersForSave,
+  normalizeKeywordList,
+  goodsAdminView,
   // 阶段 4.1 状态机：供 cloudfunctions/api/index.js（支付回调）复用同一份文案
   ORDER_STATUS,
   statusTextOf,

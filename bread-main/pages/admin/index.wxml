@@ -1,0 +1,101 @@
+<!-- 店主中心（阶段 10）：入口页。普通顾客看不到（「我的」页按 isShopAdmin 显隐） -->
+<view class="admin-page">
+  <!-- 非店主：即使直接跳进来也只看到这一屏，不会有任何店主数据 -->
+  <view wx:if="{{ !isAdminUser }}" class="admin-guard">
+    <view class="admin-guard-title">无店主权限</view>
+    <view class="admin-guard-sub">该入口仅店主本人可见可用</view>
+  </view>
+
+  <block wx:else>
+    <view class="admin-head">
+      <view class="admin-head-title">店主中心</view>
+      <view class="admin-head-sub">商品、订单、配送费都在这里改</view>
+    </view>
+
+    <!-- 加载中 / 加载失败（错误 ≠ 空数据，必须有重试） -->
+    <view wx:if="{{ loading }}" class="admin-loading">正在读取店铺概况…</view>
+    <view wx:elif="{{ loadError }}" class="admin-error">
+      <view class="admin-error-text">概况读取失败，请检查网络后重试</view>
+      <view class="admin-retry" bindtap="retryLoad">点击重试</view>
+    </view>
+
+    <block wx:else>
+      <view class="admin-card">
+        <view class="admin-card-title">今日概况</view>
+        <view class="stat-row">
+          <view class="stat-cell">
+            <view class="stat-num stat-num-warn">{{ pendingCount }}</view>
+            <view class="stat-label">待处理订单</view>
+          </view>
+          <view class="stat-cell">
+            <view class="stat-num">{{ doingCount }}</view>
+            <view class="stat-label">制作中</view>
+          </view>
+          <view class="stat-cell">
+            <view class="stat-num">{{ doneCount }}</view>
+            <view class="stat-label">已完成</view>
+          </view>
+        </view>
+        <view class="stat-row stat-row-goods">
+          <view class="stat-cell">
+            <view class="stat-num">{{ onSaleCount }}</view>
+            <view class="stat-label">在售商品</view>
+          </view>
+          <view class="stat-cell">
+            <view class="stat-num stat-num-off">{{ offSaleCount }}</view>
+            <view class="stat-label">已下架</view>
+          </view>
+        </view>
+      </view>
+
+      <view class="entry-list">
+        <view class="entry-item" bindtap="goOrders">
+          <view class="entry-icon entry-icon-order">单</view>
+          <view class="entry-body">
+            <view class="entry-title">订单管理</view>
+            <view class="entry-sub">看顾客地址电话、导航、完成订单、补录运费</view>
+          </view>
+          <view class="entry-arrow"></view>
+        </view>
+
+        <view class="entry-item" bindtap="goGoods">
+          <view class="entry-icon entry-icon-goods">货</view>
+          <view class="entry-body">
+            <view class="entry-title">商品管理</view>
+            <view class="entry-sub">改价、改规格、换图、上下架、排序</view>
+          </view>
+          <view class="entry-arrow"></view>
+        </view>
+
+        <view class="entry-item" bindtap="goDelivery">
+          <view class="entry-icon entry-icon-delivery">送</view>
+          <view class="entry-body">
+            <view class="entry-title">配送设置</view>
+            <view class="entry-sub">距离阶梯运费、不送区域、配送范围</view>
+          </view>
+          <view class="entry-arrow"></view>
+        </view>
+
+        <view class="entry-item entry-item-pending" bindtap="goCoupons">
+          <view class="entry-icon entry-icon-coupon">券</view>
+          <view class="entry-body">
+            <view class="entry-title">优惠券 / 满减</view>
+            <view class="entry-sub">还没上线（下一阶段做，做完这里就能自己建券）</view>
+          </view>
+          <view class="entry-arrow"></view>
+        </view>
+      </view>
+
+      <view class="admin-tip">
+        改完价格、上下架都是顾客端立即生效：顾客重新进入点单页即可看到最新菜单。
+      </view>
+
+      <!-- 仅开发版 / 体验版：把原始 openid 复制出来填进店主白名单（正式版不显示） -->
+      <view wx:if="{{ isDevEnv }}" class="admin-devid" bindtap="copyMyOpenid">
+        <view class="admin-devid-title">我的 openid（仅开发版显示）</view>
+        <view class="admin-devid-value">{{ myOpenid || '读取中…' }}</view>
+        <view class="admin-devid-sub">点一下复制，填进 cloudfunctions/api/shop-config.js 的 adminOpenids</view>
+      </view>
+    </block>
+  </block>
+</view>

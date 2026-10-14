@@ -1,0 +1,204 @@
+/* 店主端 · 配送设置（阶段 10） */
+.ad-page {
+  min-height: 100vh;
+  padding: 20rpx 0 0;
+  box-sizing: border-box;
+}
+
+.ad-guard {
+  margin-top: 200rpx;
+  text-align: center;
+}
+.ad-guard-title {
+  font-size: 34rpx;
+  font-weight: 600;
+  color: #1f1f1f;
+}
+.ad-guard-sub {
+  margin-top: 16rpx;
+  font-size: 26rpx;
+  color: #8a8a8a;
+}
+
+.ad-hint {
+  padding: 120rpx 0;
+  text-align: center;
+  font-size: 28rpx;
+  color: #8a8a8a;
+}
+.ad-error {
+  margin: 40rpx 24rpx;
+  padding: 60rpx 0;
+  text-align: center;
+  background-color: #ffffff;
+  border-radius: 16rpx;
+}
+.ad-error-text {
+  font-size: 28rpx;
+  color: #8a8a8a;
+}
+.ad-retry {
+  display: inline-block;
+  margin-top: 24rpx;
+  padding: 12rpx 40rpx;
+  font-size: 28rpx;
+  background-color: #ffd100;
+  border-radius: 100rpx;
+  color: #1f1f1f;
+}
+
+.ad-card {
+  margin: 0 24rpx 20rpx;
+  padding: 24rpx;
+  background-color: #ffffff;
+  border-radius: 16rpx;
+}
+.ad-card-title {
+  font-size: 30rpx;
+  font-weight: 600;
+  color: #1f1f1f;
+}
+.ad-tip {
+  padding-top: 12rpx;
+  font-size: 22rpx;
+  line-height: 34rpx;
+  color: #8a8a8a;
+}
+.ad-summary {
+  padding-top: 12rpx;
+  font-size: 24rpx;
+  line-height: 36rpx;
+  color: #3c3c3c;
+  white-space: pre-wrap;
+}
+
+/* 阶梯 */
+.ad-tier {
+  margin-top: 20rpx;
+  padding: 20rpx;
+  background-color: #fafafa;
+  border-radius: 12rpx;
+}
+.ad-tier-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.ad-tier-no {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: #1f1f1f;
+}
+.ad-tier-del {
+  padding: 8rpx 20rpx;
+  font-size: 24rpx;
+  color: #c0392b;
+  border: 1rpx solid #ffb3a7;
+  border-radius: 100rpx;
+}
+.ad-tier-row {
+  display: flex;
+  align-items: center;
+  padding: 14rpx 0;
+  border-bottom: 1rpx solid #f0f0f0;
+}
+.ad-tier-label {
+  width: 260rpx;
+  flex-shrink: 0;
+  font-size: 26rpx;
+  color: #3c3c3c;
+}
+.ad-tier-input {
+  flex: 1;
+  font-size: 28rpx;
+  color: #1f1f1f;
+  text-align: right;
+}
+.ad-tier-sum {
+  padding-top: 14rpx;
+  font-size: 22rpx;
+  color: #8a6d00;
+}
+.ad-add {
+  margin-top: 22rpx;
+  padding: 22rpx 0;
+  text-align: center;
+  font-size: 28rpx;
+  font-weight: 600;
+  color: #1f1f1f;
+  background-color: #fff7d6;
+  border-radius: 12rpx;
+}
+
+/* 文本域与字段 */
+.ad-textarea {
+  width: 100%;
+  height: 180rpx;
+  margin-top: 16rpx;
+  padding: 16rpx;
+  box-sizing: border-box;
+  background-color: #fafafa;
+  border-radius: 12rpx;
+  font-size: 27rpx;
+  line-height: 40rpx;
+  color: #1f1f1f;
+}
+.ad-field {
+  display: flex;
+  align-items: center;
+  padding: 20rpx 0;
+  border-bottom: 1rpx solid #f2f2f2;
+}
+.ad-label {
+  width: 300rpx;
+  flex-shrink: 0;
+  font-size: 28rpx;
+  color: #3c3c3c;
+}
+.ad-input {
+  flex: 1;
+  font-size: 28rpx;
+  color: #1f1f1f;
+  text-align: right;
+}
+.ad-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20rpx 0;
+  border-bottom: 1rpx solid #f2f2f2;
+}
+.ad-row-label {
+  flex: 1;
+  padding-right: 16rpx;
+  font-size: 28rpx;
+  color: #3c3c3c;
+}
+
+/* 底部保存 */
+.ad-bottom-holder {
+  height: 160rpx;
+}
+.ad-bottom-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 16rpx 24rpx;
+  padding-bottom: calc(16rpx + env(safe-area-inset-bottom));
+  background-color: #ffffff;
+  box-shadow: 0 -4rpx 16rpx rgba(0, 0, 0, 0.06);
+}
+.ad-save {
+  height: 88rpx;
+  line-height: 88rpx;
+  text-align: center;
+  font-size: 30rpx;
+  font-weight: 600;
+  color: #1f1f1f;
+  background-color: #ffd100;
+  border-radius: 100rpx;
+}
+.ad-save-disabled {
+  opacity: 0.6;
+}

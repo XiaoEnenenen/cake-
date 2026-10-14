@@ -1,0 +1,100 @@
+<!-- 店主端 · 商品列表（阶段 10）：含已下架商品，改价/换图/上下架都在这里进 -->
+<view class="ag-page">
+  <view wx:if="{{ !isAdminUser }}" class="ag-guard">
+    <view class="ag-guard-title">无店主权限</view>
+    <view class="ag-guard-sub">该入口仅店主本人可见可用</view>
+  </view>
+
+  <block wx:else>
+    <!-- 搜索 + 分类筛选 -->
+    <view class="ag-filter">
+      <view class="ag-search">
+        <input
+          class="ag-search-input"
+          placeholder="搜商品名"
+          value="{{ keyword }}"
+          confirm-type="search"
+          bindinput="onKeywordInput"
+          bindconfirm="doSearch"
+        />
+        <view wx:if="{{ keyword }}" class="ag-search-clear" bindtap="clearKeyword">清空</view>
+      </view>
+      <view class="ag-search-btn" bindtap="doSearch">搜索</view>
+    </view>
+
+    <view class="ag-cat">
+      <picker
+        mode="selector"
+        range="{{ categoryNames }}"
+        value="{{ categoryIndex }}"
+        bindchange="onCategoryChange"
+      >
+        <view class="ag-cat-picker">{{ categoryNames[categoryIndex] }} ▾</view>
+      </picker>
+      <view class="ag-count">共 {{ total }} 个商品</view>
+    </view>
+
+    <view wx:if="{{ loading }}" class="ag-hint">正在读取商品…</view>
+
+    <view wx:elif="{{ loadError }}" class="ag-error">
+      <view class="ag-error-text">商品读取失败，请检查网络后重试</view>
+      <view class="ag-retry" bindtap="retryLoad">点击重试</view>
+    </view>
+
+    <block wx:else>
+      <view class="ag-section-title">在售（{{ onSaleList.length }}）</view>
+      <view wx:if="{{ onSaleList.length == 0 }}" class="ag-empty">没有在售商品</view>
+      <view
+        wx:for="{{ onSaleList }}"
+        wx:key="id"
+        class="ag-item"
+        data-id="{{ item.id }}"
+        bindtap="goEdit"
+      >
+        <image class="ag-pic" mode="aspectFill" src="{{ item.pic }}"></image>
+        <view class="ag-body">
+          <view class="ag-name">{{ item.name }}</view>
+          <view class="ag-sub">{{ item.categoryName || '未分类' }} · {{ item.specGroupCount }} 组规格 · 排序 {{ item.sort }}</view>
+          <view class="ag-price">
+            <text class="qh-price">¥{{ item.minPrice }}</text>
+            <text wx:if="{{ item.maxPrice > item.minPrice }}" class="ag-price-range"> 起（最高 ¥{{ item.maxPrice }}）</text>
+          </view>
+        </view>
+        <view
+          class="ag-toggle ag-toggle-off"
+          data-index="{{ index }}"
+          data-group="on"
+          catchtap="toggleEnabled"
+        >{{ togglingId == item.id ? '处理中' : '下架' }}</view>
+      </view>
+
+      <view class="ag-section-title">已下架（{{ offSaleList.length }}）</view>
+      <view wx:if="{{ offSaleList.length == 0 }}" class="ag-empty">没有被下架的商品</view>
+      <view
+        wx:for="{{ offSaleList }}"
+        wx:key="id"
+        class="ag-item ag-item-off"
+        data-id="{{ item.id }}"
+        bindtap="goEdit"
+      >
+        <image class="ag-pic" mode="aspectFill" src="{{ item.pic }}"></image>
+        <view class="ag-body">
+          <view class="ag-name">{{ item.name }}</view>
+          <view class="ag-sub">{{ item.categoryName || '未分类' }} · 顾客端不可见</view>
+          <view class="ag-price">
+            <text class="qh-price">¥{{ item.minPrice }}</text>
+          </view>
+        </view>
+        <view
+          class="ag-toggle ag-toggle-on"
+          data-index="{{ index }}"
+          data-group="off"
+          catchtap="toggleEnabled"
+        >{{ togglingId == item.id ? '处理中' : '上架' }}</view>
+      </view>
+
+      <view class="ag-bottom-holder"></view>
+      <view class="ag-bottom-bar" bindtap="goCreate">＋ 新增商品</view>
+    </block>
+  </block>
+</view>
