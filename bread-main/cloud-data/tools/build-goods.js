@@ -15,9 +15,20 @@
  *   3) pics 有两种历史写法（["url"] 与 [{pic:"url"}]），统一成 [{pic}] 与线上种子一致；
  *   4) 图片文件缺没缺、id 有没有重复、价格有没有算错，都能在这里一次性查出来。
  *
+ * 规格怎么表达（三者可以同时用）：
+ *   sizes       基础规格，**写绝对价**（如 6寸 178 / 8寸 238）→ 决定 minPrice，其余选项自动转成加价
+ *   flavors     口味，**写加价**（如 巧克力 +10）
+ *   specGroups  任意多组"加价型"规格（阶段 9 第 1 步新增）：
+ *               夹心一 / 夹心二 / 奶油类型 / 装饰…每组单选，选项写 delta（加价，缺省 0）
+ *               ⚠️ 磅数这类"绝对价"规格仍然只能用 sizes 写（否则 minPrice 无法确定，工具会报错）
+ *   三处组名/组 id 不能重复；组内选项 id 由名字稳定生成（芒果 → f_mango、6寸 → s6）。
+ *
  * 用法：
  *   node cloud-data/tools/build-goods.js            # 校验 + 生成 goods-real.jsonl
  *   node cloud-data/tools/build-goods.js --check    # 只校验，不写文件
+ *
+ * 测试：tests/test-build-goods.js 直接调用本文件导出的 buildRecords()（纯函数，不碰磁盘），
+ *      并断言"当前的 goods-real.jsonl == 源文件重新生成的结果"（改了源文件忘了跑脚本会红）。
  * ---------------------------------------------------------------------------
  */
 'use strict'
@@ -36,15 +47,10 @@ const FALLBACK_PIC = '/images/logo@2x.png'
 const LOCAL_IMAGE_BASE = '/images/goods/'
 const isCloudBase = (b) => /^cloud:/i.test(String(b || ''))
 
-const errors = []
-const warnings = []
-const err = (m) => errors.push(m)
-const warn = (m) => warnings.push(m)
-
 // ---------------------------------------------------------------------------
 // 小工具
 // ---------------------------------------------------------------------------
-function readJsonl(file) {
+function readJsonl(file, err) {
   return fs
     .readFileSync(file, 'utf8')
     .split(/\r?\n/)
@@ -80,7 +86,12 @@ const FLAVOR_IDS = {
   酸奶: 'yogurt', 焦糖: 'caramel', 芝士: 'cheese', 海盐: 'seasalt', 玫瑰: 'rose',
   桂花: 'osmanthus', 红豆: 'redbean', 椰香: 'coconut', 椰子: 'coconut', 香蕉: 'banana',
   车厘子: 'cherry', 樱桃: 'cherry', 青提: 'grape', 葡萄: 'grape', 猕猴桃: 'kiwi',
-  火龙果: 'dragonfruit', 无花果: 'fig', 开心果: 'pistachio', 栗蓉: 'chestnutpaste'
+  火龙果: 'dragonfruit', 无花果: 'fig', 开心果: 'pistachio', 栗蓉: 'chestnutpaste',
+  // 夹心/奶油类常见选项（阶段 9：夹心一/夹心二/奶油类型 都能命中，得到可读 id）
+  动物奶油: 'freshcream', 淡奶油: 'lightcream', 老奶油: 'oldcream', 植物奶油: 'vegfreshcream',
+  进口动物奶油: 'importedcream', 布丁: 'pudding', 果冻: 'jelly', 莓果: 'berry',
+  混合水果: 'mixedfruit', 黄桃: 'peachcan', 凤梨: 'pineapple', 咸奶油: 'saltedcream',
+  芝士奶油: 'creamcheese', 巧克力脆珠: 'choccrunch'
 }
 
 /** 尺寸/口味选项 id：显式 id > 口味词典 > 名字里的数字（6寸→s6）> 短哈希 */
@@ -90,6 +101,27 @@ function optionId(prefix, name, explicit) {
   const digits = String(name).match(/\d+/g)
   if (digits && digits.length) return prefix + digits.join('')
   return prefix + '_' + shortHash(name)
+}
+
+/**
+ * 规格组名 → 稳定的组 id（沿用线上种子的 'size' / 'flavor' 命名）
+ * 组 id 会写进购物车 key 与订单快照，**必须稳定**：同一组名永远得到同一个 id。
+ */
+const GROUP_IDS = {
+  磅数: 'size', 尺寸: 'size', 大小: 'size', 份量: 'size',
+  口味: 'flavor', 味道: 'flavor',
+  夹心: 'filling', 夹心一: 'filling1', 夹心二: 'filling2',
+  奶油类型: 'cream', 奶油: 'cream',
+  装饰: 'decoration', 插件: 'decoration', 生日插件: 'decoration',
+  蜡烛: 'candle', 包装: 'packing', 甜度: 'sweetness'
+} // 未命中的组名 → spec_<短哈希>
+
+/** 规格组 id：显式 id > 组名词典 > spec_<短哈希> */
+function groupId(name, explicit) {
+  if (explicit) return String(explicit)
+  const n = String(name).trim()
+  if (GROUP_IDS[n]) return GROUP_IDS[n]
+  return 'spec_' + shortHash(n)
 }
 
 /** 纯文本详情 → 富文本 HTML；已经是 HTML 就原样保留 */
@@ -113,8 +145,9 @@ function toHtml(text) {
  *   - 不写（默认）= '/images/goods/'  → 图片打进小程序包，受主包 2MB 限制，改图要重新提审
  *   - 'cloud://<环境ID>.<bucket>/goods/' → 图片放云存储，不受主包限制，改图不用重新提审
  *   两种模式切换只需改源文件里那一行，商品条目一个字都不用动。
+ * @param warn 警告收集函数（由调用方注入，便于测试）
  */
-function toPics(images, imageBase) {
+function toPics(images, imageBase, warn) {
   const base = imageBase || LOCAL_IMAGE_BASE
   const isLocal = base.charAt(0) === '/'
   const list = (Array.isArray(images) ? images : images ? [images] : [])
@@ -141,46 +174,20 @@ function num(v) {
 const money = (n) => Math.round(n * 100) / 100
 
 // ---------------------------------------------------------------------------
-// 主流程
+// 源文件 → 云端记录（纯函数：不读磁盘、不写文件，错误/警告通过注入的收集器返回）
 // ---------------------------------------------------------------------------
-function main() {
-  const checkOnly = process.argv.indexOf('--check') >= 0
+/**
+ * @param {Array} list 源文件的 goods 数组
+ * @param {object} ctx { catByName, catById, imageBase, err, warn }
+ * @returns {{ records: Array }}
+ */
+function buildRecords(list, ctx) {
+  const catByName = ctx.catByName || {}
+  const catById = ctx.catById || {}
+  const imageBase = ctx.imageBase || ''
+  const err = ctx.err || (() => {})
+  const warn = ctx.warn || (() => {})
 
-  if (!fs.existsSync(SRC)) {
-    console.error('找不到源文件：' + path.relative(process.cwd(), SRC))
-    process.exit(1)
-  }
-
-  // ---- 分类映射 ----
-  const cats = readJsonl(CATEGORIES)
-  const catByName = {}
-  const catById = {}
-  cats.forEach((c) => {
-    catByName[c.name] = c._id
-    catById[c._id] = c.name
-  })
-
-  // ---- 读源文件 ----
-  let raw
-  try {
-    raw = JSON.parse(fs.readFileSync(SRC, 'utf8'))
-  } catch (e) {
-    console.error('goods-real.source.json 不是合法 JSON：' + e.message)
-    process.exit(1)
-  }
-  const list = Array.isArray(raw) ? raw : (raw && raw.goods) || []
-  if (!list.length) {
-    console.error('源文件里没有商品（goods 数组为空）。')
-    process.exit(1)
-  }
-  // 图片托管方式：源文件顶层 imageBase（不写 = 打进小程序包）
-  const imageBase = Array.isArray(raw) ? '' : String((raw && raw.imageBase) || '').trim()
-  if (imageBase && imageBase.charAt(0) !== '/' && !isCloudBase(imageBase) && !/^https?:/i.test(imageBase)) {
-    err('imageBase 只支持以 / 开头的本地路径、cloud:// 云存储前缀或 https:// 外链，当前是：' + imageBase)
-  }
-  const cloudHosting = isCloudBase(imageBase)
-
-  // ---- 逐条构建 ----
   const records = []
   const seenIds = {}
 
@@ -274,7 +281,46 @@ function main() {
     })
     const flavorOk = flavorOpts.filter(Boolean)
 
-    // 规格组
+    // ---- 任意多组"加价型"规格（阶段 9 第 1 步）----
+    // specGroups: [{ id?, name, options: [{ id?, name, delta? }] }]
+    //   组内单选、每组必选（服务端 resolveOrderSku 就是这么校验的）；
+    //   选项 delta 是加价，基础价仍由 sizes / price 决定。
+    if (g.specGroups !== undefined && !Array.isArray(g.specGroups)) {
+      err(at + '：specGroups 必须是数组')
+    }
+    const specGroups = Array.isArray(g.specGroups) ? g.specGroups.filter(Boolean) : []
+    const customGroups = []
+    specGroups.forEach((grp, gi) => {
+      const gat = at + ' 的第 ' + (gi + 1) + ' 个规格组'
+      if (!grp || typeof grp !== 'object') return err(gat + '：不是对象')
+      const gname = grp.name != null ? String(grp.name).trim() : ''
+      if (!gname) return err(gat + '：缺少 name（组名，如"夹心一"）')
+      const gid = groupId(gname, grp.id)
+      if (gid === 'size') {
+        return err(
+          gat + '「' + gname + '」：绝对价的规格（磅数/尺寸）请用顶层 sizes 写 —— ' +
+            'specGroups 只能写"加价"型规格（夹心、奶油类型…），否则 minPrice 算不出来'
+        )
+      }
+      const opts = Array.isArray(grp.options) ? grp.options.filter(Boolean) : []
+      if (!opts.length) return err(gat + '「' + gname + '」：options 不能为空（至少一个选项）')
+      const built = []
+      opts.forEach((o, oi) => {
+        const oat = gat + '「' + gname + '」的第 ' + (oi + 1) + ' 个选项'
+        if (!o || typeof o !== 'object') return err(oat + '：不是对象')
+        const oname = o.name != null ? String(o.name).trim() : ''
+        if (!oname) return err(oat + '：缺少 name')
+        const delta = o.delta == null ? 0 : num(o.delta)
+        if (!Number.isFinite(delta)) return err(oat + '（' + oname + '）：delta 必须是数字')
+        if (delta < 0) {
+          warn(at + '：「' + gname + '」的选项「' + oname + '」是负加价（' + delta + '），确认是有意为之')
+        }
+        built.push({ id: optionId('f', oname, o.id), name: oname, priceDelta: money(delta) })
+      })
+      customGroups.push({ id: gid, name: gname, childsCurGoods: built })
+    })
+
+    // 规格组（顺序：尺寸 → 口味 → 自定义组）
     const properties = []
     if (sizeOpts.length) {
       properties.push({
@@ -286,8 +332,19 @@ function main() {
     if (flavorOk.length) {
       properties.push({ id: 'flavor', name: '口味', childsCurGoods: flavorOk })
     }
-    // 规格组内部 id 唯一性（同名尺寸/口味会撞 id）
+    customGroups.forEach((grp) => properties.push(grp))
+
+    // 组名 / 组 id / 组内选项 id 的唯一性
+    // （组内选项 id 只要求组内唯一：不同组里都叫「芒果」是可以的，购物车 key 用的是"组:选项"对）
+    const seenGroupNames = {}
+    const seenGroupIds = {}
     properties.forEach((grp) => {
+      if (seenGroupNames[grp.name]) {
+        err(at + '：规格组名「' + grp.name + '」重复（sizes / flavors / specGroups 之间重名了）')
+      }
+      seenGroupNames[grp.name] = 1
+      if (seenGroupIds[grp.id]) err(at + '：规格组 id「' + grp.id + '」重复')
+      seenGroupIds[grp.id] = 1
       const seen = {}
       grp.childsCurGoods.forEach((o) => {
         if (seen[o.id]) err(at + '：' + grp.name + ' 的选项 id「' + o.id + '」重复（选项名重名？）')
@@ -295,7 +352,7 @@ function main() {
       })
     })
 
-    const pics = toPics(g.images || g.pics, imageBase)
+    const pics = toPics(g.images || g.pics, imageBase, warn)
     // 有「磅数」规格 = 蛋糕（配送规则据此算免配送费/提前 3 小时，见 handlers.js 的 isCakeGoods）
     const isCake = typeof g.isCake === 'boolean' ? g.isCake : sizeOpts.length > 0
 
@@ -316,6 +373,56 @@ function main() {
       properties
     })
   })
+
+  return { records }
+}
+
+// ---------------------------------------------------------------------------
+// 主流程
+// ---------------------------------------------------------------------------
+function main() {
+  const checkOnly = process.argv.indexOf('--check') >= 0
+  const errors = []
+  const warnings = []
+  const err = (m) => errors.push(m)
+  const warn = (m) => warnings.push(m)
+
+  if (!fs.existsSync(SRC)) {
+    console.error('找不到源文件：' + path.relative(process.cwd(), SRC))
+    process.exit(1)
+  }
+
+  // ---- 分类映射 ----
+  const cats = readJsonl(CATEGORIES, err)
+  const catByName = {}
+  const catById = {}
+  cats.forEach((c) => {
+    catByName[c.name] = c._id
+    catById[c._id] = c.name
+  })
+
+  // ---- 读源文件 ----
+  let raw
+  try {
+    raw = JSON.parse(fs.readFileSync(SRC, 'utf8'))
+  } catch (e) {
+    console.error('goods-real.source.json 不是合法 JSON：' + e.message)
+    process.exit(1)
+  }
+  const list = Array.isArray(raw) ? raw : (raw && raw.goods) || []
+  if (!list.length) {
+    console.error('源文件里没有商品（goods 数组为空）。')
+    process.exit(1)
+  }
+  // 图片托管方式：源文件顶层 imageBase（不写 = 打进小程序包）
+  const imageBase = Array.isArray(raw) ? '' : String((raw && raw.imageBase) || '').trim()
+  if (imageBase && imageBase.charAt(0) !== '/' && !isCloudBase(imageBase) && !/^https?:/i.test(imageBase)) {
+    err('imageBase 只支持以 / 开头的本地路径、cloud:// 云存储前缀或 https:// 外链，当前是：' + imageBase)
+  }
+  const cloudHosting = isCloudBase(imageBase)
+
+  // ---- 逐条构建 ----
+  const records = buildRecords(list, { catByName, catById, imageBase, err, warn }).records
 
   // ---- 图片体积（只在「图片打进小程序包」时才需要关心主包 2MB 限制）----
   if (!cloudHosting && fs.existsSync(IMG_DIR)) {
@@ -426,4 +533,14 @@ function main() {
   console.log('        文件选 goods-real.json，冲突处理选「upsert」')
 }
 
-main()
+module.exports = {
+  buildRecords,
+  optionId,
+  groupId,
+  shortHash,
+  GROUP_IDS,
+  FLAVOR_IDS,
+  LOCAL_IMAGE_BASE
+}
+
+if (require.main === module) main()

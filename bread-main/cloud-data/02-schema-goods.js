@@ -115,13 +115,19 @@ module.exports = {
   properties_explained: {
     说明: 'properties 是数组，每一项是一个规格组；每个规格组的 childsCurGoods 是可选项。',
     'id': '规格组 id，前端拼 sku 时作为 optionId',
-    name: '规格组显示名，如「磅数」「口味」',
+    name: '规格组显示名，如「磅数」「口味」「夹心一」「奶油类型」',
     'childsCurGoods[].id': '选项 id，前端作为 optionValueId',
     'childsCurGoods[].name': '选项显示名',
     'childsCurGoods[].priceDelta': '该选项的【加价】（0 表示不加价）。★ 实际生效字段，选它就对了',
     注意1: '原项目里 optionId 与 optionValueId 参与字符串拼接，云开发改造时建议统一为字符串 id',
     注意2: '多规格已不再是硬伤（2026-02-14 更正）：前端支持多组规格，每组单选，' +
-           '价格 = minPrice + 各选中项 priceDelta 之和。服务端同一规则见 handlers.js 的 calcPrice。'
+           '价格 = minPrice + 各选中项 priceDelta 之和。服务端同一规则见 handlers.js 的 calcPrice。',
+    注意3: '组数没有上限：阶段 9（2026-10-14）起 tools/build-goods.js 支持 specGroups，' +
+           '可一次生成"磅数 + 口味 + 夹心一 + 夹心二 + 奶油类型"任意组；' +
+           '组 id 由组名稳定生成（夹心一 → filling1、奶油类型 → cream、口味 → flavor、磅数 → size），' +
+           '组内选项 id 由选项名稳定生成（芒果 → f_mango、6寸 → s6）。',
+    注意4: '基础价（minPrice）只能由 sizes（绝对价）或 price 决定；' +
+           '夹心/奶油这类"加价型"选项写在 specGroups 里，写 delta 而不是 price。'
   },
 
   cart_structure: {

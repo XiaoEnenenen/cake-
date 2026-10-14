@@ -124,10 +124,30 @@ node cloud-data/tools/sync-delivery.js --check  # 只校验是否已同步（不
 | `images` | 否 | `images/goods/` 下的文件名，可多个；也接受 `cloud://` fileID 或 https 外链。第一张兼作列表缩略图 |
 | `characteristic` | 否 | 列表页灰色小字，如「动物奶油 / 当季草莓」 |
 | `content` | 否 | 详情文字，空行分段；会自动转成 `<p>` 富文本 |
-| `sizes` | 二选一 | 磅数规格，写**绝对价**：`[{"name":"6寸","price":128}]` |
+| `sizes` | 二选一 | 磅数规格，写**绝对价**：`[{"name":"6寸","price":128}]`（决定 `minPrice`，其余自动转加价） |
 | `price` | 二选一 | 无规格商品的单价（饼干、蜡烛等） |
 | `flavors` | 否 | 口味，写**加价**：`[{"name":"巧克力","delta":10}]` |
+| `specGroups` | 否 | **任意多组"加价型"规格**（阶段 9 起）：夹心一 / 夹心二 / 奶油类型 / 装饰…<br>写法：`[{"name":"夹心一","options":[{"name":"芒果"},{"name":"奥利奥","delta":5}]}]`<br>组内单选、每组必选；选项 `delta` 缺省 0。**绝对价规格（磅数）仍必须用 `sizes`**（否则 `minPrice` 算不出来，工具会报错） |
 | `unit` / `purchaseNotes` / `sort` / `enabled` / `isCake` | 否 | 默认 `个` / 空 / `10` / `true` / 有磅数规格即为蛋糕 |
+
+### 规格组与选项 id 怎么来的（**由名字确定性生成，不要手改**）
+
+组 id 与选项 id 会写进购物车 key 与订单快照，所以工具按名字稳定生成 —— **改名字等于换 id**：
+
+| 组名 | 组 id | 选项名举例 | 选项 id |
+|---|---|---|---|
+| 磅数 / 尺寸 | `size` | 6寸 / 8寸 | `s6` / `s8` |
+| 口味 | `flavor` | 芒果 / 巧克力 | `f_mango` / `f_chocolate` |
+| 夹心一 / 夹心二 | `filling1` / `filling2` | 奥利奥 | `f_oreo` |
+| 奶油类型 | `cream` | 动物奶油 | `f_freshcream` |
+| 生日插件 / 装饰 | `decoration` | 皇冠 | `f_<短哈希>` |
+| 其它任意组名 | `spec_<短哈希>` | —— | `f_<短哈希>` |
+
+> 词典没命中的名字会落到短哈希（同样稳定）；想让 id 更可读，在 `build-goods.js` 的
+> `FLAVOR_IDS` / `GROUP_IDS` 里各加一行即可。
+> `tests/test-build-goods.js` 守着这些映射，另外还守着一条更重要的：
+> **磁盘上的 `goods-real.jsonl` 必须等于"用当前源文件重新生成"的结果** ——
+> 改了源文件忘记跑脚本，`npm test` 就会红（导入过期价格是这类工具最典型的坑）。
 
 ## 导入到云库
 
