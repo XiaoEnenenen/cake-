@@ -416,10 +416,8 @@ async function main() {
     }, ctxD2)
     check('前端传运费99被忽略（满35元应为0）', rd.code === 0 && rd.data.freight === 0, rd.data)
 
-    // (3) 不满 35 元 → 收 5 元：本店最便宜的商品是 10 元的无规格小商品，
-    //     但为保持既有用例的金额口径，这里直接验证「距离 5km」分支。
-    // 2026-10-09：原文案里的「售罄」已随库存概念删除，仅更新说明，断言不变。
-    // (3) 5km → 运费待确认（null → 服务端按 0 计，不阻塞下单）
+    // (3) 距离阶梯（店主 2026-10-14 给的规则）：5km → 10 元 / 6km+ → 18 元 / >8km → 待确认
+    // 商品是 g_musi 的 4 寸草莓 = 54 元
     const dbD3 = createMockDb(seedData())
     const ctxD3 = { db: dbD3, openid: 'user_far' }
     rd = await dispatch('orderCreate', {
@@ -427,9 +425,33 @@ async function main() {
       deliveryMode: 'delivery', address: farAddr,
       shopIdZt: 0, shopNameZt: '卿欢蛋糕'
     }, ctxD3)
-    check('5km 外仍可下单', rd.code === 0, rd)
-    check('  运费待确认时金额按 0 计', rd.data.freight === 0, rd.data)
-    check('  文案为运费待确认', rd.data.freightText === '运费待确认', rd.data.freightText)
+    check('5km 仍可下单（3–5 公里档）', rd.code === 0, rd)
+    check('★ 5km 按第二档收 10 元', rd.data.freight === 10, rd.data)
+    check('  总额 = 商品 54 + 运费 10', rd.data.amountReal === 64, rd.data.amountReal)
+    check('  文案为 ¥10', rd.data.freightText === '¥10', rd.data.freightText)
+
+    // (3b) 6km → 第三档 18 元
+    const dbD3b = createMockDb(seedData())
+    rd = await dispatch('orderCreate', {
+      goodsJsonStr: goodsJson, extJsonStr: '{}',
+      deliveryMode: 'delivery',
+      address: Object.assign({}, nearAddr, { latitude: SHOP.latitude + 6 / 111.19 }),
+      shopIdZt: 0, shopNameZt: '卿欢蛋糕'
+    }, { db: dbD3b, openid: 'user_far6' })
+    check('★ 6km 按第三档收 18 元', rd.code === 0 && rd.data.freight === 18, rd.data)
+
+    // (3c) 9km → 超出 8 公里：不拒绝下单，运费"待确认"（店主说要打电话沟通）
+    const dbD3c = createMockDb(seedData())
+    rd = await dispatch('orderCreate', {
+      goodsJsonStr: goodsJson, extJsonStr: '{}',
+      deliveryMode: 'delivery',
+      address: Object.assign({}, nearAddr, { latitude: SHOP.latitude + 9 / 111.19 }),
+      shopIdZt: 0, shopNameZt: '卿欢蛋糕'
+    }, { db: dbD3c, openid: 'user_far9' })
+    check('★ 9km 仍可下单（不拒绝）', rd.code === 0, rd)
+    check('  运费待确认时金额按 0 计（不预收）', rd.data.freight === 0, rd.data)
+    check('  文案说明要电话确认',
+      String(rd.data.freightText).indexOf('确认') >= 0, rd.data.freightText)
 
     // (4) 区域外 → 拒绝下单
     const dbD4 = createMockDb(seedData())

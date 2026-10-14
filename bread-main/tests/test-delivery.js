@@ -156,14 +156,38 @@ console.log('\n=== 5) 运费：区域外 ===')
   check('区域外且距离很近 → 仍不配送', q2.deliverable === false && q2.reason === 'out_of_area', q2)
 }
 
-console.log('\n=== 6) 运费：3 公里以外（可下单，运费待确认）===')
+console.log('\n=== 6) 运费：距离阶梯（店主 2026-10-14 定的规则）===')
 {
-  const q = DR.calcQuote({ address: addrAtKm(5), goodsAmount: 200, items: [] })
-  check('3km外仍可下单', q.deliverable === true, q)
-  check('  原因 beyond', q.reason === 'beyond', q.reason)
-  check('  运费为 null（待确认）', q.freight === null, q.freight)
-  check('  文案「运费待确认」', q.freightText === CFG.freight.beyondTip, q.freightText)
-  check('  距离已算出约 5', Math.abs(q.distanceKm - 5) < 0.1, q.distanceKm)
+  // 规则：0–3km 满35免/不满5元；3–5km 10元；5–8km 18元；>8km 电话沟通（运费待确认）
+  const q5 = DR.calcQuote({ address: addrAtKm(5), goodsAmount: 200, items: [] })
+  check('3–5 公里：仍可下单', q5.deliverable === true, q5)
+  check('★ 恰好 5 公里 → 第二档 10 元', q5.freight === 10, q5)
+  check('  原因 within_paid（按档收费）', q5.reason === 'within_paid', q5.reason)
+  check('  文案 ¥10', q5.freightText === '¥10', q5.freightText)
+  check('  距离已算出约 5', Math.abs(q5.distanceKm - 5) < 0.1, q5.distanceKm)
+
+  // 边界：3.00 归首档（不满 35 元收 5 元）/ 3.01 归第二档（10 元）
+  // 注意金额用 20 元（不满 35），否则会先命中首档的"满 35 免运费"分支
+  const e3 = DR.calcQuote({ address: addrAtKm(3), goodsAmount: 20, items: [] })
+  const e301 = DR.calcQuote({ address: addrAtKm(3.01), goodsAmount: 20, items: [] })
+  check('★ 恰好 3.00 公里 → 首档 5 元（含等号）', e3.freight === 5, e3)
+  check('★ 3.01 公里 → 第二档 10 元', e301.freight === 10, e301)
+
+  // 第二档没有免运费门槛（店主只说"3 公里以内满 35 免"）
+  const q5b = DR.calcQuote({ address: addrAtKm(4), goodsAmount: 500, items: [] })
+  check('★ 3–5 公里档没有免运费门槛（金额再高也收 10 元）', q5b.freight === 10, q5b)
+
+  const q6 = DR.calcQuote({ address: addrAtKm(6), goodsAmount: 200, items: [] })
+  check('★ 6 公里 → 第三档 18 元', q6.freight === 18, q6)
+  const q8 = DR.calcQuote({ address: addrAtKm(8), goodsAmount: 200, items: [] })
+  check('★ 恰好 8.00 公里 → 仍是第三档 18 元（含等号）', q8.freight === 18, q8)
+
+  const q9 = DR.calcQuote({ address: addrAtKm(9), goodsAmount: 200, items: [] })
+  check('★ 超过 8 公里：仍可下单（她打电话沟通，不拒绝）', q9.deliverable === true, q9)
+  check('  运费为 null（待确认，不预收）', q9.freight === null, q9.freight)
+  check('  文案与配置的 beyondTip 一致（说明要电话确认）',
+    q9.freightText === CFG.freight.beyondTip, q9.freightText)
+  check('  原因 beyond', q9.reason === 'beyond', q9.reason)
 }
 
 console.log('\n=== 7) 运费：蛋糕免配送费规则 ===')
@@ -182,9 +206,13 @@ console.log('\n=== 7) 运费：蛋糕免配送费规则 ===')
   check('  原因 cake_free', q1.reason === 'cake_free', q1.reason)
   check('  文案含免配送费说明', q1.freightText === '免配送费', q1.freightText)
 
-  // 蛋糕但在 3km 外 → 走待确认
+  // 蛋糕免运费只在 3 公里以内：4 公里走第二档（10 元）
+  // 2026-10-14：店主口径是"6 寸及以上蛋糕 **3 公里以内**免配送费"，超出不再免
   const q2 = DR.calcQuote({ address: addrAtKm(4), goodsAmount: 30, items: bigCake })
-  check('6寸蛋糕但超出3km → 运费待确认', q2.freight === null && q2.reason === 'beyond', q2)
+  check('★ 6寸蛋糕但 4 公里（超出蛋糕免运费范围）→ 按第二档收 10 元',
+    q2.freight === 10 && q2.reason === 'within_paid', q2)
+  const q2b = DR.calcQuote({ address: addrAtKm(6), goodsAmount: 30, items: bigCake })
+  check('  6 公里同样不免 → 18 元', q2b.freight === 18, q2b)
 
   // 小蛋糕（4寸）不享受蛋糕规则 → 走金额门槛
   const smallCake = [{ goods: cakeGoods, sku: [{ optionId: 'size', optionValueId: 's4' }] }]
@@ -373,6 +401,17 @@ console.log('\n=== 12) 配置一致性检查 ===')
   check('★ 尾档文案与 beyondTip 一致',
     openTier && (openTier.tip || CFG.freight.beyondTip) === CFG.freight.beyondTip,
     { tier: openTier, key: CFG.freight.beyondTip })
+
+  // ===== 店主 2026-10-14 给的完整档位（改这里必须是有意为之，别被顺手改掉）=====
+  check('★ 阶梯共 4 档（3/5/8 公里 + 尾档）', tiers.length === 4, tiers.map((t) => t.maxKm))
+  check('★ 第二档 = 3–5 公里 10 元',
+    tiers[1].maxKm === 5 && tiers[1].fee === 10, tiers[1])
+  check('★ 第三档 = 5–8 公里 18 元',
+    tiers[2].maxKm === 8 && tiers[2].fee === 18, tiers[2])
+  check('★ 3 公里以外不设免运费门槛（她只说了"3 公里以内满 35 免"）',
+    tiers[1].freeAmount === null && tiers[2].freeAmount === null, [tiers[1], tiers[2]])
+  check('★ 超过 8 公里 = 尾档：运费待确认（她打电话沟通，不拒绝下单）',
+    !!openTier && openTier.fee === null && String(openTier.tip).indexOf('确认') >= 0, openTier)
 }
 
 console.log('\n=== 13) 云函数侧副本一致性（关键：防止两端运费不一致）===')
@@ -706,6 +745,38 @@ console.log('\n=== 17) 阶段 8：两端副本由脚本生成（逐字节一致�
   })
   DR.setDeliveryRule(null)
   CloudDR.setDeliveryRule(null)
+}
+
+console.log('\n=== 18) 云库规则模板与代码默认值一致（防止"模板和代码说的不是一回事"）===')
+{
+  const fs = require('fs')
+  const path = require('path')
+  const jlPath = path.join(__dirname, '../cloud-data/delivery-rule.sample.jsonl')
+  const jsonPath = path.join(__dirname, '../cloud-data/delivery-rule.sample.json')
+
+  const raw = fs.readFileSync(jlPath, 'utf8').trim()
+  const twin = fs.readFileSync(jsonPath, 'utf8').trim()
+  check('模板的两份副本内容一致（.jsonl 与 .json）', raw === twin)
+
+  let rec = null
+  try {
+    rec = JSON.parse(raw)
+  } catch (e) {
+    check('模板是合法 JSON', false, e.message)
+  }
+  if (rec) {
+    check('模板是 app_config 的一条记录（key = delivery_rule）', rec.key === 'delivery_rule', rec.key)
+    const applied = DR.normalizeRule(rec.value)
+    check('★ 模板的阶梯与代码默认阶梯逐条一致（导入它不会改变线上运费）',
+      JSON.stringify(applied.freight.tiers) === JSON.stringify(CFG.freight.tiers),
+      { tpl: applied.freight.tiers, cfg: CFG.freight.tiers })
+    check('  模板的黑名单为空、距离上限不启用（与代码默认一致）',
+      applied.area.excludeKeywords.length === 0 && applied.area.forbidBeyondKm === null,
+      { ex: applied.area.excludeKeywords, km: applied.area.forbidBeyondKm })
+    check('  模板里没有多余的越权字段（只覆盖 area / freight）',
+      Object.keys(rec.value).every((k) => k === 'area' || k === 'freight'),
+      Object.keys(rec.value))
+  }
 }
 
 console.log('\n=== 汇总 ===')

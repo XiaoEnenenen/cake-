@@ -111,6 +111,10 @@ app_config 集合
 - 云函数 `api` 每次外送下单都会重新读一次云库规则（改完**不需要重新部署云函数**）；
   但**前端显示**用的是启动时下发的那份，所以店主改完要让顾客**重新进入小程序**才生效。
 
+> 💡 2026-10-14 起，店主确认的档位**同时写进了代码默认值**（`config/delivery.js` 的 `freight.tiers`），
+> 所以**不导入下面这条记录也是准的**；这条记录的价值是"**以后改价不用发版**"——
+> 在控制台改一条记录、顾客重新进小程序就生效。（阶段 10 的店主端会把这个编辑做成界面。）
+
 ### 字段一览（只写想改的部分即可，其余自动用默认值）
 
 | 字段 | 含义 | 例子 |
@@ -122,31 +126,51 @@ app_config 集合
 | `freight.tiers` | **距离阶梯**（真正的计费依据），按 `maxKm` 升序匹配第一条 `距离 <= maxKm` 的档 | 见下 |
 | `cake.enabled` / `cake.freeWithinKm` | 「6 寸及以上蛋糕 N 公里内免配送费」 | `true` / `3` |
 
-`tiers` 每一项：`{ maxKm, fee, freeAmount, tip? }`
+`tiers` 每一项：`{ maxKm, fee, freeAmount, tip }`
 - `maxKm`：该档上限（公里，**含等号**）；`null` = "以上全部"，必须放最后一条；
 - `fee`：该档运费；`null` = **运费待确认**（不显示具体数字，由店里人工确认）；
 - `freeAmount`：该档免运费门槛（元）；`null` = 该档不设免运费；
-- `tip`：`fee` 为 `null` 时给顾客看的文案（可省略）。
+- `tip`：`fee` 为 `null` 时给顾客看的文案（收得到运费的档位写空串 `""`）。
+
+### 当前生效的规则（店主 2026-10-14 确认）
+
+| 距离 | 运费 |
+|---|---|
+| 0–3 公里 | 满 **35 元免运费**，不满 35 元收 **5 元** |
+| 3–5 公里 | **10 元**（不设免运费门槛） |
+| 5–8 公里 | **18 元**（不设免运费门槛） |
+| 8 公里以上 | **她打电话跟顾客沟通** → 显示"运费待确认"，不拒绝下单 |
+| 任意距离 | **6 寸及以上蛋糕：3 公里以内免配送费** |
+
+> 配送范围由**文字关键词**决定（收货地址里含"太平新城"才送，见 `config/delivery.js` 的 `area.keywords`）；
+> 距离只影响运费。店主已明确"整个太平新城都送、片区外不送"，所以 `excludeKeywords` 保持为空、
+> `forbidBeyondKm` 不启用。
 
 ### 两个例子
 
 ```jsonc
-// ① 与当前线上行为完全一致（导入也不会改变任何东西，可当模板）
+// ① 当前生效的规则（= cloud-data/delivery-rule.sample.json，导入它不会改变任何东西）
 {"key":"delivery_rule","value":{"freight":{"tiers":[
-  {"maxKm":3,"fee":5,"freeAmount":35},
-  {"maxKm":null,"fee":null,"freeAmount":null,"tip":"运费待确认"}
+  {"maxKm":3,"fee":5,"freeAmount":35,"tip":""},
+  {"maxKm":5,"fee":10,"freeAmount":null,"tip":""},
+  {"maxKm":8,"fee":18,"freeAmount":null,"tip":""},
+  {"maxKm":null,"fee":null,"freeAmount":null,"tip":"超出8公里，下单后商家会电话与您确认运费"}
 ]}}}
 
-// ② 收紧版：只送 5 公里、3–5 公里收 8 元（满 60 免）、某某花园不送
+// ② 调整示例：改价 + 指定某某花园不送 + 超过 6 公里不接单
 {"key":"delivery_rule","value":{
-  "area":{"excludeKeywords":["某某花园"],"forbidBeyondKm":5},
+  "area":{"excludeKeywords":["某某花园"],"forbidBeyondKm":6},
   "freight":{"tiers":[
-    {"maxKm":3,"fee":5,"freeAmount":35},
-    {"maxKm":5,"fee":8,"freeAmount":60},
-    {"maxKm":null,"fee":null,"freeAmount":null,"tip":"运费待确认"}
+    {"maxKm":3,"fee":8,"freeAmount":50,"tip":""},
+    {"maxKm":6,"fee":12,"freeAmount":null,"tip":""},
+    {"maxKm":null,"fee":null,"freeAmount":null,"tip":"超出6公里，下单后商家会电话与您确认运费"}
   ]}
 }}
 ```
+
+> ⚠️ `delivery-rule.sample.jsonl` / `.json` 与**代码默认值保持同形**，
+> `tests/test-delivery.js` 会逐条比对（模板与代码说的不是一回事就会红）。
+> 所以改完**代码默认值**（`config/delivery.js`）后，记得同步这两个模板文件。
 
 ### 怎么导入
 
@@ -154,8 +178,9 @@ app_config 集合
 2. 把 `delivery-rule.sample.json` 复制一份、按上表改成店主给的规则
 3. `app_config` 集合 → **导入** → 选改好的文件 → 冲突处理选 **upsert**
    （`upsert` 会按 `key` 更新同一条记录，反复导入不会产生重复）
-4. 真机验证：**换一个微信号**，用"不送区域内的地址""3km 内不满 35 元""超过上限的地址"
+4. 真机验证：**换一个微信号**，用"3km 内不满 35 元""3–5 公里""5–8 公里""8 公里以外"
    各下一单，确认**页面显示的运费 == 下单后订单里的运费**
+5. 导入后顾客**重新进入小程序**才生效（规则是启动时下发的）
 
 > ⚠️ 改规则前必须先在代码里跑一遍：`cd bread-main && npm test`
 > （`tests/test-delivery.js` 会检验阶梯边界、黑名单优先级、距离上限，以及两端副本是否一致）。

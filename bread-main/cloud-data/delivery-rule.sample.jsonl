@@ -1,1 +1,1 @@
-{"key":"delivery_rule","value":{"area":{"excludeKeywords":[],"forbidBeyondKm":null},"freight":{"tiers":[{"maxKm":3,"fee":5,"freeAmount":35},{"maxKm":null,"fee":null,"freeAmount":null,"tip":"运费待确认"}]}}}
+{"key":"delivery_rule","value":{"area":{"excludeKeywords":[],"forbidBeyondKm":null},"freight":{"tiers":[{"maxKm":3,"fee":5,"freeAmount":35},{"maxKm":5,"fee":10,"freeAmount":null},{"maxKm":8,"fee":18,"freeAmount":null},{"maxKm":null,"fee":null,"freeAmount":null,"tip":"超出8公里，下单后商家会电话与您确认运费"}]}}}
