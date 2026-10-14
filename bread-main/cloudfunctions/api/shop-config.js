@@ -34,9 +34,13 @@ module.exports = {
     // appConfig action 用它下发 mallName（导航栏标题）。
     name: '卿欢蛋糕',
 
-    // 门店经纬度（GCJ-02）。必须与根目录 shop-config.js 一致。
-    latitude: 24.9195,
-    longitude: 102.4840,
+    // 门店经纬度（GCJ-02）。必须与根目录 shop-config.js 一致
+    // （tests/test-delivery.js 的「云函数门店经纬度与主包一致」断言守着）。
+    // 2026-10-14：占位值 24.9195/102.4840（安宁市区）→ 真实坐标。
+    // 来源与复核方式见根目录 shop-config.js 的同一段注释；
+    // ⚠️ 改这里必须重新「上传并部署」云函数，否则服务端仍按旧坐标算运费。
+    latitude: 24.920190,
+    longitude: 102.584276,
 
     // 营业时间，用于校验期望送达时间。必须与根目录一致。
     openingHours: '09:00-22:00'
