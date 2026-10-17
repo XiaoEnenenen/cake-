@@ -1,4 +1,4 @@
-<view wx:if="{{tabIndex == 0}}" class="orders-bar">
+﻿<view wx:if="{{tabIndex == 0}}" class="orders-bar">
   <view class="current-orders" data-index="0" bindtap="changeTab">当前订单</view>
   <view class="previous-orders" data-index="1" bindtap="changeTab">历史订单</view>
 </view>
@@ -77,5 +77,5 @@
 <import src="/template/tabbar/index.wxml" />
 <template is="tabbar" data="{{ tabbarActive: 2 }}" />
 
-<!-- 2026-10-17 顾客反馈：退出登录后「再次支付」先弹登录（隐私勾选 + 手机号/微信登录） -->
+<!-- 2026-10-17 顾客反馈：退出登录后「再次支付」先弹登录（隐私勾选 + 微信登录） -->
 <login-sheet id="login-sheet" bind:success="onLoginSuccess" />

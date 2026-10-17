@@ -111,16 +111,6 @@
   color: #6b6b6b;
 }
 
-.ls-hint {
-  margin-top: 14rpx;
-  padding: 12rpx 18rpx;
-  font-size: 23rpx;
-  line-height: 34rpx;
-  color: #d46b08;
-  background-color: #fff7e6;
-  border-radius: 10rpx;
-}
-
 /* ===== 登录按钮 ===== */
 .ls-btn {
   margin-top: 24rpx;
@@ -141,31 +131,15 @@
   border: none;
 }
 
-.ls-btn-phone {
+.ls-btn-login {
   color: #1f1f1f;
   background-color: #ffd100;
-}
-
-.ls-btn-wechat {
-  margin-top: 18rpx;
-  color: #1f1f1f;
-  background-color: #ffffff;
-  border: 2rpx solid #e3e3e3;
-  line-height: 88rpx;
 }
 
 .ls-btn-disabled {
   background-color: #f1f1f1 !important;
   color: #a8a8a8 !important;
   border-color: #ececec !important;
-}
-
-.ls-phone-tip {
-  margin-top: 16rpx;
-  font-size: 22rpx;
-  line-height: 32rpx;
-  color: #9a9a9a;
-  text-align: center;
 }
 
 .ls-cancel {

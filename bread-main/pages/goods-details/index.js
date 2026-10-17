@@ -1,4 +1,4 @@
-const API = require('../../utils/api-map')
+﻿const API = require('../../utils/api-map')
 const AUTH = require('../../utils/auth')
 // 2026-10-17 顾客反馈：退出登录后不允许加购（必须重新登录）
 const LOGIN_GATE = require('../../utils/login-gate')
@@ -174,7 +174,7 @@ Page({
     return norm(a) === norm(b)
   },
   async addCart() {
-    // 2026-10-17 顾客反馈：退出登录后加购必须先重新登录（隐私勾选 + 手机号/微信登录）
+    // 2026-10-17 顾客反馈：退出登录后加购必须先重新登录（隐私勾选 + 微信登录）
     if (LOGIN_GATE.isLoggedOut()) {
       LOGIN_GATE.requireLogin(this, () => this.addCart())
       return

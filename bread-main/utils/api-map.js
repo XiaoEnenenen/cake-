@@ -353,13 +353,7 @@ const API = {
   login: () => callCloud('getUser', {}),
 
   // 2026-09-26 阶段二：已删除 userAmount（余额/积分）方法。
-
-  /**
-   * 手机号绑定。
-   * 组件用法：components/login-sheet 的「手机号一键登录」（getPhoneNumber 回调的 code）。
-   * 云函数 bindMobile 当前返回「手机号快速验证未开通」提示，不伪造绑定成功（阶段 4.4 的一半）。
-   */
-  bindMobile: (data) => callCloud('bindMobile', data || {}),
+  // 2026-10-17 顾客确认不做手机号登录：bindMobile 一起删除（手机号由顾客在结算页手填）。
 
   /** 首页轮播图。页面读取：res.data（每项 id / picUrl） */
   banners: () => callCloud('banners', {}),

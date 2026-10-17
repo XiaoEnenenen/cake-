@@ -1,4 +1,4 @@
-const API = require('../../utils/api-map')
+﻿const API = require('../../utils/api-map')
 const AUTH = require('../../utils/auth')
 const SHOP_CONFIG = require('../../shop-config')
 const FMT = require('../../utils/format')
@@ -318,7 +318,7 @@ Page({
     })
   },
   toPayTap: function(e) {
-    // 2026-10-17 顾客反馈：退出登录后点「再次支付」必须先重新登录（隐私勾选 + 手机号/微信登录）
+    // 2026-10-17 顾客反馈：退出登录后点「再次支付」必须先重新登录（隐私勾选 + 微信登录）
     if (LOGIN_GATE.isLoggedOut()) {
       LOGIN_GATE.requireLogin(this, () => this.toPayTap(e))
       return

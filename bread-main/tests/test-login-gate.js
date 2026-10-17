@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 2026-10-17 第二轮顾客反馈：登录门禁 + 退出后重新弹隐私
  * ---------------------------------------------------------------------------
  * 顾客原话：
@@ -376,7 +376,7 @@ async function main() {
     pages.forEach((p) => {
       const js = src(p.js)
       const wxml = src(p.wxml)
-      check('★ ' + p.name + ' 挂了登录弹层（隐私勾选 + 手机号/微信登录）',
+      check('★ ' + p.name + ' 挂了登录弹层（隐私勾选 + 微信登录）',
         /<login-sheet\b/.test(wxml) && /bind:success="onLoginSuccess"/.test(wxml) &&
         /LOGIN_GATE\.isLoggedOut\(\)/.test(js) &&
         /LOGIN_GATE\.requireLogin\(this,/.test(js) &&

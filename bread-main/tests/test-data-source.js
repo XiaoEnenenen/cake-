@@ -45,7 +45,7 @@ const SURFACE = [
   'shippingCarInfo', 'shippingCarInfoAddItemV2', 'shippingCarInfoModifyNumber',
   'shippingCarInfoRemoveItem', 'shippingCarInfoRemoveAll',
   'orderCreate', 'orderList', 'orderDetail', 'orderClose', 'orderDelete', 'orderFinish',
-  'wxpay', 'userDetail', 'modifyUserInfoV2', 'login', 'bindMobile',
+  'wxpay', 'userDetail', 'modifyUserInfoV2', 'login',
   'banners', 'appConfig', 'cmsPage', 'fetchShops', 'shopSubdetail'
 ]
 const missing = SURFACE.filter((m) => typeof API[m] !== 'function')
@@ -144,9 +144,8 @@ check('wx.cloud.init 开启 traceUser', initCalls.length === 1 && initCalls[0].t
   r = await API.wxpay({})
   check('wxpay 走云函数（不再可能落到 api 工厂）', calls[0].data.action === 'wxpay', calls[0].data)
 
-  calls = []
-  await API.bindMobile({ token: 'x', code: 'y' })
-  check('bindMobile → action bindMobile', calls[0].data.action === 'bindMobile')
+  // 2026-10-17 顾客确认不做手机号登录：bindMobile 已从 API 层一起删除
+  check('★ 手机号登录已删除（API 不再暴露 bindMobile）', typeof API.bindMobile === 'undefined')
 
   calls = []
   const modified = await API.modifyUserInfoV2({ token: 'should-be-dropped', nickName: 'n' })

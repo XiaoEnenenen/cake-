@@ -10,9 +10,9 @@
  *      第二次进小程序（哪怕还没点同意、已是登录状态）都不再主动弹。
  *   3) **退出登录后重新登录必须先过隐私**（顾客反馈第 2、3 条）：
  *      components/login-sheet 每次打开都把勾选框重置为未勾选，
- *      顾客必须重新勾选后才能「手机号一键登录 / 微信登录」；没勾选时连
- *      open-type="getPhoneNumber" 的真按钮都不渲染（不会先弹微信授权框）。
- *      手机号快速验证未开通时明确提示并给「用微信登录」兜底，绝不伪造登录成功。
+ *      顾客必须重新勾选后才能「微信登录」；没勾选时按钮只提示、不发起登录。
+ *      **2026-10-17 顾客确认不做手机号登录**：手机号一键登录（getPhoneNumber）已删除，
+ *      手机号只作为订单联系方式（结算页手填 / 编辑资料保存）。
  *   4) **编辑资料**：独立页 pages/profile-edit 支持头像 / 昵称 / 手机号 / 收货地址入口；
  *      服务端 updateUser 补了字段校验（昵称 ≤20、手机号 11 位、头像不允许本地临时路径、
  *      payload 里的 _openid 等一律忽略）。
@@ -384,9 +384,13 @@ async function main() {
     check('★ 「我的」页挂载登录弹层（退出后重新登录入口）',
       /<login-sheet/.test(src('pages/my/index.wxml')) &&
       /bind:success="onLoginSuccess"/.test(src('pages/my/index.wxml')))
-    check('★ 旧 bind-mobile 组件已归档（登录弹层接手手机号一键登录）',
+    check('★ 旧 bind-mobile 组件已归档（手机号登录已删除，登录只保留微信登录）',
       !exists('components/bind-mobile/index.js') &&
       (appJson.usingComponents || {})['bind-mobile'] === undefined)
+    check('★ 手机号登录能力已从 API / 云函数路由删除',
+      !/bindMobile\s*:/.test(src('utils/api-map.js')) &&
+      !/async function bindMobile/.test(src('cloudfunctions/api/handlers.js')) &&
+      require('../cloudfunctions/api/handlers').handlers.bindMobile === undefined)
 
     // 首次启动/隐私接口页面都挂载了弹窗
     const mountedPages = [
@@ -514,13 +518,12 @@ async function main() {
   }
 
   // =========================================================================
-  console.log('\n=== 4) 登录弹层：隐私勾选 / 手机号一键登录 / 微信登录 ===')
+  console.log('\n=== 4) 登录弹层：隐私勾选 + 微信登录（手机号登录已删除）===')
   // =========================================================================
   {
     const navs = []
-    const calls = { bind: 0, markAgreed: 0, authorize: 0, lastBind: null, cancelReset: 0 }
+    const calls = { markAgreed: 0, authorize: 0, cancelReset: 0 }
     let platformResult = { ok: true, denied: false }
-    let bindResult = { code: 501, msg: '手机号快速验证未开通' }
     const privacyStub = {
       async requestPlatformAuthorize() { return platformResult },
       markAgreed() { calls.markAgreed++ },
@@ -528,30 +531,30 @@ async function main() {
       openPolicy() { navs.push('/pages/about-us/detail?key=agreement') },
       openContractPage() { navs.push('/pages/about-us/detail?key=agreement') }
     }
-    const api = {
-      async bindMobile(d) { calls.bind++; calls.lastBind = d; return bindResult }
-    }
     const auth = { async authorize() { calls.authorize++ } }
     const sheet = loadComponent('components/login-sheet/index.js', {
       requires: {
         'utils/auth$': auth,
-        'api-map$': api,
         'utils/privacy$': privacyStub,
         'utils/log$': QUIET_LOG
       }
     })
-
+    const sheetJs = src('components/login-sheet/index.js')
     const wxml = src('components/login-sheet/index.wxml')
     check('★ 弹层提供隐私勾选 +《隐私政策》《微信隐私保护指引》入口',
       /toggleCheck/.test(wxml) && /《隐私政策》/.test(wxml) &&
       /《微信隐私保护指引》/.test(wxml) && /onOpenPolicy/.test(wxml))
-    check('★ 弹层提供「手机号一键登录」(getPhoneNumber) 与「微信登录」',
-      /open-type="getPhoneNumber"/.test(wxml) &&
-      /bindgetphonenumber="onGetPhoneNumber"/.test(wxml) && /微信登录/.test(wxml))
-    check('★ 弹层说明两种登录方式的区别（微信静默、不弹授权框；手机号需授权）',
-      /微信不会弹授权框/.test(wxml) && /手机号登录/.test(wxml) &&
-      /同一个账号/.test(wxml))
-    check('★ 未勾选时不渲染真正的手机号授权按钮（先同意后授权）',
+    check('★ 只保留「微信登录」：手机号登录已按顾客要求删除',
+      /微信登录/.test(wxml) &&
+      !/getPhoneNumber/.test(wxml) && !/手机号一键登录/.test(wxml) &&
+      !/getPhoneNumber/.test(sheetJs) && !/bindMobile/.test(sheetJs) &&
+      typeof sheet.onGetPhoneNumber === 'undefined' &&
+      typeof sheet.markPhoneUnavailable === 'undefined')
+    check('★ 弹层说明微信登录是静默的（不弹授权框、不读昵称头像）',
+      /微信不会弹授权框/.test(wxml) && /不读取昵称头像/.test(wxml))
+    check('★ 弹层说明手机号不是登录方式（结算页/编辑资料里填）',
+      /手机号无需登录/.test(wxml) && /结算页/.test(wxml))
+    check('★ 未勾选时不渲染真正的登录按钮（先同意后登录）',
       /wx:if="\{\{ checked \}\}"/.test(wxml) && /onLoginBlocked/.test(wxml))
 
     sheet.open()
@@ -592,56 +595,6 @@ async function main() {
     check('  后台未配置隐私指引 / 旧基础库 → 按本地同意继续登录（不堵死登录）',
       calls.authorize === 1 && calls.markAgreed === 1, calls)
 
-    // ===== 手机号一键登录 =====
-    platformResult = { ok: true, denied: false }
-    calls.authorize = 0; calls.markAgreed = 0; calls.bind = 0
-    sheet.open(); sheet.toggleCheck()
-    const modalsBefore = sheet.__modals.length
-    await sheet.onGetPhoneNumber({ detail: { errMsg: 'getPhoneNumber:fail user deny' } })
-    check('用户取消手机号授权 → 静默返回（不登录、不报错）',
-      sheet.__modals.length === modalsBefore && calls.bind === 0 && calls.authorize === 0)
-
-    await sheet.onGetPhoneNumber({ detail: { errMsg: 'getPhoneNumber:fail no permission' } })
-    check('★ 未开通手机号快速验证 → 明确提示且不伪造登录',
-      sheet.__modals.length === modalsBefore + 1 && calls.bind === 0 &&
-      calls.authorize === 0 &&
-      /手机号快速验证/.test(sheet.__modals[modalsBefore].content),
-      { modals: sheet.__modals, calls })
-    check('  弹层内保留"未开通"常驻提示', /未开通/.test(sheet.data.phoneHint))
-
-    // 点「用微信登录」兜底
-    sheet.__modals[modalsBefore].success({ confirm: true })
-    await new Promise((r) => setTimeout(r, 0))
-    check('★ 手机号不可用时可一键改走微信登录',
-      calls.authorize === 1 && calls.markAgreed === 1, calls)
-
-    // 手机号授权成功但服务端未接入（501）→ 不伪造成功
-    bindResult = { code: 501, msg: '手机号快速验证未开通' }
-    calls.authorize = 0
-    sheet.open(); sheet.toggleCheck()
-    const modals2 = sheet.__modals.length
-    await sheet.onGetPhoneNumber({ detail: { errMsg: 'getPhoneNumber:ok', code: 'CODE-1' } })
-    check('★ 手机号授权成功但服务端未接入 → 不假装登录成功',
-      calls.bind === 1 && calls.authorize === 0 &&
-      sheet.__modals.length === modals2 + 1 &&
-      !sheet.__events.some((e) => e.name === 'success' &&
-        e.detail && e.detail.method === 'phone'),
-      { calls, modals: sheet.__modals.length, events: sheet.__events })
-    check('  云函数返回原因回显给顾客',
-      /未开通/.test(sheet.__modals[modals2].content), sheet.__modals[modals2])
-
-    // 手机号授权成功 + 服务端绑定成功（能力开通后的目标路径已就绪）
-    bindResult = { code: 0, data: { base: { mobile: '13612348371' } } }
-    calls.authorize = 0; calls.markAgreed = 0
-    sheet.open(); sheet.toggleCheck()
-    await sheet.onGetPhoneNumber({ detail: { errMsg: 'getPhoneNumber:ok', code: 'CODE-2' } })
-    check('★ 手机号换绑成功 → 完成登录（能力开通后的路径）',
-      calls.bind === 2 && calls.authorize === 1 && calls.markAgreed === 1 &&
-      sheet.__events.some((e) => e.name === 'success' &&
-        e.detail && e.detail.method === 'phone'),
-      { calls, events: sheet.__events })
-    check('  传给服务端的是 getPhoneNumber 的 code',
-      calls.lastBind && calls.lastBind.code === 'CODE-2', calls.lastBind)
     sheet.onOpenPolicy()
     sheet.onOpenContract()
     check('  隐私政策 / 微信隐私指引入口可用', navs.length === 2, navs)
