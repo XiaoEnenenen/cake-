@@ -22,6 +22,7 @@
  * ---------------------------------------------------------------------------
  */
 const PRIVACY = require('../../utils/privacy')
+const LOG = require('../../utils/log')
 
 // 同一次运行里只主动弹一次（页面来回切换不重复打扰；下次冷启动看首次启动告知是否已弹过）
 let shownThisRun = false
@@ -83,6 +84,16 @@ Component({
       }
       this.setData({ agreed: true, show: false })
       PRIVACY.markAgreed()
+      // 2026-10-17 真机反馈修复：
+      //   顾客在本弹窗勾选「同意」只是**本机记录**；微信平台层还需要一次它自己的隐私授权
+      //   （否则定位/选头像等隐私接口仍会报 privacy 错误，真机表现为"结算页地图下方提示
+      //   需先同意《用户隐私保护指引》"）。这里在同意后主动请求一次平台授权（只弹一次系统确认）；
+      //   即使这里没成功，utils/location.js 在真正调用定位时还会再补一次。
+      PRIVACY.requestPlatformAuthorize().then((r) => {
+        if (r && r.ok === false && !r.denied) {
+          LOG.warn('[privacy-popup] 平台隐私授权未完成（请检查后台《用户隐私保护指引》是否已配置）', r.errMsg)
+        }
+      })
       this.triggerEvent('agree')
     },
 

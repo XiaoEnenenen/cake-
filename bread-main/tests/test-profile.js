@@ -633,7 +633,11 @@ async function main() {
 
     // ---- 弹窗组件：首次自动弹、只弹一次 ----
     const storeB = {}
-    loadPrivacy(storeB)
+    let platformCalls = 0
+    // 2026-10-17 真机反馈：勾选同意后还要补一次"微信平台级隐私授权"
+    loadPrivacy(storeB, {
+      requirePrivacyAuthorize(opts) { platformCalls++; if (opts && opts.success) opts.success() }
+    })
     const popup = loadComponent('components/privacy-popup/index.js', {
       wx: {
         getStorageSync(k) { return storeB[k] === undefined ? '' : storeB[k] },
@@ -651,8 +655,11 @@ async function main() {
       popup.data.show === true && popup.__toasts.some((t) => /隐私政策/.test(String(t))))
     popup.toggleCheck()
     popup.onAgreeTap()
+    await new Promise((r3) => setTimeout(r3, 0))
     check('★ 勾选后同意 → 关闭弹窗并记同意',
       popup.data.show === false && storeB.privacyAgreedVersion !== undefined, storeB)
+    check('★ 勾选同意后同时补一次微信平台级隐私授权（否则定位仍会被拦）',
+      platformCalls === 1, { platformCalls })
 
     // 第二次进小程序：上次点了「暂不使用」（已提示但未同意）→ 不再弹
     const storeC = { privacyPromptedVersion: '2026-10-17' }

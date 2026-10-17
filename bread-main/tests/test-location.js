@@ -91,6 +91,165 @@ check(
   LOC.formatCoordinate(24.1234567891, 102.9876543219)
 )
 
-console.log('\n=== 汇总 ===')
-console.log('  通过 ' + pass + ' / 失败 ' + fail)
-if (fail) process.exitCode = 1
+const fs = require('fs')
+const path = require('path')
+const vm = require('vm')
+const ROOT = path.join(__dirname, '..')
+function srcFile(rel) {
+  return fs.readFileSync(path.join(ROOT, rel), 'utf8')
+}
+
+/** 临时给 Node 全局挂 wx 桩（utils/location、utils/privacy 直接引用全局 wx） */
+function withGlobalWx(stub, fn) {
+  const prev = global.wx
+  global.wx = stub
+  return Promise.resolve().then(fn).finally(() => { global.wx = prev })
+}
+
+/** 加载 components/shop-map（Component 沙箱） */
+function loadShopMap(overrides) {
+  const o = overrides || {}
+  let compObj = null
+  const sandbox = {
+    console: { log() {}, warn() {}, error() {} },
+    setInterval, clearInterval, setTimeout, clearTimeout,
+    Component: (obj) => { compObj = obj },
+    require: (p) => {
+      if (/utils\/location$/.test(p)) return o.location
+      return {}
+    },
+    wx: o.wx || {}
+  }
+  vm.runInNewContext(srcFile('components/shop-map/index.js'), vm.createContext(sandbox), {
+    filename: 'components/shop-map/index.js'
+  })
+  const inst = {
+    data: JSON.parse(JSON.stringify(compObj.data || {})),
+    setData(d, cb) {
+      Object.assign(this.data, d)
+      if (cb) cb()
+    },
+    triggerEvent() {}
+  }
+  Object.assign(inst, compObj.methods || {})
+  inst.__observers = compObj.observers || {}
+  return inst
+}
+
+/** 门店地图用的 LOC 桩：第一次定位失败（隐私）、之后成功 */
+function makeLocStub() {
+  let calls = 0
+  return {
+    isDevtools: () => false,
+    getCurrent: async () => {
+      calls++
+      if (calls === 1) {
+        return { ok: false, privacy: true, errMsg: '需先同意《用户隐私保护指引》才能显示距离，点击此处重新授权' }
+      }
+      return { ok: true, latitude: 24.92, longitude: 102.58 }
+    },
+    distanceToShop: () => 0.41,
+    formatDistance: () => '410m',
+    openNavigation() {},
+    openSettingGuide: async () => true,
+    copyShopAddress() {}
+  }
+}
+
+;(async function () {
+  // =========================================================================
+  console.log('\n=== 9) 定位隐私授权：自动补触发 + 重试（2026-10-17 真机反馈）===')
+  // =========================================================================
+  {
+    let privacyCalls = 0
+    let authCalls = 0
+    let locationCalls = 0
+    const stub = {
+      getSetting(o) { o.success({ authSetting: {} }) },
+      authorize(o) {
+        authCalls++
+        if (authCalls === 1) o.fail({ errMsg: 'authorize:fail privacy permission is not authorized' })
+        else o.success()
+      },
+      requirePrivacyAuthorize(o) { privacyCalls++; o.success() },
+      getLocation(o) { locationCalls++; o.success({ latitude: 24.92, longitude: 102.58 }) }
+    }
+    const r = await withGlobalWx(stub, () => LOC.getCurrent())
+    check('★ 隐私授权失败 → 自动触发微信平台级隐私授权', privacyCalls === 1, { privacyCalls })
+    check('★ 授权成功后自动重试并拿到坐标', r.ok === true && typeof r.latitude === 'number', r)
+    check('  授权成功后只多调一次定位', locationCalls === 1, { locationCalls })
+  }
+  {
+    let privacyCalls = 0
+    let locationCalls = 0
+    const stub = {
+      getSetting(o) { o.success({ authSetting: {} }) },
+      authorize(o) { o.fail({ errMsg: 'authorize:fail privacy permission is not authorized' }) },
+      requirePrivacyAuthorize(o) { privacyCalls++; o.fail({ errMsg: 'requirePrivacyAuthorize:fail auth deny' }) },
+      getLocation() { locationCalls++ }
+    }
+    const r = await withGlobalWx(stub, () => LOC.getCurrent())
+    check('★ 用户拒绝平台隐私授权 → 返回可展示文案、不抛异常',
+      r.ok === false && /隐私|授权/.test(String(r.errMsg)), r)
+    check('  拒绝后不会强行调用定位接口', privacyCalls === 1 && locationCalls === 0, { privacyCalls, locationCalls })
+  }
+  {
+    // 旧基础库：没有 requirePrivacyAuthorize
+    const stub = {
+      getSetting(o) { o.success({ authSetting: {} }) },
+      authorize(o) { o.fail({ errMsg: 'authorize:fail privacy permission is not authorized' }) }
+    }
+    const r = await withGlobalWx(stub, () => LOC.getCurrent())
+    check('旧基础库无 requirePrivacyAuthorize → 不抛异常、返回隐私提示',
+      r.ok === false && r.privacy === true && /隐私/.test(String(r.errMsg)), r)
+  }
+  {
+    // getLocation 本身报 privacy（部分基础库在定位这一步才拦）
+    let locCalls = 0
+    let privacyCalls = 0
+    const stub = {
+      getSetting(o) { o.success({ authSetting: { 'scope.userLocation': true } }) },
+      requirePrivacyAuthorize(o) { privacyCalls++; o.success() },
+      getLocation(o) {
+        locCalls++
+        if (locCalls === 1) o.fail({ errMsg: 'getLocation:fail privacy permission is not authorized' })
+        else o.success({ latitude: 1, longitude: 2 })
+      }
+    }
+    const r = await withGlobalWx(stub, () => LOC.getCurrent())
+    check('★ getLocation 报隐私错误 → 同样补授权并重试成功',
+      r.ok === true && privacyCalls === 1 && locCalls === 2, { r, privacyCalls, locCalls })
+  }
+
+  // =========================================================================
+  console.log('\n=== 10) 门店地图定位提示：失败可点重试，业务距离到位后不再残留 ===')
+  // =========================================================================
+  {
+    const c = loadShopMap({ location: makeLocStub(), wx: { showToast() {} } })
+    c.data.navigable = true
+    c.data.shop = { latitude: 1, longitude: 2 }
+    await c.locate()
+    check('★ 定位因隐私授权失败 → 提示条出现并标记为隐私问题',
+      /隐私/.test(String(c.data.hint)) && c.data.hintPrivacy === true, c.data)
+    await c.onHintTap()
+    check('★ 点提示条 → 重试定位成功、提示消失、显示距离',
+      c.data.hint === '' && c.data.hintPrivacy === false && /距离您 410m/.test(c.data.locateText),
+      c.data)
+  }
+  {
+    // 真机截图场景：结算页已经给出「配送距离 410m」（来自收货地址，不依赖用户定位），
+    // 之前上一次定位失败留下的提示必须被清掉，不能一直挂在 map 下方。
+    const c2 = loadShopMap({ location: makeLocStub() })
+    c2.data.navigable = true
+    c2.data.shop = { latitude: 1, longitude: 2 }
+    await c2.locate()
+    check('  前置：定位失败留下了提示', !!c2.data.hint, c2.data)
+    c2.__observers.distanceText.call(c2, '配送距离 410m')
+    check('★ 页面提供业务距离 → 清除残留的定位授权提示（结算页不再出现该行）',
+      c2.data.hint === '' && c2.data.hintPrivacy === false, c2.data)
+  }
+
+  console.log('\n=== 汇总 ===')
+  console.log('  通过 ' + pass + ' / 失败 ' + fail)
+  if (fail) process.exitCode = 1
+})()

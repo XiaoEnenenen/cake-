@@ -89,6 +89,8 @@ Component({
     locateText: '',
     hint: '',
     hintDenied: false,
+    // 2026-10-17：定位失败原因是"平台隐私授权未完成"（不是用户拒绝定位）
+    hintPrivacy: false,
     // 是否运行在微信开发者工具里（工具内导航可能走不通，给一行说明，不阻断操作）
     devtools: false
   },
@@ -98,9 +100,18 @@ Component({
       this.syncShop(shop)
     },
     distanceText(text) {
+      // 2026-10-17：页面给了业务距离（如外送「配送距离 X」= 收货地址→门店，与运费同源）时，
+      // 「距离您 X」与定位授权提示都不再需要 —— 清掉可能残留的定位失败提示，
+      // 避免结算页地图下方一直挂着"需先同意隐私指引才能使用定位"（真机反馈）。
+      if (text) {
+        if (this.data.hint || this.data.hintPrivacy || this.data.locateText) {
+          this.setData({ hint: '', hintDenied: false, hintPrivacy: false, locateText: '' })
+        }
+        return
+      }
       // 页面把指定的距离文案清空时（如从「外送」切回「自提」），
       // 补做一次定位，恢复「距离您 X」。
-      if (!text && this.data.navigable && !this._autoLocated) {
+      if (this.data.navigable && !this._autoLocated) {
         this._autoLocated = true
         this.locate()
       }
@@ -170,6 +181,8 @@ Component({
         this.setData({
           hint: res.errMsg || '定位失败，点击重试',
           hintDenied: !!res.denied,
+          // 2026-10-17：隐私授权类失败 → 点提示时重新触发微信隐私授权（而不是去设置页）
+          hintPrivacy: !!res.privacy,
           locateText: ''
         })
         return
@@ -179,13 +192,19 @@ Component({
       this.setData({
         hint: '',
         hintDenied: false,
+        hintPrivacy: false,
         locateText: text ? '距离您 ' + text : ''
       })
       this.triggerEvent('located', { latitude: res.latitude, longitude: res.longitude, km })
     },
 
-    /** 点击提示条：被拒绝过就引导去设置页，其余情况直接重试 */
+    /** 点击提示条：被拒绝过就引导去设置页；隐私授权未完成 / 其它情况直接重试 */
     async onHintTap() {
+      if (this.data.hintPrivacy) {
+        // 重新走一次定位：LOC.getCurrent 内部会补触发微信平台级隐私授权并重试
+        this.locate()
+        return
+      }
       if (this.data.hintDenied) {
         const opened = await LOC.openSettingGuide(true)
         if (!opened) return

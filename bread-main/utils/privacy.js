@@ -18,7 +18,9 @@
  *   · **不拦截** wx.onNeedPrivacyAuthorization：未同意时由微信自己的隐私弹窗兜底，
  *     避免我们注册了回调却因为当前页面没挂载弹窗组件导致隐私接口一直挂起。
  *     我们的自定义弹窗是「首次启动的主动告知 + 登录前必须勾选」，点同意后本地记状态；
- *     平台级授权在登录时通过 wx.requirePrivacyAuthorize 主动触发（见 requestPlatformAuthorize）。
+ *     平台级授权通过 wx.requirePrivacyAuthorize 主动触发（见 requestPlatformAuthorize）：
+ *     **自定义弹窗同意后 / 登录时 / 定位等隐私接口报 privacy 错误时**都会补一次，
+ *     因为"本机同意"不等于"微信平台同意"（2026-10-17 真机反馈：结算页定位被拦）。
  * ---------------------------------------------------------------------------
  */
 const KEY = 'privacyAgreedVersion'

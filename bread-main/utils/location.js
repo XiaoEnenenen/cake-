@@ -16,7 +16,11 @@
  *   2. 还需要在小程序后台申请「getLocation 接口权限」，并在《用户隐私保护指引》里
  *      声明收集「位置信息」，否则调用会失败 —— 本项目已做降级：失败只影响
  *      「距离您 X」是否显示，不影响下单与导航。
- *   3. 导航（wx.openLocation）**不需要**任何定位权限。
+ *   3. **微信平台级隐私授权**（顾客在微信自己的隐私弹窗里点同意）与"在本小程序自定义
+ *      弹窗里勾选"是两件事。2026-10-17 真机反馈：已登录顾客仍看到"需先同意《用户隐私
+ *      保护指引》才能使用定位"。现在 getCurrent() 遇 privacy 错误会自动补触发一次
+ *      平台授权并重试（见 requestPrivacyAuthorization），仍失败才返回可点击的提示。
+ *   4. 导航（wx.openLocation）**不需要**任何定位权限。
  *
  * 关于「一键导航到店」点不动的说明（2026-10-09 补充，2026-10-09 晚修正）：
  *   wx.openLocation 只是打开微信内置地图并把门店标出来，**真正的导航动作发生在
@@ -37,6 +41,9 @@ const SHOP_CONFIG = require('../shop-config')
 const DR = require('./delivery-range')
 // 阶段 5.7：日志统一收敛到 utils/log.js
 const LOG = require('./log')
+// 2026-10-17：定位失败常是"平台级隐私授权未完成"——这里主动触发一次微信隐私授权并重试，
+// 避免顾客在本小程序自定义弹窗里勾选了同意、但微信平台层还没同意，导致定位一直失败。
+const PRIVACY = require('./privacy')
 
 const SCOPE = 'scope.userLocation'
 
@@ -158,14 +165,19 @@ function distanceToShop(latitude, longitude, shop) {
   return DR.calcDistanceKm(s.latitude, s.longitude, latitude, longitude)
 }
 
+/** 是否是"隐私授权未完成"类错误（errMsg 里带 privacy） */
+function isPrivacyError(err) {
+  return String((err && err.errMsg) || '').indexOf('privacy') >= 0
+}
+
 /** 把 wx 的失败信息翻译成给顾客看的文案 */
 function describeError(err) {
   const msg = String((err && err.errMsg) || '')
+  if (isPrivacyError(err)) {
+    return '需先同意《用户隐私保护指引》才能显示距离，点击此处重新授权'
+  }
   if (msg.indexOf('auth deny') >= 0 || msg.indexOf('auth denied') >= 0 || msg.indexOf('authorize') >= 0) {
     return '未授权定位，点击此处开启后可显示距离'
-  }
-  if (msg.indexOf('privacy') >= 0) {
-    return '需先同意《用户隐私保护指引》才能使用定位'
   }
   if (msg.indexOf('requiredPrivateInfos') >= 0) {
     return '小程序尚未声明定位接口，暂无法显示距离'
@@ -202,10 +214,53 @@ function ensureAuth() {
         wx.authorize({
           scope: SCOPE,
           success: () => resolve({ granted: true, denied: false }),
-          fail: (err) => resolve({ granted: false, denied: true, errMsg: describeError(err) })
+          fail: (err) => {
+            const privacy = isPrivacyError(err)
+            // privacy 错误不是"用户拒绝"，不能引导去设置页；交给 getCurrent 触发隐私授权
+            resolve({ granted: false, denied: !privacy, privacy: privacy, errMsg: describeError(err) })
+          }
         })
       },
-      fail: (err) => resolve({ granted: false, denied: false, errMsg: describeError(err) })
+      fail: (err) => {
+        const privacy = isPrivacyError(err)
+        resolve({ granted: false, denied: false, privacy: privacy, errMsg: describeError(err) })
+      }
+    })
+  })
+}
+
+/**
+ * 主动补一次"平台级隐私授权"（微信自己的隐私保护指引弹窗）。
+ * 顾客可能已经在本小程序的自定义弹窗里勾选过同意 —— 那只是本机记录，
+ * 微信平台层还需要一次授权（`wx.requirePrivacyAuthorize`）。
+ * @returns {Promise<boolean>} 是否已授权成功
+ */
+async function requestPrivacyAuthorization() {
+  try {
+    if (!PRIVACY || typeof PRIVACY.requestPlatformAuthorize !== 'function') return false
+    const r = await PRIVACY.requestPlatformAuthorize()
+    if (r && r.ok) return true
+    LOG.warn('[location] 平台隐私授权未完成', r)
+  } catch (e) {
+    LOG.warn('[location] 平台隐私授权异常', e)
+  }
+  return false
+}
+
+/** 读一次位置（不含授权流程） */
+function getLocationOnce() {
+  return new Promise((resolve) => {
+    if (!wx || typeof wx.getLocation !== 'function') {
+      return resolve({ ok: false, privacy: false, errMsg: '当前环境不支持定位' })
+    }
+    wx.getLocation({
+      type: 'gcj02',
+      success: (res) => resolve({ ok: true, latitude: res.latitude, longitude: res.longitude }),
+      fail: (err) => {
+        LOG.warn('[location] getLocation 失败', err)
+        const privacy = isPrivacyError(err)
+        resolve({ ok: false, denied: false, privacy: privacy, errMsg: describeError(err) })
+      }
     })
   })
 }
@@ -213,23 +268,47 @@ function ensureAuth() {
 /**
  * 取一次用户当前位置（GCJ-02，与微信地图/门店坐标同一坐标系）。
  * 不会抛异常，失败时返回 ok:false + 可展示的 errMsg。
- * @returns {Promise<{ok:boolean, latitude?:number, longitude?:number, denied?:boolean, errMsg?:string}>}
+ *
+ * 2026-10-17 修复（真机反馈：结算页地图下方提示"需先同意《用户隐私保护指引》才能使用定位"）：
+ *   如果失败原因是 privacy，先主动调一次 `wx.requirePrivacyAuthorize` 触发微信原生隐私授权，
+ *   授权成功后自动重试，顾客不用自己去找入口。
+ * @returns {Promise<{ok:boolean, latitude?:number, longitude?:number, denied?:boolean, privacy?:boolean, errMsg?:string}>}
  */
 async function getCurrent() {
-  const auth = await ensureAuth()
-  if (!auth.granted) {
-    return { ok: false, denied: !!auth.denied, errMsg: auth.errMsg || '未授权定位' }
-  }
-  return new Promise((resolve) => {
-    wx.getLocation({
-      type: 'gcj02',
-      success: (res) => resolve({ ok: true, latitude: res.latitude, longitude: res.longitude }),
-      fail: (err) => {
-        LOG.warn('[location] getLocation 失败', err)
-        resolve({ ok: false, denied: false, errMsg: describeError(err) })
+  let auth = await ensureAuth()
+
+  // 隐私授权未完成 → 主动触发一次平台级授权，然后重试
+  if (!auth.granted && auth.privacy) {
+    const ok = await requestPrivacyAuthorization()
+    if (ok) auth = await ensureAuth()
+    if (!auth.granted) {
+      return {
+        ok: false,
+        denied: false,
+        privacy: true,
+        errMsg: ok ? describeError({ errMsg: 'privacy denied' }) : '定位暂不可用（隐私授权未生效），不影响下单；点击重试'
       }
-    })
-  })
+    }
+  }
+  if (!auth.granted) {
+    return { ok: false, denied: !!auth.denied, privacy: !!auth.privacy, errMsg: auth.errMsg || '未授权定位' }
+  }
+
+  let loc = await getLocationOnce()
+  // getLocation 本身也可能因隐私授权失败：再补一次平台授权并重试一次
+  if (!loc.ok && loc.privacy) {
+    const ok = await requestPrivacyAuthorization()
+    if (ok) loc = await getLocationOnce()
+    if (!loc.ok) {
+      return {
+        ok: false,
+        denied: false,
+        privacy: true,
+        errMsg: '定位暂不可用（隐私授权未生效），不影响下单；点击重试'
+      }
+    }
+  }
+  return loc
 }
 
 /**

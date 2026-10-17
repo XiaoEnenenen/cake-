@@ -76,7 +76,10 @@ check('气泡优先显示外部文案：distanceText || locateText',
 check('传了 distanceText 就不再自动定位（避免误导数字与无谓授权）',
   /!this\.data\.distanceText && !this\._autoLocated/.test(mapJs))
 check('外部文案被清空时补做一次定位（外送→自提切回仍能显示距离您）',
-  /distanceText\(text\)\s*\{[\s\S]{0,200}this\.locate\(\)/.test(mapJs))
+  /distanceText\(text\)\s*\{[\s\S]{0,600}this\.locate\(\)/.test(mapJs))
+check('★ 外部文案到位时清掉残留的定位失败/授权提示（结算页不再挂"需先同意隐私指引"）',
+  /if \(text\) \{[\s\S]{0,200}hint: '', hintDenied: false, hintPrivacy: false, locateText: ''/.test(mapJs),
+  '真机反馈：外送给出「配送距离」后仍显示定位隐私提示')
 
 console.log('\n=== 2) 结算页：外送显示「配送距离」（收货地址 → 门店）===')
 check('结算页把距离文案传给组件', /distance-text="\{\{\s*mapDistanceText\s*\}\}"/.test(payWxml))
