@@ -246,6 +246,8 @@ Page({
       wx.removeStorageSync('loggedOut')
     } catch (e) {}
     this.setData({ loggedOut: false, profileError: false })
+    // 微信登录是静默完成的（微信不会弹授权框），给一句明确反馈，避免顾客以为"点了没反应"
+    wx.showToast({ title: '登录成功', icon: 'success' })
     this.ensureWhitelistThenLoad()
   },
 

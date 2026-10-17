@@ -8,7 +8,11 @@
 
     <view class="ls-title">登录 / 注册</view>
     <view class="ls-sub">登录后可查看订单、保存收货地址</view>
-    <view class="ls-info">我们用微信身份识别你的账号；手机号用于订单联系（可选）</view>
+    <view class="ls-info">
+      <view class="ls-info-line">微信登录：用当前微信身份登录，微信不会弹授权框，也不读取昵称头像。</view>
+      <view class="ls-info-line">手机号登录：额外请求你的微信绑定手机号（用于订单联系）。</view>
+      <view class="ls-info-note">两种方式登录后是同一个账号（同一个微信）。</view>
+    </view>
 
     <view class="ls-check-row" bindtap="toggleCheck">
       <view class="ls-checkbox {{ checked ? 'ls-checkbox-on' : '' }}">{{ checked ? '✓' : '' }}</view>

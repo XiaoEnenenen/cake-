@@ -487,6 +487,8 @@ async function main() {
     check('★ 弹层登录成功 → 清本机退出标志并恢复资料',
       calls.userDetail === 1 && page.data.loggedOut === false &&
       store.loggedOut === undefined, { calls, store, loggedOut: page.data.loggedOut })
+    check('  微信登录是静默的，成功后给明确反馈（避免以为点了没反应）',
+      page.__toasts.some((t) => /登录成功/.test(String(t))), page.__toasts)
 
     // 2026-10-17 顾客反馈：退出登录入口移到「编辑资料」页底部，本页不再放
     check('★ 「我的」页不再有退出登录入口/逻辑',
@@ -546,6 +548,9 @@ async function main() {
     check('★ 弹层提供「手机号一键登录」(getPhoneNumber) 与「微信登录」',
       /open-type="getPhoneNumber"/.test(wxml) &&
       /bindgetphonenumber="onGetPhoneNumber"/.test(wxml) && /微信登录/.test(wxml))
+    check('★ 弹层说明两种登录方式的区别（微信静默、不弹授权框；手机号需授权）',
+      /微信不会弹授权框/.test(wxml) && /手机号登录/.test(wxml) &&
+      /同一个账号/.test(wxml))
     check('★ 未勾选时不渲染真正的手机号授权按钮（先同意后授权）',
       /wx:if="\{\{ checked \}\}"/.test(wxml) && /onLoginBlocked/.test(wxml))
 

@@ -58,6 +58,16 @@
   border-radius: 14rpx;
 }
 
+.ls-info-line + .ls-info-line {
+  margin-top: 6rpx;
+}
+
+.ls-info-note {
+  margin-top: 10rpx;
+  font-size: 22rpx;
+  color: #9a8a5a;
+}
+
 .ls-check-row {
   display: flex;
   align-items: flex-start;
