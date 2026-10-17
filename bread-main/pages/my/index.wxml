@@ -180,16 +180,6 @@
   </view>
 </view>
 
-<!-- ===== 6. 退出登录（阶段 12；只清本机展示，不删除任何订单/地址） ===== -->
-<view wx:if="{{ !loggedOut }}" class="section">
-  <view class="list-item list-item-logout" bindtap="logout">
-    <view class="list-body">
-      <view class="list-title list-title-logout">退出登录</view>
-      <view class="list-sub">仅清除本机资料展示，订单与地址不会删除</view>
-    </view>
-  </view>
-</view>
-
 <view class="bottom"></view>
 <!-- 底部导航栏 -->
 <import src="/template/tabbar/index.wxml" />

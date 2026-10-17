@@ -389,17 +389,11 @@ async function main() {
       page.data.loggedOut === false && store.loggedOut === undefined,
       { calls, store, loggedOut: page.data.loggedOut })
 
-    // 退出登录：清本机状态，不删数据
-    page.data.userInfo = { id: 'oUSER123', nick: '小明' }
-    page.data.userNo = 'QHABC123'
-    page.logout()
-    check('★ 退出登录 → AUTH.loginOut + 本机 loggedOut 标志',
-      calls.loginOut === 1 && store.loggedOut === '1', { calls, store })
-    check('★ 退出后 UI 立即变成未登录（资料清空）',
-      page.data.loggedOut === true && page.data.userInfo === null &&
-      page.data.isAdminUser === false && page.data.userNo === '', page.data)
-    check('  退出前有二次确认（误点不会直接退出）',
-      page.__modals.length >= 1 && /退出/.test(String(page.__modals[0].title)), page.__modals)
+    // 2026-10-17 顾客反馈：退出登录入口移到「编辑资料」页底部，本页不再放
+    check('★ 「我的」页不再有退出登录入口/逻辑',
+      typeof page.logout === 'undefined' &&
+      !/bindtap="logout"/.test(src('pages/my/index.wxml')) &&
+      !/logout\(\)/.test(src('pages/my/index.js')))
 
     // 点用户卡：已退出 → 登录；已登录 → 进编辑资料页
     page.data.loggedOut = true
@@ -419,6 +413,8 @@ async function main() {
   {
     let modified = null
     let navigatedBack = 0
+    const logoutStore = {}
+    const logoutCalls = { n: 0 }
     const api = {
       userDetail: async () => ({
         code: 0,
@@ -434,12 +430,14 @@ async function main() {
     const page = loadPage('pages/profile-edit/index.js', {
       requires: {
         'api-map$': api,
+        'utils/auth$': { loginOut: () => { logoutCalls.n++ } },
         'utils/address$': ADDR_STUB,
         'utils/format$': require('../utils/format'),
         'utils/log$': QUIET_LOG
       },
       wx: {
-        navigateBack() { navigatedBack++ }
+        navigateBack() { navigatedBack++ },
+        setStorageSync(k, v) { logoutStore[k] = v }
       }
     })
     await page.onLoad()
@@ -484,6 +482,22 @@ async function main() {
     page.goAddress()
     check('★ 收货地址入口跳地址管理页',
       page.__navigations.indexOf('/pages/address/index') >= 0, page.__navigations)
+
+    // ===== 退出登录（2026-10-17 反馈：入口在编辑资料页底部，不在「我的」页）=====
+    const backBeforeLogout = navigatedBack
+    page.logout()
+    check('★ 编辑资料页底部可退出登录（AUTH.loginOut 被调用）', logoutCalls.n === 1, logoutCalls)
+    check('★ 退出登录写本机 loggedOut 标志（不是删除云端资料）',
+      logoutStore.loggedOut === '1', logoutStore)
+    check('  退出前有二次确认（误点不会直接退出）',
+      page.__modals.length >= 1 && /退出/.test(String(page.__modals[0].title)), page.__modals)
+    // 500ms 后返回「我的」页（它 onShow 会展示登录卡片）
+    await new Promise((r) => setTimeout(r, 600))
+    check('★ 退出后返回「我的」页', navigatedBack === backBeforeLogout + 1,
+      { before: backBeforeLogout, after: navigatedBack })
+    check('编辑资料页底部有「退出登录」入口与说明',
+      /bindtap="logout"/.test(src('pages/profile-edit/index.wxml')) &&
+      /订单与收货地址仍保留/.test(src('pages/profile-edit/index.wxml')))
 
     // 头像并发上传：先发的旧上传返回后不能覆盖后选的
     const resolvers = []
@@ -535,9 +549,13 @@ async function main() {
 
     const myJs = src('pages/my/index.js')
     const myWxml = src('pages/my/index.wxml')
-    check('★ 我的页有退出登录入口与逻辑',
-      /logout/.test(myJs) && /logout/.test(myWxml) && /AUTH\.loginOut/.test(myJs))
-    check('★ 我的页有登录入口（退出后可重新登录）',
+    const profileEditJs = src('pages/profile-edit/index.js')
+    const profileEditWxml = src('pages/profile-edit/index.wxml')
+    check('★ 退出登录在「编辑资料」页（不在「我的」页）',
+      /logout/.test(profileEditJs) && /bindtap="logout"/.test(profileEditWxml) &&
+      /AUTH\.loginOut/.test(profileEditJs) &&
+      !/bindtap="logout"/.test(myWxml) && !/logout\(\)/.test(myJs))
+    check('★ 我的页有登录入口（退出后重新登录）',
       /login\(\)/.test(myJs) && /登录/.test(myWxml))
     check('★ 我的页不再内联编辑资料（统一进编辑资料页）',
       !/startEditProfile/.test(myJs) && !/saveProfile/.test(myJs) &&

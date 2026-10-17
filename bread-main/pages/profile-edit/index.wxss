@@ -142,6 +142,27 @@
   color: #b3b3b3;
 }
 
+/* 退出登录（放在编辑资料页底部；只清本机展示，不删订单） */
+.pe-logout-card {
+  margin: 40rpx 24rpx 0;
+  padding: 28rpx 24rpx;
+  text-align: center;
+  background-color: #ffffff;
+  border-radius: 16rpx;
+}
+.pe-logout {
+  font-size: 30rpx;
+  font-weight: 600;
+  color: #c0392b;
+  padding: 8rpx 0;
+}
+.pe-logout-sub {
+  margin-top: 10rpx;
+  font-size: 22rpx;
+  line-height: 32rpx;
+  color: #b3b3b3;
+}
+
 /* 底部保存（沿用阶段 12 修好的写法：z-index + 安全区占位） */
 .pe-bottom-holder {
   height: calc(160rpx + env(safe-area-inset-bottom));

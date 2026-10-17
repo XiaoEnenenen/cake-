@@ -70,6 +70,12 @@
       昵称、头像与手机号只用于订单展示和联系，可在本页随时修改。
     </view>
 
+    <!-- 退出登录（2026-10-17 顾客反馈：放在编辑资料页底部，不在「我的」页） -->
+    <view class="pe-logout-card">
+      <view class="pe-logout" bindtap="logout">退出登录</view>
+      <view class="pe-logout-sub">只清除本机资料展示，订单与收货地址仍保留在当前微信下</view>
+    </view>
+
     <view class="pe-bottom-holder"></view>
     <view class="pe-bottom-bar">
       <view class="pe-save {{ saving ? 'pe-save-disabled' : '' }}" bindtap="save">

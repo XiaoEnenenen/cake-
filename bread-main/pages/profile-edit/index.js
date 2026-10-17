@@ -12,6 +12,7 @@
  * ---------------------------------------------------------------------------
  */
 const API = require('../../utils/api-map')
+const AUTH = require('../../utils/auth')
 const ADDR = require('../../utils/address')
 const FMT = require('../../utils/format')
 const LOG = require('../../utils/log')
@@ -155,5 +156,33 @@ Page({
 
   goAddress() {
     wx.navigateTo({ url: '/pages/address/index' })
+  },
+
+  /**
+   * 退出登录（2026-10-17 顾客反馈：入口放在「编辑资料」页底部，而不是「我的」页）
+   * 只清本机展示（storage.loggedOut）——微信小程序的身份就是当前微信 openid，
+   * 没有真正的"注销"；订单/地址仍保留，重新登录即可恢复。
+   */
+  logout() {
+    wx.showModal({
+      title: '退出登录',
+      content: '退出后本机不再显示你的资料；订单和收货地址仍保留在当前微信下，重新登录即可恢复。确认退出？',
+      confirmText: '退出',
+      cancelText: '取消',
+      success: (r) => {
+        if (!r.confirm) return
+        AUTH.loginOut()
+        try {
+          wx.setStorageSync('loggedOut', '1')
+        } catch (e) {}
+        wx.showToast({ title: '已退出登录', icon: 'none' })
+        // 回「我的」页（它 onShow 会读 loggedOut 展示登录卡片）
+        setTimeout(() => {
+          wx.navigateBack({
+            fail: () => wx.reLaunch({ url: '/pages/my/index' })
+          })
+        }, 500)
+      }
+    })
   }
 })

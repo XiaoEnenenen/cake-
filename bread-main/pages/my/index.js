@@ -248,31 +248,8 @@ Page({
     this.login()
   },
 
-  /** 退出登录（只清本机展示，不删除云端资料/订单） */
-  logout() {
-    wx.showModal({
-      title: '退出登录',
-      content: '退出后本机不再显示你的资料；订单和收货地址仍保留在当前微信下，重新登录即可恢复。确认退出？',
-      confirmText: '退出',
-      cancelText: '取消',
-      success: (r) => {
-        if (!r.confirm) return
-        AUTH.loginOut()
-        try {
-          wx.setStorageSync('loggedOut', '1')
-        } catch (e) {}
-        this.setData({
-          loggedOut: true,
-          userInfo: null,
-          userNo: '',
-          isAdminUser: false,
-          profileError: false,
-          myOpenid: ''
-        })
-        wx.showToast({ title: '已退出登录', icon: 'none' })
-      }
-    })
-  },
+  // 2026-10-17 顾客反馈：退出登录入口从「我的」页移到「编辑资料」页底部
+  // （具体逻辑见 pages/profile-edit/index.js）。本页只负责显示未登录态。
 
   // ===== 订单管理：跳转到订单页并带状态参数 =====
   // 复用现有的 pages/current-order，不新建页面

@@ -267,13 +267,3 @@
 .bottom {
   height: 180rpx;
 }
-
-/* ===== 阶段 12：退出登录 ===== */
-.list-item-logout {
-  justify-content: center;
-  padding: 30rpx;
-}
-.list-title-logout {
-  text-align: center;
-  color: #c0392b;
-}
