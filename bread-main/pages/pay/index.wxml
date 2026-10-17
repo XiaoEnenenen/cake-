@@ -277,3 +277,6 @@
 
 <!-- 阶段 12：首次启动隐私授权弹窗（全局组件；已同意过则不会出现） -->
 <privacy-popup />
+
+<!-- 2026-10-17 顾客反馈：退出登录后「去支付」先弹登录（隐私勾选 + 手机号/微信登录） -->
+<login-sheet id="login-sheet" bind:success="onLoginSuccess" />

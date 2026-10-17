@@ -260,3 +260,6 @@
 <!-- 底部导航栏 -->
 <import src="/template/tabbar/index.wxml" />
 <template is="tabbar" data="{{ tabbarActive: 1 }}" />
+
+<!-- 2026-10-17 顾客反馈：退出登录后加购/去结算先弹登录（隐私勾选 + 手机号/微信登录） -->
+<login-sheet id="login-sheet" bind:success="onLoginSuccess" />

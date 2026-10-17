@@ -48,6 +48,16 @@ function check(name, cond, extra) {
   }
 }
 
+// 2026-10-17：登录门禁（本文件验证的是金额/状态逻辑，统一按"已登录"处理）
+const LOGIN_GATE_STUB = {
+  isLoggedOut: () => false,
+  requireLogin: (page, action) => {
+    if (typeof action === 'function') action()
+    return true
+  },
+  onLoginSuccess: () => {}
+}
+
 /**
  * 通用沙箱加载器。
  * @param {string} rel 页面文件（相对 bread-main）
@@ -95,6 +105,7 @@ function loadPage(rel, opts) {
       for (const key of Object.keys(extraReq)) {
         if (new RegExp(key).test(p)) return extraReq[key]
       }
+      if (/utils\/login-gate$/.test(p)) return LOGIN_GATE_STUB
       if (/order-status$/.test(p)) return OS
       if (/order-countdown$/.test(p)) return CD
       if (/utils\/format$/.test(p)) return FMT

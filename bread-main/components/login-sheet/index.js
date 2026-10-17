@@ -120,6 +120,8 @@ Component({
       this.setData({ logging: true })
       try {
         await AUTH.authorize()
+        // 已是登录状态：取消"退出登录 → 下次冷启动重新弹隐私"的待办
+        PRIVACY.cancelResetOnNextLaunch()
         this.setData({ show: false })
         this.triggerEvent('success', { method: 'wechat' })
       } catch (e) {
@@ -161,6 +163,8 @@ Component({
         if (res && res.code === 0) {
           PRIVACY.markAgreed()
           await AUTH.authorize()
+          // 已是登录状态：取消"退出登录 → 下次冷启动重新弹隐私"的待办
+          PRIVACY.cancelResetOnNextLaunch()
           this.setData({ show: false })
           this.triggerEvent('success', { method: 'phone' })
           return

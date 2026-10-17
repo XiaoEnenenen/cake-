@@ -231,6 +231,7 @@ node tests/test-delivery.js
 node tests/test-admin.js     # 阶段 10 店主端
 node tests/test-coupon.js    # 阶段 11 优惠券（含并发防超发 / 结算页 / 店主建券）
 node tests/test-profile.js   # 阶段 12 隐私合规 / 退出登录 / 编辑资料
+node tests/test-login-gate.js # 2026-10-17 登录门禁（未登录不能加购/结算/支付）
 ```
 
 `tests/test-cloud-api.js` 用内存版数据库跑完整流程：分类 → 商品 → 加购 → 下单 → 查单 → 取消 → 核销，

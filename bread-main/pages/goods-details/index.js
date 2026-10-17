@@ -1,5 +1,7 @@
 const API = require('../../utils/api-map')
 const AUTH = require('../../utils/auth')
+// 2026-10-17 顾客反馈：退出登录后不允许加购（必须重新登录）
+const LOGIN_GATE = require('../../utils/login-gate')
 // 2026-10-12 阶段 5.7：删除空的 `app.configLoadOK = () => {}` 桩与随之无用的 getApp()。
 Page({
   data: {
@@ -172,6 +174,11 @@ Page({
     return norm(a) === norm(b)
   },
   async addCart() {
+    // 2026-10-17 顾客反馈：退出登录后加购必须先重新登录（隐私勾选 + 手机号/微信登录）
+    if (LOGIN_GATE.isLoggedOut()) {
+      LOGIN_GATE.requireLogin(this, () => this.addCart())
+      return
+    }
     // 判断登陆状态
     const isLogined = await AUTH.checkHasLogined()
     if (!isLogined) {
@@ -230,6 +237,10 @@ Page({
         }
       })
     }, 600)
+  },
+  /** 登录弹层登录成功：继续刚才被拦下的加购动作 */
+  onLoginSuccess() {
+    LOGIN_GATE.onLoginSuccess(this)
   },
   async checkBuyedNumber (goodsId) {
     // ===== 改造：原来只比对 sku[0]（多规格会串位），现按整组比对 =====

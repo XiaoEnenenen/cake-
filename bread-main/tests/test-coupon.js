@@ -1084,6 +1084,11 @@ async function main() {
         requires: {
           'api-map$': api,
           'utils/auth$': { login() {}, wxaCode: async () => 'code' },
+          'utils/login-gate$': {
+            isLoggedOut: () => false,
+            requireLogin: (page, action) => { if (typeof action === 'function') action(); return true },
+            onLoginSuccess: () => {}
+          },
           'utils/pay$': { wxpay: () => { state.payCalls++ } },
           'shop-config$': SHOP,
           'utils/delivery$': {

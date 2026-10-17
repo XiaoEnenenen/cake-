@@ -2,6 +2,8 @@ const API = require('../../utils/api-map')
 const AUTH = require('../../utils/auth')
 const DELIVERY = require('../../utils/delivery')
 const SHOP_CONFIG = require('../../shop-config')
+// 2026-10-17 顾客反馈：退出登录后不允许加购 / 去结算（必须重新登录）
+const LOGIN_GATE = require('../../utils/login-gate')
 // app 仅用于自定义 tabbar 的切换（app.tabbarChange）
 const app = getApp()
 // 2026-10-12 阶段 5.7：删除空的 `app.configLoadOK = () => {}` 桩（api 工厂时代的启动回调）。
@@ -369,8 +371,13 @@ Page({
    *   本方法为「点单页加号直接加购」的旧实现，改造后 wxml 已不再绑定它
    *   （加号改为 goDetail，进入详情页选规格后再加购，与需求一致）。
    *   按项目约定不删除可复用逻辑，故保留；若将来需要「无规格商品一键加购」可重新绑定。
+   * 2026-10-17：退出登录后不允许加购（顾客反馈"没登录还能点餐"）。
    */
   async addCart(e) {
+    if (LOGIN_GATE.isLoggedOut()) {
+      LOGIN_GATE.requireLogin(this, () => this.addCart(e))
+      return
+    }
     // 判断登陆状态
     const isLogined = await AUTH.checkHasLogined()
     if (!isLogined) {
@@ -415,7 +422,12 @@ Page({
   },
   // 改造：底部结算栏「去结算」
   // 复用现有结算页，不新建页面；空购物车给出提示而不是静默跳转
+  // 2026-10-17 顾客反馈：未登录（退出登录后）不允许去结算 —— 先登录再继续。
   onCheckout() {
+    if (LOGIN_GATE.isLoggedOut()) {
+      LOGIN_GATE.requireLogin(this, () => this.onCheckout())
+      return
+    }
     if (!this.data.cartCount) {
       wx.showToast({
         title: '请先选购商品',
@@ -426,6 +438,10 @@ Page({
     wx.navigateTo({
       url: '/pages/pay/index'
     })
+  },
+  /** 登录弹层登录成功：清退出标志，继续刚才被拦下的动作（没有就刷新购物车） */
+  onLoginSuccess() {
+    LOGIN_GATE.onLoginSuccess(this, () => this.shippingCarInfo())
   },
   tabbarChange(e) {
     app.tabbarChange(e)

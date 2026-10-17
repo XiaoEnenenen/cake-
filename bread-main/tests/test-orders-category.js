@@ -72,6 +72,14 @@ function loadOrdersPage(api) {
         }
       }
       if (/shop-config$/.test(p)) return { shop: { id: 0 }, delivery: {} }
+      // 2026-10-17：登录门禁（本文件测的是分类切换，统一按"已登录"处理）
+      if (/utils\/login-gate$/.test(p)) {
+        return {
+          isLoggedOut: () => false,
+          requireLogin: (page, action) => { if (typeof action === 'function') action(); return true },
+          onLoginSuccess: () => {}
+        }
+      }
       return {}
     },
     wx: {

@@ -38,10 +38,13 @@ Component({
       // 只弹一次：已同意、或已经弹过一次（含点「暂不使用」）都不再主动弹。
       if (PRIVACY.shouldShowOnLaunch() && !shownThisRun) {
         shownThisRun = true
-        // 先记"已提示"，再延迟显示：即使顾客直接杀进程，下次冷启动也不会重复打扰。
-        PRIVACY.markPrompted()
-        // 稍等首屏渲染，避免弹窗把首页内容完全遮住
-        this._timer = setTimeout(() => this.setData({ show: true }), 400)
+        // 稍等首屏渲染，避免弹窗把首页内容完全遮住；
+        // 真正显示时才记"已提示"——如果顾客在 400ms 内就切走 / 杀进程（弹窗一次都没看到），
+        // 下次冷启动还会再提醒，不会出现"记成已提示但用户从没见过"的情况。
+        this._timer = setTimeout(() => {
+          PRIVACY.markPrompted()
+          this.setData({ show: true })
+        }, 400)
       }
     },
     detached() {

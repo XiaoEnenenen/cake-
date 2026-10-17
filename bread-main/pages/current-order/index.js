@@ -11,6 +11,8 @@ const COUNTDOWN = require('../../utils/order-countdown')
 // app 仅用于自定义 tabbar 的切换（app.tabbarChange）
 const app = getApp()
 const wxpay = require('../../utils/pay.js')
+// 2026-10-17 顾客反馈：退出登录后不允许"再次支付"（必须重新登录）
+const LOGIN_GATE = require('../../utils/login-gate')
 // 2026-10-12 阶段 5.7：删除空的 `app.configLoadOK = () => {}` 桩（api 工厂时代的启动回调）。
 Page({
   data: {
@@ -316,6 +318,11 @@ Page({
     })
   },
   toPayTap: function(e) {
+    // 2026-10-17 顾客反馈：退出登录后点「再次支付」必须先重新登录（隐私勾选 + 手机号/微信登录）
+    if (LOGIN_GATE.isLoggedOut()) {
+      LOGIN_GATE.requireLogin(this, () => this.toPayTap(e))
+      return
+    }
     // 防止连续点击--开始
     if (this.data.payButtonClicked) {
       wx.showToast({
@@ -357,6 +364,10 @@ Page({
         }
       }
     });
+  },
+  /** 登录弹层登录成功：继续刚才被拦下的支付动作；没有待继续动作就刷新订单列表 */
+  onLoginSuccess: function () {
+    LOGIN_GATE.onLoginSuccess(this, () => this.orderList())
   },
   _toPayTap: function (orderId, money){
     // 2026-09-26 阶段二：已删除余额支付分支（money <= 0 时走 orderPayV2）。

@@ -24,6 +24,9 @@
 const KEY = 'privacyAgreedVersion'
 // 首次启动主动告知是否已经弹过（只记"弹过"，不代表"同意"）
 const PROMPT_KEY = 'privacyPromptedVersion'
+// 退出登录时写这个标记；下次**冷启动**由 app.js 消费：
+// 清掉同意/已提示状态 → 隐私弹窗重新出现（2026-10-17 第二轮顾客反馈）
+const RESET_ON_LAUNCH_KEY = 'privacyResetOnNextLaunch'
 // 隐私政策内容有实质变化时改这个版本号（会重新弹同意）
 const POLICY_VERSION = '2026-10-17'
 
@@ -74,6 +77,45 @@ function markPrompted() {
 function resetPrompted() {
   try {
     wx.removeStorageSync(PROMPT_KEY)
+  } catch (e) {}
+}
+
+/**
+ * 退出登录：请求"下次冷启动重新告知隐私政策"。
+ * 注意只写标记、**不立刻清同意状态** —— 否则顾客退出登录后在本会话里
+ * 再打开结算/地址等页面时又会立刻弹一次（顾客要的是"退出小程序、再次打开后弹"）。
+ */
+function requestResetOnNextLaunch() {
+  try {
+    wx.setStorageSync(RESET_ON_LAUNCH_KEY, '1')
+  } catch (e) {}
+}
+
+/**
+ * 下次冷启动时调用（app.js onLaunch）：命中退出登录标记就清掉同意/已提示状态，
+ * 让隐私弹窗重新出现。返回是否命中。
+ */
+function consumeResetOnNextLaunch() {
+  let hit = false
+  try {
+    if (wx.getStorageSync(RESET_ON_LAUNCH_KEY) === '1') {
+      hit = true
+      wx.removeStorageSync(RESET_ON_LAUNCH_KEY)
+      wx.removeStorageSync(KEY)
+      wx.removeStorageSync(PROMPT_KEY)
+    }
+  } catch (e) {}
+  return hit
+}
+
+/**
+ * 重新登录成功：取消"下次冷启动重新告知"。
+ * 为什么：顾客退出后又马上登录，已经是登录状态了，下次打开不该再弹隐私政策
+ * （与"已登录时不再弹"的规则一致）。
+ */
+function cancelResetOnNextLaunch() {
+  try {
+    wx.removeStorageSync(RESET_ON_LAUNCH_KEY)
   } catch (e) {}
 }
 
@@ -150,6 +192,9 @@ module.exports = {
   hasPrompted,
   markPrompted,
   resetPrompted,
+  requestResetOnNextLaunch,
+  consumeResetOnNextLaunch,
+  cancelResetOnNextLaunch,
   shouldShowOnLaunch,
   requestPlatformAuthorize,
   openPolicy,

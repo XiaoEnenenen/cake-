@@ -3,8 +3,14 @@
 // 启动时只初始化云开发这一条数据源。
 const AUTH = require('utils/auth')
 const API = require('utils/api-map')
+// 2026-10-17 顾客反馈：退出登录后再次打开小程序要重新弹隐私政策（见 utils/privacy.js）
+const PRIVACY = require('utils/privacy')
 App({
   onLaunch: function () {
+    // ===== 退出登录后的"重新告知隐私"（2026-10-17 第二轮顾客反馈）=====
+    // 退出登录时只写了一个标记；这里在**下次冷启动**才真正清掉同意/已提示状态，
+    // 于是首页的隐私弹窗会重新出现；如果退出后又马上登录，登录弹层会取消这个标记。
+    PRIVACY.consumeResetOnNextLaunch()
     // ===== 数据源初始化（阶段三：只有云开发一条通道）=====
     // API.init() 内部执行 wx.cloud.init（环境取自 utils/data-source.js 的 cloudEnvId）。
     // 云函数不可用时页面会拿到明确的「云函数调用失败」，不会降级到任何备用数据源。

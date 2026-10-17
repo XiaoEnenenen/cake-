@@ -23,6 +23,8 @@
 const API = require('../../utils/api-map')
 const AUTH = require('../../utils/auth')
 const wxpay = require('../../utils/pay.js')
+// 2026-10-17 顾客反馈：退出登录后不允许下单/去支付（必须重新登录）
+const LOGIN_GATE = require('../../utils/login-gate')
 const SHOP_CONFIG = require('../../shop-config')
 const DELIVERY = require('../../utils/delivery')
 const ADDR = require('../../utils/address')
@@ -708,6 +710,12 @@ Page({
   //   ③ 按钮提交态（data.submitting）：wxml 据此置灰并换文案。
   // （订单列表页的「再次支付」本来就有 3 秒防抖，这里补齐。）
   async createorder() {
+    // 2026-10-17 顾客反馈：退出登录后必须重新登录才能下单/支付。
+    // 门禁放在最前面：连"提交中/已下单"的判断都不走，先弹登录层；登录成功后自动继续下单。
+    if (LOGIN_GATE.isLoggedOut()) {
+      LOGIN_GATE.requireLogin(this, () => this.createorder())
+      return
+    }
     if (this._submitting) {
       wx.showToast({ title: '正在提交，请稍候', icon: 'none' })
       return
@@ -724,6 +732,11 @@ Page({
       this._submitting = false
       this.setData({ submitting: false })
     }
+  },
+
+  /** 登录弹层登录成功：继续刚才被拦下的下单动作；没有待继续动作就刷新购物车 */
+  onLoginSuccess() {
+    LOGIN_GATE.onLoginSuccess(this, () => this.shippingCarInfo())
   },
 
   async _createOrder() {

@@ -516,12 +516,13 @@ async function main() {
   // =========================================================================
   {
     const navs = []
-    const calls = { bind: 0, markAgreed: 0, authorize: 0, lastBind: null }
+    const calls = { bind: 0, markAgreed: 0, authorize: 0, lastBind: null, cancelReset: 0 }
     let platformResult = { ok: true, denied: false }
     let bindResult = { code: 501, msg: '手机号快速验证未开通' }
     const privacyStub = {
       async requestPlatformAuthorize() { return platformResult },
       markAgreed() { calls.markAgreed++ },
+      cancelResetOnNextLaunch() { calls.cancelReset++ },
       openPolicy() { navs.push('/pages/about-us/detail?key=agreement') },
       openContractPage() { navs.push('/pages/about-us/detail?key=agreement') }
     }
@@ -564,6 +565,8 @@ async function main() {
       calls.authorize === 1 && calls.markAgreed === 1 &&
       sheet.__events.some((e) => e.name === 'success' && e.detail && e.detail.method === 'wechat'),
       { calls, events: sheet.__events })
+    check('  登录成功取消"退出登录后下次冷启动重新弹隐私"的待办',
+      calls.cancelReset === 1, calls)
     check('  登录成功后关闭弹层、复位登录中标志',
       sheet.data.show === false && sheet.data.logging === false)
 
@@ -734,6 +737,11 @@ async function main() {
     let navigatedBack = 0
     const logoutStore = {}
     const logoutCalls = { n: 0 }
+    // 2026-10-17 第二轮反馈：退出登录要登记"下次冷启动重新弹隐私政策"
+    const privacyReset = { requested: 0 }
+    const privacyStub = {
+      requestResetOnNextLaunch() { privacyReset.requested++ }
+    }
     const api = {
       userDetail: async () => ({
         code: 0,
@@ -752,6 +760,7 @@ async function main() {
         'utils/auth$': { loginOut: () => { logoutCalls.n++ } },
         'utils/address$': ADDR_STUB,
         'utils/format$': require('../utils/format'),
+        'utils/privacy$': privacyStub,
         'utils/log$': QUIET_LOG
       },
       wx: {
@@ -808,6 +817,8 @@ async function main() {
     check('★ 编辑资料页底部可退出登录（AUTH.loginOut 被调用）', logoutCalls.n === 1, logoutCalls)
     check('★ 退出登录写本机 loggedOut 标志（不是删除云端资料）',
       logoutStore.loggedOut === '1', logoutStore)
+    check('★ 退出登录登记"下次冷启动重新弹隐私政策"',
+      privacyReset.requested === 1, privacyReset)
     check('  退出前有二次确认（误点不会直接退出）',
       page.__modals.length >= 1 && /退出/.test(String(page.__modals[0].title)), page.__modals)
     // 500ms 后返回「我的」页（它 onShow 会展示登录卡片）

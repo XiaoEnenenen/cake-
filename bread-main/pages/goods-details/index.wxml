@@ -112,3 +112,6 @@
   </view>
 
 </van-popup>
+
+<!-- 2026-10-17 顾客反馈：退出登录后加购先弹登录（隐私勾选 + 手机号/微信登录） -->
+<login-sheet id="login-sheet" bind:success="onLoginSuccess" />
