@@ -145,7 +145,13 @@ function makeApi(overrides) {
     orderDetail: async () => ({ code: 0, data: null }),
     shippingCarInfoRemoveAll: async () => ({ code: 0 }),
     modifyUserInfoV2: async () => ({ code: 0, data: {} }),
-    uploadFile: async () => ({ code: 0, fileID: 'cloud://x/avatar.png' })
+    uploadFile: async () => ({ code: 0, fileID: 'cloud://x/avatar.png' }),
+    // 阶段 11：优惠券（默认没有券 → 金额与阶段 10 完全一致，不干扰既有断言）
+    couponsAvailable: async () => ({ code: 0, data: { coupons: [] } }),
+    couponUsableForCart: async () => ({
+      code: 0,
+      data: { goodsAmount: 0, packingFee: 0, coupons: [], bestCouponId: '', bestDiscount: 0 }
+    })
   }, overrides || {})
 }
 

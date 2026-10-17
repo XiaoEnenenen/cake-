@@ -289,6 +289,27 @@ const API = {
   adminOrderFreightConfirm: (id, freight) =>
     callCloud('orderFreightConfirm', { id, freight }),
 
+  // ---------- 优惠券（阶段 11）----------
+  // ⚠️ 金额纪律：券能不能用、能减多少**只由服务端算** —— 本文件只负责转发，
+  //    页面只展示服务端给的 discount，绝不自己用券面金额拼一遍。
+  /** 顾客可见的券（含"我的资格"：新客 / 每人限用是否已用完），用于结算页入口提示 */
+  couponsAvailable: () => callCloud('couponList', {}),
+
+  /**
+   * 结算页：购物车可用券 + 预估优惠（按当前配送方式算，与下单同口径）。
+   * 返回 { goodsAmount, packingFee, coupons, usableCoupons, bestCouponId, bestDiscount }
+   */
+  couponUsableForCart: () => callCloud('couponUsableForCart', API._cartPayload()),
+
+  /** 店主端券列表（含已停用；带使用量、状态与有效期文案） */
+  adminCouponList: () => callCloud('couponAdminList', {}),
+
+  /**
+   * 新建 / 编辑 / 停用优惠券（店主）
+   * 不带 id = 新增；没传的字段沿用旧值（可只传 { id, enabled } 做启用/停用）。
+   */
+  adminCouponUpsert: (data) => callCloud('couponUpsert', data || {}),
+
   // 2026-09-26 阶段二：已删除 orderPayV2（余额支付）与 scoreLogs（积分记录）方法。
   // 会员卡 / 积分 / 余额体系整体移除，云函数对应 action 也已删除。
 

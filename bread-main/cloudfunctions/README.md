@@ -39,8 +39,8 @@ cloudfunctions/
 
 ## 已实现的接口
 
-> **路由表实际可调用的 action 共 29 个**（`handlers.js` 的 `handlers` 导出对象，
-> 由 `tests/test-stage5.js` 断言数量与本文档一致）。下表多出的 `importData`
+> **路由表实际可调用的 action 共 33 个**（`handlers.js` 的 `handlers` 导出对象，
+> 由 `tests/test-cleanup.js` 断言数量与本文档一致）。下表多出的 `importData`
 > 已不在路由表里，仅通过 `module.exports` 暴露给云控制台/本地测试。
 
 | action | 对应原来的 | 说明 |
@@ -71,7 +71,11 @@ cloudfunctions/
 | `goodsUpsert` | — | **新增/编辑商品**（阶段 10）：名称/分类/价格/图片/规格组/上下架/排序/自取立减/打包费/最少购买；**没传的字段沿用旧值**（可只传 `{id, enabled}` 切上下架）；`requireAdmin` + 入参白名单校验 + `updBy/updTime` 审计 |
 | `goodsDelete` | — | **下架商品**（阶段 10，软删）：只把 `enabled` 置 false，**不物理删除**（可随时重新上架，历史订单是快照不受影响）；`requireAdmin` |
 | `deliveryRuleSave` | — | **保存配送设置**（阶段 10，写 `app_config.delivery_rule`）：距离阶梯 / 不送区域 / 外送距离上限 / 配送范围关键词 / 蛋糕免运费；**先显式校验再归一化**（非法值报错拒绝，不静默回退默认值）；`requireAdmin` |
-| `orderFreightConfirm` | — | **运费补录**（阶段 10）：「运费待确认」的外送单，店主电话谈好后写入 `freight` 并由服务端重算 `amountReal = goodsAmount + packingFee + freight`；只对下单时运费待确认（或已补录过）的未完成订单开放；`requireAdmin` + 审计 |
+| `orderFreightConfirm` | — | **运费补录**（阶段 10）：「运费待确认」的外送单，店主电话谈好后写入 `freight` 并由服务端重算 `amountReal = goodsAmount - couponAmount + packingFee + freight`；只对下单时运费待确认（或已补录过）的未完成订单开放；`requireAdmin` + 审计 |
+| `couponList` | — | **顾客端可见的券**（阶段 11，只读）：已启用 + 有效期内 + 没被用完的券，附该顾客自己的资格（新客 / 每人限用是否已用完）与券面说明；不涉及金额计算 |
+| `couponUsableForCart` | — | **结算页可用券 + 预估优惠**（阶段 11，只读）：按当前购物车与配送方式，服务端算出每张券能否用、能减多少，并给出默认最优券；**金额的唯一预览出处** |
+| `couponAdminList` | — | **店主端券列表**（阶段 11）：含已停用券，带使用量 / 命中上限 / 当前状态 / 有效期文案；`requireAdmin` |
+| `couponUpsert` | — | **新建 / 编辑 / 停用券**（阶段 11）：新客立减或满减，有效期、总量、每人限用、排序、启用；**没传的字段沿用旧值**（可只传 `{id, enabled}` 停用）；`usedCount` 只由服务端维护；`requireAdmin` + 入参校验 + 审计 |
 | `wxpay` | `wxpay` | 微信支付统一下单（**当前返回"未接入"**，需先申请商户号，阶段一未接线） |
 | `fetchShops` | `fetchShops` | 单店模式兼容桩，固定返回空数组（前端已无调用方） |
 | `shopSubdetail` | `shopSubdetail` | 单店模式兼容桩，固定返回失败（`pages/current-order` 拨号取号用） |
@@ -92,6 +96,8 @@ cloudfunctions/
 | `user` | 用户资料（按 `_openid` 隔离） |
 | `cart` | 购物车（按 `_openid` 隔离） |
 | `order` | 订单（按 `_openid` 隔离） |
+| `coupon` | 优惠券活动（阶段 11；店主建、顾客用。`usedCount` 由服务端原子累加，用于总量上限） |
+| `coupon_user` | 每人用券计数（阶段 11；按 `_openid` + `couponId` 隔离，用于每人限用与并发防超发） |
 
 > **2026-02-14 更正**：`score_log`（积分记录）集合**不用建** —— 会员积分体系已整体删除。
 
@@ -124,13 +130,15 @@ const res = await API.goodsv2({ categoryId: cid })   // 原来：WXAPI.goodsv2(.
 > **2026-02-14 更正**：本文档此前写「已接线的文件（14 个）：11 个页面 + `utils/auth.js` + `utils/tools.js` + `app.js`」。
 > 经核对，`utils/tools.js` **已不存在**（全项目无该文件）。
 >
-> **2026-10-12 阶段 5.7 再次核对**（`tests/test-stage5.js` 会重新数一遍并断言本文档的数字）：
-> **2026-10-14 阶段 10 更新**：新增 5 个店主端页面后，实际接线为 **13 个页面** +
+> **2026-10-12 阶段 5.7 再次核对**（`tests/test-cleanup.js` 会重新数一遍并断言本文档的数字）：
+> **2026-10-17 阶段 11 更新**：新增 2 个店主端优惠券页面后，实际接线为 **15 个页面** +
 > `utils/auth.js` + `utils/pay.js` + `utils/admin.js` + `components/bind-mobile` + `app.js`。
-> 13 个页面是：`about-us/detail`、`current-order`、`goods-details`、`index`、`my`、
+> 15 个页面是：`about-us/detail`、`current-order`、`goods-details`、`index`、`my`、
 > `order-view`、`orders`、`pay`，以及阶段 10 的 5 个店主端页面
 > `admin/index`、`admin/orders/index`、`admin/goods/index`、`admin/goods-edit/index`、
-> `admin/delivery/index`（都不进 tabBar，普通顾客看不到入口）。
+> `admin/delivery/index`，和阶段 11 的 2 个优惠券页面
+> `admin/coupons/index`（券列表）、`admin/coupons-edit/index`（新建/编辑）
+> （店主端 7 个页面都不进 tabBar，普通顾客看不到入口）。
 > （此前这里写的「13 个页面」是 api 工厂时代的数字，从未复核过；报告 E-07 已记录该文档与代码不符。）
 >
 > `utils/pay.js` 的支付统一下单仍未接线（见文末），云开发通道会返回"未接入"文案。
@@ -149,7 +157,7 @@ const res = await API.goodsv2({ categoryId: cid })   // 原来：WXAPI.goodsv2(.
 2. 点顶部「**云开发**」→ 开通环境（记下环境 ID）
 3. 左侧「**云函数**」→ 右键 `cloudfunctions/api` 目录 → 「**上传并部署：云端安装依赖**」
 4. 等待部署完成，控制台应显示上传成功
-5. 在「云开发 → 数据库」建立 7 个集合：
+5. 在「云开发 → 数据库」建立 9 个集合：
 
 | 集合名 | 用途 | 权限建议 |
 |---|---|---|
@@ -160,6 +168,8 @@ const res = await API.goodsv2({ categoryId: cid })   // 原来：WXAPI.goodsv2(.
 | `user` | 用户资料 | **仅创建者可读写** |
 | `cart` | 购物车 | **仅创建者可读写** |
 | `order` | 订单 | **仅创建者可读写** |
+| `coupon` | 优惠券（阶段 11） | **仅创建者可读写**（顾客只经云函数读写，不直接碰集合） |
+| `coupon_user` | 每人用券计数（阶段 11） | **仅创建者可读写** |
 
 > **2026-02-14 更正**：`score_log`（积分记录）集合**不用建** —— 会员积分体系已整体删除。
 > 完整的建库清单与权限说明以 `docs/云开发初始化清单.md` 为准。
@@ -215,6 +225,8 @@ node tests/test-cloud-api.js
 node tests/test-spec.js
 node tests/test-address.js
 node tests/test-delivery.js
+node tests/test-admin.js     # 阶段 10 店主端
+node tests/test-coupon.js    # 阶段 11 优惠券（含并发防超发 / 结算页 / 店主建券）
 ```
 
 `tests/test-cloud-api.js` 用内存版数据库跑完整流程：分类 → 商品 → 加购 → 下单 → 查单 → 取消 → 核销，

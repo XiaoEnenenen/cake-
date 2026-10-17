@@ -728,7 +728,10 @@ async function main() {
       'pages/admin/orders/index',
       'pages/admin/goods/index',
       'pages/admin/goods-edit/index',
-      'pages/admin/delivery/index'
+      'pages/admin/delivery/index',
+      // 阶段 11：优惠券管理（同属店主端，不进 tabBar）
+      'pages/admin/coupons/index',
+      'pages/admin/coupons-edit/index'
     ]
     adminPages.forEach((p) => {
       check('app.json 注册了 ' + p, pages.indexOf(p) >= 0)
@@ -749,7 +752,7 @@ async function main() {
         compileErr = p + ' :: ' + e.message
       }
     })
-    check('★ 5 个店主页面 js 都能编译', compileErr === null, compileErr)
+    check('★ ' + adminPages.length + ' 个店主页面 js 都能编译', compileErr === null, compileErr)
 
     const adminIndexJs = src('pages/admin/index.js')
     const adminIndexWxml = src('pages/admin/index.wxml')
@@ -761,8 +764,10 @@ async function main() {
       /adminOrderList\(/.test(adminIndexJs) && /adminGoodsList\(/.test(adminIndexJs))
     check('  任一失败 → 错误态 + 重试（不显示半截数字）',
       /loadError:\s*true/.test(adminIndexJs) && /retryLoad/.test(adminIndexWxml))
-    check('  优惠券入口如实说明"还没上线"（不做半截功能）',
-      /goCoupons/.test(adminIndexJs) && /还没上线/.test(adminIndexWxml + adminIndexJs))
+    check('  优惠券入口进入券管理页（阶段 11 已上线，不再写"还没上线"）',
+      /goCoupons/.test(adminIndexJs) &&
+      /pages\/admin\/coupons\/index/.test(adminIndexJs) &&
+      !/还没上线/.test(adminIndexWxml + adminIndexJs))
 
     const ordersWxml = src('pages/admin/orders/index.wxml')
     const ordersJs = src('pages/admin/orders/index.js')

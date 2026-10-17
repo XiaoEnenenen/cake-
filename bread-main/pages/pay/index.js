@@ -14,8 +14,10 @@
  *      - 自提：留空 → 组件自己定位后显示「距离您 X」（去店里取才有意义）。
  *      本页不再直接调用定位接口；定位授权与降级提示都在组件内部处理。
  *   4. 商品、费用与底部「合计 + 去支付」栏按参考图重排。
- *   参考图中的「会员卡 / 优惠券 / 余额支付 / 储值卡」未实现：会员、积分、余额体系
+ *   参考图中的「会员卡 / 余额支付 / 储值卡」未实现：会员、积分、余额体系
  *   在阶段二已整体删除，不做假数据。
+ *   （「优惠券」已于阶段 11 实现：结算页可选券、金额由服务端算，见文件下方
+ *     "阶段 11：优惠券" 一节。）
  * ---------------------------------------------------------------------------
  */
 const API = require('../../utils/api-map')
@@ -31,6 +33,11 @@ const LOC = require('../../utils/location')
 
 // 联络电话在本地持久化的键名（顾客手填后下次自动带出）
 const CONTACT_PHONE_KEY = 'contactPhone'
+
+/** 金额文案（去掉多余的 0：10.00 → '10'，10.50 → '10.5'；与服务端 moneyText 同口径） */
+function formatMoney(n) {
+  return String(Math.round((Number(n) || 0) * 100) / 100)
+}
 
 // 2026-10-12 阶段 5.7：删除空的 `app.configLoadOK = () => {}` 桩与随之无用的 getApp()。
 Page({
@@ -104,7 +111,23 @@ Page({
     // 这里提前说清原因并禁止提交，避免顾客填完地址电话才被拒。
     cartUnavailableTip: '',
     // 阶段 5.6（缺陷 P-10）：是否正在提交订单（防抖 + 按钮文案）
-    submitting: false
+    submitting: false,
+    // ===== 阶段 11：优惠券 =====
+    // couponList: 顾客可见的券（couponList，含"我的资格"；用于入口提示）
+    couponList: [],
+    couponCount: 0,
+    // coupons: 当前购物车可用的券（couponUsableForCart；含服务端算好的 discount）
+    coupons: [],
+    couponsLoading: false,
+    couponError: false,
+    couponPopupShow: false,
+    // 选中的券（'' = 不使用）
+    selectedCouponId: '',
+    selectedCouponName: '',
+    couponRuleText: '',
+    // 服务端算好的优惠金额（只展示，不自己算）
+    couponDiscount: 0,
+    couponSummaryText: '暂无可用优惠券'
   },
   // ===== 2026-10-14（backlog：幂等）：下单幂等键 clientOrderToken =====
   // 为什么需要：弱网下"请求其实已经到服务端、订单也写好了，只是响应丢了"时，
@@ -138,6 +161,8 @@ Page({
     }
     this.syncDeliveryMode()
     this.shippingCarInfo()
+    // 阶段 11：券入口提示（顾客能看到"有没有活动"；具体可用券在购物车加载后算）
+    this.loadCouponList()
   },
   onShow: function () {
     this.syncDeliveryMode()
@@ -252,8 +277,13 @@ Page({
     // 阶段 9：打包费（元，合计）= 服务端 cartSummary 按"每件打包费 × 件数"算好的，
     // 前端只负责显示与加总 —— 绝不自己乘一遍，避免出现第二种口径。
     const packingFee = Number(this.data.packingFee) || 0
-    // 商品金额 + 打包费：不涉及运费的几个分支都直接用这个基数
-    const goodsPlusPacking = Math.round((goodsAmount + packingFee) * 100) / 100
+    // 阶段 11：优惠券抵扣（服务端 couponUsableForCart 已经算好，前端只展示）。
+    // 优惠只抵商品金额，且不允许把商品金额抵成负数（与服务端 orderCreate 同口径）。
+    const couponDiscount = Math.min(Number(this.data.couponDiscount) || 0, goodsAmount)
+    // 抵扣后的商品金额 + 打包费：不涉及运费的几个分支都直接用这个基数
+    const goodsPlusPacking = Math.round(
+      (Math.max(0, goodsAmount - couponDiscount) + packingFee) * 100
+    ) / 100
 
     // 自提：无运费。距离气泡留空 → 由 shop-map 显示「距离您 X」（去店里取，这个距离才有意义）
     if (!this.data.isDelivery) {
@@ -262,6 +292,8 @@ Page({
         freight: 0,
         freightText: '自提免运费',
         payableAmount: goodsPlusPacking,
+        // 自提时的合计（= 商品 - 优惠 + 打包费），底部栏与 shownAmount() 共用
+        pickupTotal: goodsPlusPacking,
         deliveryTip: '',
         mapDistanceText: ''
       })
@@ -275,6 +307,7 @@ Page({
         freight: null,
         freightText: '请先选择收货地址',
         payableAmount: goodsPlusPacking,
+        pickupTotal: goodsPlusPacking,
         deliveryTip: '',
         // 外送但还没选地址：明确提示，避免又退回显示"当前位置到门店"的误导距离
         mapDistanceText: '待选择收货地址'
@@ -293,6 +326,7 @@ Page({
         freight: null,
         freightText: '运费待确认',
         payableAmount: goodsPlusPacking,
+        pickupTotal: goodsPlusPacking,
         deliveryTip: '',
         mapDistanceText: '待确认'
       })
@@ -304,8 +338,11 @@ Page({
     const quote = DR.calcQuote({ address, goodsAmount, items })
 
     // 应付金额：运费待确认(null)时先按商品金额计，最终以服务端返回为准
+    // 阶段 11：优惠只抵商品金额（不含运费），与服务端 orderCreate 同口径
     const freightValue = quote.freight === null ? 0 : quote.freight
-    const payableAmount = Math.round((goodsAmount + packingFee + freightValue) * 100) / 100
+    const payableAmount = Math.round(
+      (Math.max(0, goodsAmount - couponDiscount) + packingFee + freightValue) * 100
+    ) / 100
 
     // 2026-10-10：外送场景的气泡显示「收货地址 → 门店」的距离，
     // 不再显示"用户当前位置到门店"（人在外面下单时那个数字与配送距离无关）。
@@ -320,6 +357,9 @@ Page({
       freight: quote.freight,
       freightText: quote.freightText,
       payableAmount,
+      // 底部栏在自提分支读 pickupTotal；外送分支读 payableAmount。
+      // 两个值都把优惠算进去了，避免"切一次配送方式优惠就没了"。
+      pickupTotal: goodsPlusPacking,
       deliveryTip: quote.deliverable ? (quote.tip || '') : '',
       mapDistanceText
     })
@@ -376,7 +416,16 @@ Page({
         cartLoadError: true,
         cartLoaded: true,
         priceChangedTip: '',
-        cartUnavailableTip: ''
+        cartUnavailableTip: '',
+        // 阶段 11：购物车都没加载成功，券也就无从谈起（清掉旧的选用状态）
+        coupons: [],
+        couponsLoading: false,
+        couponError: false,
+        selectedCouponId: '',
+        selectedCouponName: '',
+        couponRuleText: '',
+        couponDiscount: 0,
+        couponSummaryText: '暂无可用优惠券'
       })
       this.recalcQuote()
       return
@@ -450,6 +499,8 @@ Page({
       })
       // 商品金额变化会影响运费（是否满 35 元），需要重算
       this.recalcQuote()
+      // 阶段 11：商品金额变了 → 可用券与预估优惠也要按新金额重算（服务端唯一口径）
+      this.refreshCoupons()
     }
   },
 
@@ -459,15 +510,150 @@ Page({
     this.shippingCarInfo()
   },
 
+  // =========================================================================
+  // 阶段 11：优惠券
+  // -------------------------------------------------------------------------
+  // 三条原则：
+  //   1) **金额不在前端算**：券能不能用、能减多少，全部来自服务端
+  //      couponUsableForCart（下单时 orderCreate 会用同一套逻辑再校验一次）；
+  //   2) 接口失败**不阻塞下单**：按"不使用优惠券"处理，页面金额与实付口径一致；
+  //   3) 一单一张：弹层里选一张，选"不使用"即取消；取消订单不退券（弹层底部有文案）。
+  // =========================================================================
+
+  /** 顾客可见的券（券入口提示用；具体到购物车的可用性交给 refreshCoupons） */
+  async loadCouponList() {
+    let res = null
+    try {
+      res = await API.couponsAvailable()
+    } catch (e) {
+      // 券接口异常绝不能影响下单：入口如实显示"暂无可用优惠券"
+      res = null
+    }
+    if (!res || res.code != 0 || !res.data || !Array.isArray(res.data.coupons)) {
+      this.setData({ couponList: [], couponCount: 0 })
+      this.refreshCouponSummary()
+      return
+    }
+    const eligible = res.data.coupons.filter((c) => c && c.eligible)
+    this.setData({
+      couponList: res.data.coupons,
+      couponCount: eligible.length
+    })
+    this.refreshCouponSummary()
+  },
+
+  /**
+   * 拉取"当前购物车可用券 + 预估优惠"（服务端唯一口径）。
+   * 触发时机：购物车加载完 / 切换自提外送 / 打开选券弹层。
+   */
+  async refreshCoupons() {
+    if (!this.data.shippingCarInfo || this.data.cartEmpty) {
+      this.setData({ coupons: [], couponsLoading: false, couponError: false })
+      this.applySelectedCoupon(null)
+      return
+    }
+    this.setData({ couponsLoading: true, couponError: false })
+    let res = null
+    try {
+      res = await API.couponUsableForCart()
+    } catch (e) {
+      res = null
+    }
+    if (!res || res.code != 0 || !res.data || !Array.isArray(res.data.coupons)) {
+      // 券接口失败不阻塞下单：按"不使用优惠券"处理（金额仍与下单口径一致）
+      this.setData({ coupons: [], couponsLoading: false, couponError: true })
+      this.applySelectedCoupon(null)
+      return
+    }
+    const coupons = res.data.coupons
+    // 之前选中的券如果还能用就保留；否则默认选服务端推荐的最优券。
+    // 例外：顾客已经明确选了「不使用优惠券」→ 尊重选择，不再自动帮他选一张。
+    let selected = coupons.filter((c) => c.id === this.data.selectedCouponId && c.usable)[0]
+    if (!selected && !this._couponOptOut) {
+      selected = coupons.filter((c) => c.id === res.data.bestCouponId && c.usable)[0] || null
+    }
+    this.setData({ coupons: coupons, couponsLoading: false, couponError: false })
+    this.applySelectedCoupon(selected)
+  },
+
+  /** 应用 / 取消选中券：只保存服务端给的 discount，绝不用券面金额自己算 */
+  applySelectedCoupon(coupon) {
+    this.setData({
+      selectedCouponId: coupon ? coupon.id : '',
+      selectedCouponName: coupon ? coupon.name : '',
+      couponRuleText: coupon ? coupon.ruleText || '' : '',
+      couponDiscount: coupon ? Number(coupon.discount) || 0 : 0
+    })
+    this.refreshCouponSummary()
+    // 实付金额随优惠变化（自提 / 外送两条分支都在 recalcQuote 里）
+    this.recalcQuote()
+  },
+
+  /** 券行文案：选中时显示券名与抵扣额，否则按可用数量提示 */
+  refreshCouponSummary() {
+    let text = '暂无可用优惠券'
+    if (this.data.selectedCouponId) {
+      text = this.data.selectedCouponName +
+        '（-' + formatMoney(this.data.couponDiscount) + ' 元）'
+    } else if (this._couponOptOut) {
+      // 顾客明确点了「不使用优惠券」：别在下次刷新时又自动帮他选一张
+      text = '不使用优惠券'
+    } else {
+      const usableCount = (this.data.coupons || []).filter((c) => c.usable).length
+      if (usableCount > 0) text = '有 ' + usableCount + ' 张可用'
+      else if (this.data.couponCount > 0) text = '有 ' + this.data.couponCount + ' 张券（未满足使用条件）'
+    }
+    this.setData({ couponSummaryText: text })
+  },
+
+  openCouponPopup() {
+    if (this.data.cartEmpty) {
+      wx.showToast({ title: '购物车是空的', icon: 'none' })
+      return
+    }
+    this.setData({ couponPopupShow: true })
+    // 每次打开都按当前购物车重算一次（金额与资格可能已经变了）
+    this.refreshCoupons()
+  },
+
+  closeCouponPopup() {
+    this.setData({ couponPopupShow: false })
+  },
+
+  onCouponTap(e) {
+    const ds = (e && e.currentTarget && e.currentTarget.dataset) || {}
+    const id = String(ds.id || '')
+    if (!id) {
+      // 记住"顾客主动选择不使用"：后续刷新不再自动帮他选券
+      this._couponOptOut = true
+      this.applySelectedCoupon(null)
+      this.closeCouponPopup()
+      return
+    }
+    const usable = ds.usable === true || ds.usable === 'true'
+    const coupon = (this.data.coupons || []).filter((c) => c.id === id)[0]
+    // 不可用的券给出服务端的原因（"再买 ¥X 可用" / "仅限新顾客"…），不做"点了没反应"
+    if (!usable) {
+      wx.showToast({ title: ds.reason || (coupon && coupon.reason) || '这张券暂时不可用', icon: 'none' })
+      return
+    }
+    if (coupon) {
+      this._couponOptOut = false
+      this.applySelectedCoupon(coupon)
+    }
+    this.closeCouponPopup()
+  },
+
   /**
    * 阶段 5.1：页面上展示给顾客的合计金额。
    * 下单成功后会拿它与服务端返回的 amountReal 比对 —— 不一致说明下单那一刻
    * 商家改过价或运费被服务端重算过，必须先告知顾客再发起支付（见 _createOrder）。
-   * 自提 = 商品金额；外送 = 商品金额 + 运费（与 wxml 的展示口径一致）。
+   * 自提 = 商品金额 - 优惠 + 打包费；外送 = 商品金额 - 优惠 + 打包费 + 运费
+   * （与 wxml 的展示口径一致；优惠金额来自服务端 couponUsableForCart）。
    */
   shownAmount() {
     if (this.data.isDelivery) return Number(this.data.payableAmount) || 0
-    // 阶段 9：自提 = 商品金额 + 打包费（pickupTotal 与底部「合计」是同一个值）
+    // 阶段 9：自提 = 商品金额 + 打包费；阶段 11：再减优惠（pickupTotal 与底部「合计」同值）
     return Number(this.data.pickupTotal) || 0
   },
   async userDetail() {
@@ -713,7 +899,10 @@ Page({
       //   "营业时间 / 蛋糕提前 3 小时" 这条规则 —— 现在云函数会用它做权威校验。
       expectTime: expectTimeAbs || '',
       address: postAddress,
-      freightAmount: this.data.freight === null ? null : this.data.freight
+      freightAmount: this.data.freight === null ? null : this.data.freight,
+      // ===== 阶段 11：优惠券 =====
+      // 只传"想用哪张"；能不能用、减多少由 orderCreate 重新校验并重算（前端改不了金额）。
+      couponId: this.data.selectedCouponId || ''
     }
     // https://www.yuque.com/apifm/nu0f75/qx4w98
     const res = await API.orderCreate(postData)
@@ -748,7 +937,7 @@ Page({
     if (amountDiffers) {
       wx.showModal({
         title: '金额已更新',
-        content: '商品价格或运费发生了变化：\n页面上显示 ' + shownTotal + ' 元，实际应付 ' + serverTotal +
+        content: '商品价格、运费或优惠券发生了变化：\n页面上显示 ' + shownTotal + ' 元，实际应付 ' + serverTotal +
           ' 元。\n确认按 ' + serverTotal + ' 元支付吗？',
         confirmText: '确认支付',
         cancelText: '暂不支付',

@@ -316,3 +316,15 @@ justify-content: space-between;
   padding: 0 30rpx 20rpx;
   box-sizing: border-box;
 }
+
+/* 阶段 11：优惠券抵扣行与"不退券"提示 */
+.coupon-amount-text {
+  color: #ff4b33;
+}
+
+.coupon-refund-tip {
+  padding: 0 32rpx 16rpx;
+  font-size: 22rpx;
+  color: #b3b3b3;
+  text-align: right;
+}

@@ -73,6 +73,8 @@
           <view class="ao-money-item">商品 {{ item.goodsAmountText }}</view>
           <view class="ao-money-item">打包 {{ item.packingFeeText }}</view>
           <view class="ao-money-item">配送 {{ item.freightText }}</view>
+          <!-- 阶段 11：优惠券抵扣（对账用；没用券时不显示） -->
+          <view wx:if="{{ item.couponText }}" class="ao-money-item ao-money-coupon">{{ item.couponText }}</view>
           <view class="ao-money-total">实付 {{ item.amountText }}</view>
         </view>
 

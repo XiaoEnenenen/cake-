@@ -1,0 +1,150 @@
+<!-- 店主端 · 新建/编辑优惠券（阶段 11） -->
+<view class="ce-page">
+  <view wx:if="{{ !isAdminUser }}" class="ce-guard">
+    <view class="ce-guard-title">无店主权限</view>
+    <view class="ce-guard-sub">该入口仅店主本人可见可用</view>
+  </view>
+
+  <block wx:else>
+    <view wx:if="{{ loading }}" class="ce-hint">正在读取…</view>
+
+    <view wx:elif="{{ loadError }}" class="ce-error">
+      <view class="ce-error-text">读取失败，请检查网络后重试</view>
+      <view class="ce-retry" bindtap="retryLoad">点击重试</view>
+    </view>
+
+    <block wx:else>
+      <!-- 券面信息 -->
+      <view class="ce-card">
+        <view class="ce-card-title">券面信息</view>
+
+        <view class="ce-row">
+          <view class="ce-label">名称</view>
+          <input
+            class="ce-input"
+            maxlength="30"
+            placeholder="顾客看得到，如：新客立减 10 元"
+            value="{{ name }}"
+            bindinput="onNameInput"
+          />
+        </view>
+
+        <view class="ce-row">
+          <view class="ce-label">类型</view>
+          <picker mode="selector" range="{{ typeNames }}" value="{{ typeIndex }}" bindchange="onTypeChange">
+            <view class="ce-picker">{{ typeNames[typeIndex] }} ▾</view>
+          </picker>
+        </view>
+        <view class="ce-hint-text">{{ typeHint }}</view>
+
+        <view wx:if="{{ typeIndex == 0 }}" class="ce-row">
+          <view class="ce-label">满减门槛（元）</view>
+          <input
+            class="ce-input"
+            type="digit"
+            placeholder="如 100（商品金额满 100 可用）"
+            value="{{ threshold }}"
+            bindinput="onThresholdInput"
+          />
+        </view>
+
+        <view class="ce-row">
+          <view class="ce-label">优惠金额（元）</view>
+          <input
+            class="ce-input"
+            type="digit"
+            placeholder="如 10"
+            value="{{ amount }}"
+            bindinput="onAmountInput"
+          />
+        </view>
+      </view>
+
+      <!-- 有效期 -->
+      <view class="ce-card">
+        <view class="ce-card-title">有效期</view>
+
+        <view class="ce-row">
+          <view class="ce-label">开始</view>
+          <view class="ce-time-group">
+            <picker mode="date" value="{{ startDate }}" start="2020-01-01" end="2099-12-31" bindchange="onStartDateChange">
+              <view class="ce-picker">{{ startDate }} ▾</view>
+            </picker>
+            <picker mode="time" value="{{ startTimeText }}" bindchange="onStartTimeChange">
+              <view class="ce-picker">{{ startTimeText }} ▾</view>
+            </picker>
+          </view>
+        </view>
+
+        <view class="ce-row">
+          <view class="ce-label">结束</view>
+          <view class="ce-time-group">
+            <picker mode="date" value="{{ endDate }}" start="2020-01-01" end="2099-12-31" bindchange="onEndDateChange">
+              <view class="ce-picker">{{ endDate }} ▾</view>
+            </picker>
+            <picker mode="time" value="{{ endTimeText }}" bindchange="onEndTimeChange">
+              <view class="ce-picker">{{ endTimeText }} ▾</view>
+            </picker>
+          </view>
+        </view>
+
+        <view class="ce-quick">
+          <view class="ce-quick-btn" data-days="7" bindtap="setDuration">设为 7 天</view>
+          <view class="ce-quick-btn" data-days="30" bindtap="setDuration">设为 30 天</view>
+        </view>
+        <view class="ce-hint-text">过期不需要手动下架：过期后顾客端自动看不到，也不会扣钱。</view>
+      </view>
+
+      <!-- 使用限制 -->
+      <view class="ce-card">
+        <view class="ce-card-title">使用限制</view>
+
+        <view class="ce-row">
+          <view class="ce-label">总量</view>
+          <input
+            class="ce-input"
+            type="number"
+            placeholder="0 = 不限"
+            value="{{ totalLimit }}"
+            bindinput="onTotalLimitInput"
+          />
+        </view>
+        <view class="ce-hint-text">总量 = 这张券最多能被使用多少次（例如前 100 单）。填 0 表示不限量。</view>
+
+        <view class="ce-row">
+          <view class="ce-label">每人限用</view>
+          <input
+            class="ce-input"
+            type="number"
+            placeholder="0 = 不限"
+            value="{{ perUserLimit }}"
+            bindinput="onPerUserLimitInput"
+          />
+        </view>
+        <view class="ce-hint-text">新客立减券由系统强制「每人 1 次」，这里填多少都一样。</view>
+
+        <view class="ce-row">
+          <view class="ce-label">排序</view>
+          <input
+            class="ce-input"
+            type="number"
+            placeholder="数字越小越靠前"
+            value="{{ sort }}"
+            bindinput="onSortInput"
+          />
+        </view>
+
+        <view class="ce-row">
+          <view class="ce-label">启用</view>
+          <switch checked="{{ enabled }}" color="#ffd100" bindchange="onEnabledChange" />
+        </view>
+        <view class="ce-hint-text">停用后顾客端立即看不到这张券（不删除、可随时重新启用）。</view>
+      </view>
+
+      <view class="ce-bottom-holder"></view>
+      <view class="ce-bottom-bar {{ saving ? 'ce-bottom-disabled' : '' }}" bindtap="save">
+        {{ saving ? '保存中…' : (isCreate ? '创建优惠券' : '保存修改') }}
+      </view>
+    </block>
+  </block>
+</view>

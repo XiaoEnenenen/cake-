@@ -134,6 +134,17 @@
   <view wx:elif="{{ cartEmpty }}" class="goods-empty">购物车是空的</view>
 </view>
 
+<!-- ===== 阶段 11：优惠券入口 =====
+     券能不能用、能减多少由服务端算（couponUsableForCart），这里只展示与选择；
+     下单时 orderCreate 会用同一套规则再校验一次，前端改不了优惠金额。 -->
+<view wx:if="{{ cartLoaded && !cartLoadError }}" class="card">
+  <view class="row" bindtap="openCouponPopup">
+    <view class="row-label">优惠券</view>
+    <view class="row-value {{ selectedCouponId ? 'coupon-on' : 'row-empty' }}">{{ couponSummaryText }}</view>
+    <van-icon name="arrow" />
+  </view>
+</view>
+
 <!-- ===== 订单信息：联络电话 / 时间 / 备注 ===== -->
 <view class="card">
   <view class="row">
@@ -187,6 +198,11 @@
     <view class="fee-label">打包费</view>
     <view class="fee-value">¥{{ packingFee }}</view>
   </view>
+  <!-- 阶段 11：优惠券抵扣（金额来自服务端，前端不自己算；>0 才渲染这一行） -->
+  <view wx:if="{{ couponDiscount > 0 }}" class="fee-row">
+    <view class="fee-label">优惠券{{ selectedCouponName ? '（' + selectedCouponName + '）' : '' }}</view>
+    <view class="fee-value fee-coupon">-¥{{ couponDiscount }}</view>
+  </view>
 </view>
 
 <!-- 底部固定栏占位（避免最后一张卡片被遮挡） -->
@@ -206,3 +222,55 @@
     bindtap="createorder"
   >{{ submitting ? '提交中…' : '去支付' }}</view>
 </view>
+
+<!-- ===== 阶段 11：选择优惠券 =====
+     一张券 = 一个卡片；不可用的券也列出来（说明原因，如"再买 ¥20 可用"），
+     让顾客知道活动存在、差多少能用。金额全部来自服务端。 -->
+<van-popup
+  show="{{ couponPopupShow }}"
+  position="bottom"
+  custom-class="coupon-pop"
+  bind:close="closeCouponPopup"
+>
+  <view class="coupon-pop-head">
+    <view class="coupon-pop-title">选择优惠券</view>
+    <view class="coupon-pop-close" bindtap="closeCouponPopup">关闭</view>
+  </view>
+
+  <view wx:if="{{ couponsLoading }}" class="coupon-pop-hint">正在读取可用优惠券…</view>
+  <view wx:elif="{{ couponError }}" class="coupon-pop-hint">优惠券读取失败，本单可不使用优惠券</view>
+  <view wx:elif="{{ coupons.length == 0 }}" class="coupon-pop-hint">暂时没有可用的优惠券</view>
+
+  <block wx:else>
+    <view class="coupon-item" data-id="" bindtap="onCouponTap">
+      <view class="coupon-main">
+        <view class="coupon-name">不使用优惠券</view>
+      </view>
+      <view class="coupon-radio {{ selectedCouponId ? '' : 'coupon-radio-on' }}"></view>
+    </view>
+    <view
+      wx:for="{{ coupons }}"
+      wx:key="id"
+      class="coupon-item {{ item.usable ? '' : 'coupon-item-off' }}"
+      data-id="{{ item.id }}"
+      data-usable="{{ item.usable }}"
+      data-reason="{{ item.reason }}"
+      bindtap="onCouponTap"
+    >
+      <view class="coupon-main">
+        <view class="coupon-line1">
+          <text class="coupon-amount">¥{{ item.amount }}</text>
+          <text class="coupon-name">{{ item.name }}</text>
+        </view>
+        <view class="coupon-rule">{{ item.ruleText }}</view>
+        <view class="coupon-valid">{{ item.validText }}</view>
+        <view wx:if="{{ !item.usable }}" class="coupon-reason">{{ item.reason }}</view>
+        <view wx:elif="{{ item.discount > 0 }}" class="coupon-discount">本单可减 ¥{{ item.discount }}</view>
+      </view>
+      <view class="coupon-radio {{ selectedCouponId == item.id ? 'coupon-radio-on' : '' }}"></view>
+    </view>
+  </block>
+
+  <view class="coupon-pop-foot">每单限用 1 张优惠券；优惠券使用后取消订单不退回。</view>
+  <view class="coupon-pop-safe"></view>
+</van-popup>

@@ -190,6 +190,21 @@
   <view class="blank1"></view>
 </block>
 
+<!-- 阶段 11：优惠券抵扣（订单快照；0 = 本单没用券 → 整块不渲染）
+     「取消订单不退券」是本期明确的取舍，写在这一行下面，别让顾客以为会退。 -->
+<block wx:if="{{ orderDetail.orderInfo.couponAmount > 0 }}">
+  <view class="shops-bar">
+    <view class="shops-box">
+      <view class="content">
+        <view class="titles">优惠券{{ orderDetail.orderInfo.couponName ? '（' + orderDetail.orderInfo.couponName + '）' : '' }}</view>
+      </view>
+      <view class="text coupon-amount-text">-¥{{ orderDetail.orderInfo.couponAmount }}</view>
+    </view>
+  </view>
+  <view class="coupon-refund-tip">优惠券使用后，取消订单不退回</view>
+  <view class="blank1"></view>
+</block>
+
 <!-- 配送费（仅外送；金额取服务端 freight，不再用 extJson 快照）
      freight === null 的老订单没有该字段 → 回退显示 extJson 的文案 -->
 <block wx:if="{{ orderDetail.orderInfo.deliveryMode == 'delivery' }}">

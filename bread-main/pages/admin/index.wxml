@@ -76,11 +76,11 @@
           <view class="entry-arrow"></view>
         </view>
 
-        <view class="entry-item entry-item-pending" bindtap="goCoupons">
+        <view class="entry-item" bindtap="goCoupons">
           <view class="entry-icon entry-icon-coupon">券</view>
           <view class="entry-body">
             <view class="entry-title">优惠券 / 满减</view>
-            <view class="entry-sub">还没上线（下一阶段做，做完这里就能自己建券）</view>
+            <view class="entry-sub">自己建券：新客立减、满多少减多少；随时停用</view>
           </view>
           <view class="entry-arrow"></view>
         </view>

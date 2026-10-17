@@ -1279,7 +1279,12 @@ async function orderFreightConfirm(payload, ctx) {
   const freight = feeRes.value
   const goodsAmount = Number(o.goodsAmount) || 0
   const packingFee = Number(o.packingFee) || 0
-  const amountReal = Math.round((goodsAmount + packingFee + freight) * 100) / 100
+  // 阶段 11：补录运费时**不能把优惠券抵扣丢掉**，否则店主一确认运费，
+  // 顾客的实付金额就悄悄涨回去了（与阶段 5.1「屏显 ≠ 实付」同一类缺陷）。
+  const couponAmount = Number(o.couponAmount) || 0
+  const amountReal = Math.round(
+    (Math.max(0, goodsAmount - couponAmount) + packingFee + freight) * 100
+  ) / 100
   const now = Date.now()
 
   await ctx.db.update('order', o._id, {
@@ -1302,6 +1307,604 @@ async function orderFreightConfirm(payload, ctx) {
     packingFee,
     amountReal
   })
+}
+
+// ===========================================================================
+// 优惠券（阶段 11）
+// ---------------------------------------------------------------------------
+// 对应需求：R-01「可以发布优惠券活动吗？比如新客立减多少，满多少减多少」
+//          +「想要我自己可以设置这个，有权限」→ 店主自己建券，顾客结算时用。
+//
+// 三条纪律（与阶段 5.1 的金额口径同一套）：
+//   1) **券能不能用、能减多少，只由服务端算**：`couponUsableForCart` 只给结算页
+//      做预览，`orderCreate` 落单前用同一批函数**重新校验并重算**最终金额 ——
+//      前端传的 `couponId` 只是"想用哪张券"，改前端改不了优惠金额；
+//   2) 优惠只作用于**商品金额**（不含打包费、不含运费），门槛也按商品金额判断：
+//      `amountReal = max(0, 商品金额 - 优惠) + 打包费 + 运费`；
+//   3) 一单最多用 **1 张**券（不叠加）。取消订单/超时未支付**不退券**
+//      （结算页有文案说明；避免再写一套返还逻辑，见阶段 11 第 7 步的取舍）。
+//
+// 数据模型（集合 `coupon`，权限「仅创建者可读写」——顾客只经云函数访问）：
+//   { _id, name, type: 'newCustomer' | 'threshold', threshold, amount,
+//     startTime, endTime, totalLimit, perUserLimit, enabled, sort,
+//     usedCount,            // 服务端维护：已被使用的次数（超发保护的条件）
+//     createBy, createTime, updBy, updTime }
+//   集合 `coupon_user`（每人已用次数，超发/限用的原子计数器）：
+//   { _id, _openid, couponId, usedCount, createTime }
+//
+// 并发（与 backlog 的原子加购/幂等同一纪律）：
+//   `usedCount` / `coupon_user.usedCount` 都用 `db.incField` 的**数据库端条件自增**
+//   （自增后必须 ≤ 上限），条件不满足时一条都不改 → 并发下不会超发、不会突破每人限用。
+//   两个计数器先抢占，再落单；落单失败则回滚（不白吃一次使用次数）。
+// ===========================================================================
+const COUPON_TYPE_NEW = 'newCustomer'
+const COUPON_TYPE_THRESHOLD = 'threshold'
+const COUPON_TYPE_TEXTS = {
+  newCustomer: '新客立减',
+  threshold: '满减'
+}
+const COUPON_NAME_MAX = 30
+const COUPON_AMOUNT_MAX = 10000
+const COUPON_THRESHOLD_MAX = 100000
+const COUPON_LIMIT_MAX = 100000
+const COUPON_PER_USER_MAX = 100
+const COUPON_SORT_MAX = 9999
+// 券的有效期只接受合理区间（防止把毫秒当秒之类的手滑写成 1970 / 5 万年后）
+const COUPON_TIME_MIN = Date.UTC(2020, 0, 1)
+const COUPON_TIME_MAX = Date.UTC(2100, 0, 1)
+const COUPON_ID_RE = /^[A-Za-z0-9_-]{1,128}$/
+
+/** 金额文案（去掉多余的 0：10.00 → '10'，10.50 → '10.5'） */
+function moneyText(n) {
+  return String(Math.round((Number(n) || 0) * 100) / 100)
+}
+
+/** 券时间文案（按北京时间，不依赖运行时区；云函数运行在 UTC） */
+function couponTimeText(ms) {
+  const n = Number(ms)
+  if (!isFinite(n) || n <= 0) return '—'
+  const d = new Date(n + ORDER_TZ_OFFSET_MS)
+  return d.getUTCFullYear() + '-' + pad(d.getUTCMonth() + 1, 2) + '-' + pad(d.getUTCDate(), 2) +
+    ' ' + pad(d.getUTCHours(), 2) + ':' + pad(d.getUTCMinutes(), 2)
+}
+
+/**
+ * 每人使用上限的**生效值**。
+ * 新客券强制 1：新客券的语义就是"只给新顾客一次"，店主填 5 张反而会把
+ * "新客立减"变成"前 5 单都减"（与她对活动的理解不一致）。
+ */
+function effectivePerUserLimitOf(c) {
+  if (!c) return 0
+  if (String(c.type) === COUPON_TYPE_NEW) return 1
+  return Number(c.perUserLimit) || 0
+}
+
+/** 券当前状态（管理员列表与顾客端共用；now 由调用方传入便于测试） */
+function couponStatusOf(c, now) {
+  const t = Number(now) || Date.now()
+  if (!c || c.enabled === false) return { key: 'disabled', text: '已停用' }
+  if (t < Number(c.startTime)) return { key: 'pending', text: '未开始' }
+  if (t > Number(c.endTime)) return { key: 'expired', text: '已结束' }
+  if (Number(c.totalLimit) > 0 && Number(c.usedCount) >= Number(c.totalLimit)) {
+    return { key: 'soldout', text: '已抢完' }
+  }
+  return { key: 'active', text: '进行中' }
+}
+
+/** 券面一句话说明（顾客与店主都看这一句，不要两处各写一份） */
+function couponRuleText(c) {
+  if (!c) return ''
+  if (String(c.type) === COUPON_TYPE_NEW) return '新客立减 ¥' + moneyText(c.amount)
+  return '满 ¥' + moneyText(c.threshold) + ' 减 ¥' + moneyText(c.amount)
+}
+
+/** 顾客视图：只给券面信息，不暴露 _openid 之类 */
+function couponViewOf(c, now) {
+  const status = couponStatusOf(c, now)
+  return {
+    id: c._id,
+    name: c.name,
+    type: c.type,
+    typeText: COUPON_TYPE_TEXTS[String(c.type)] || '优惠券',
+    threshold: Number(c.threshold) || 0,
+    amount: Number(c.amount) || 0,
+    ruleText: couponRuleText(c),
+    startTime: Number(c.startTime) || 0,
+    endTime: Number(c.endTime) || 0,
+    validText: '有效期 ' + couponTimeText(c.startTime) + ' 至 ' + couponTimeText(c.endTime),
+    statusKey: status.key,
+    statusText: status.text
+  }
+}
+
+/** 店主视图：券面 + 使用量（对账/停用要用） */
+function couponAdminView(c, now) {
+  const view = couponViewOf(c, now)
+  const totalLimit = Number(c.totalLimit) || 0
+  const usedCount = Number(c.usedCount) || 0
+  return Object.assign(view, {
+    totalLimit: totalLimit,
+    perUserLimit: Number(c.perUserLimit) || 0,
+    // 新客券的每人上限被服务端强制为 1，页面上照实显示，别让店主以为填的 5 生效了
+    effectivePerUserLimit: effectivePerUserLimitOf(c),
+    usedCount: usedCount,
+    remainCount: totalLimit > 0 ? Math.max(0, totalLimit - usedCount) : null,
+    usageText: totalLimit > 0
+      ? usedCount + ' / ' + totalLimit + ' 已用'
+      : usedCount + ' 次已用（不限量）',
+    enabled: c.enabled !== false,
+    sort: Number(c.sort) || 0,
+    createTime: Number(c.createTime) || 0,
+    updateTime: Number(c.updTime) || 0
+  })
+}
+
+/** couponId 入参解析（空 = 不用券；非法值明确拒绝，别静默当没用券） */
+function parseCouponId(raw) {
+  if (raw === undefined || raw === null) return { ok: true, id: '' }
+  const s = String(raw).trim()
+  if (!s) return { ok: true, id: '' }
+  if (!COUPON_ID_RE.test(s)) return { ok: false, id: '', msg: '优惠券参数不正确，请重新选择' }
+  return { ok: true, id: s }
+}
+
+/**
+ * 券时间归一化：接受毫秒时间戳（数字或 13 位字符串）、10 位秒字符串，
+ * 以及 'YYYY-MM-DD HH:mm' / 'YYYY-MM-DD'（**按北京时间**解析，不依赖云函数运行时区）。
+ * @returns {number|null} 毫秒时间戳；解析不出来返回 null（调用方必须拒绝，不能兜底成"现在"）
+ */
+function normalizeCouponTime(raw) {
+  if (raw === undefined || raw === null || raw === '') return null
+  if (typeof raw === 'number') {
+    return isFinite(raw) ? Math.round(raw) : null
+  }
+  const s = String(raw).trim()
+  if (!s) return null
+  if (/^\d{10}$/.test(s)) return Number(s) * 1000
+  if (/^\d{13}$/.test(s)) return Number(s)
+  const m = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{1,2}):(\d{2}))?$/.exec(s)
+  if (!m) return null
+  const hour = m[4] === undefined ? 0 : Number(m[4])
+  const minute = m[5] === undefined ? 0 : Number(m[5])
+  // 云函数容器跑在 UTC：显式按 UTC+8 换算，否则北京时间 0~8 点的券会被算成前一天
+  return Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), hour, minute) - ORDER_TZ_OFFSET_MS
+}
+
+/**
+ * 该顾客是否有"已生效过"的历史订单（status >= 1：制作中 / 交易成功）。
+ * 新客券的判定口径：待支付(0) 与已取消(-1) **不算**老客 ——
+ * 否则顾客下了一单没付款就永远失去新客资格。
+ */
+async function hasPaidOrderHistory(ctx, openid) {
+  try {
+    const orders = await ctx.db.find('order', { _openid: openid }, {})
+    return orders.some((o) => Number(o.status) >= ORDER_STATUS.MAKING)
+  } catch (e) {
+    // 查不到历史订单时按"老客"处理：宁可少发一张券，也不能把新客券发给老客
+    console.error('[coupon] 查询历史订单失败，按老客处理：' + (e && e.message ? e.message : e))
+    return true
+  }
+}
+
+/** 该顾客在这张券上已经用掉的次数（coupon_user 集合） */
+async function userCouponUsed(ctx, openid, couponId) {
+  try {
+    const doc = await ctx.db.findOne('coupon_user', { _openid: openid, couponId: String(couponId) })
+    return doc ? Number(doc.usedCount) || 0 : 0
+  } catch (e) {
+    // 集合不存在（老环境还没建 coupon_user）时按 0 处理：
+    // 下单路径上的原子累加仍会兜底（见 claimCouponUsage 的建行逻辑）
+    return 0
+  }
+}
+
+/** coupon_user 行的稳定 _id（并发下"先查没有再插入"会插出两行，靠主键挡住） */
+function couponUserDocId(openid, couponId) {
+  return stableDocId('cu', openid, 'coupon|' + String(couponId))
+}
+
+/**
+ * 确保 (openid, couponId) 的用券记录存在。
+ * 并发插入撞主键 / 环境不允许自定义 _id / 集合还没建，都要能给出可处理的结论
+ * （返回 null 由调用方拒绝本次用券，而不是抛 500 让顾客看到"服务异常"）。
+ */
+async function ensureCouponUserRow(ctx, openid, couponId) {
+  const cid = String(couponId)
+  try {
+    let row = await ctx.db.findOne('coupon_user', { _openid: openid, couponId: cid })
+    if (row) return row
+    const now = Date.now()
+    try {
+      await ctx.db.add('coupon_user', {
+        _id: couponUserDocId(openid, cid),
+        _openid: openid,
+        couponId: cid,
+        usedCount: 0,
+        createTime: now
+      })
+      return { _id: couponUserDocId(openid, cid), _openid: openid, couponId: cid, usedCount: 0 }
+    } catch (e) {
+      // ① 并发插入撞主键 → 另一个请求刚建好这一行，重读一次
+      row = await ctx.db.findOne('coupon_user', { _openid: openid, couponId: cid })
+      if (row) return row
+      // ② 该环境不允许自定义 _id → 用默认 _id 再插一次
+      try {
+        const added = await ctx.db.add('coupon_user', {
+          _openid: openid, couponId: cid, usedCount: 0, createTime: now
+        })
+        return added
+      } catch (e2) {
+        console.error('[coupon] 创建用券记录失败（检查 coupon_user 集合是否已建）：' +
+          (e2 && e2.message ? e2.message : e2))
+        return null
+      }
+    }
+  } catch (e) {
+    console.error('[coupon] 读取用券记录失败（检查 coupon_user 集合是否已建）：' +
+      (e && e.message ? e.message : e))
+    return null
+  }
+}
+
+/** 顾客视角的"为什么不能用"（管理员列表仍用 couponStatusOf 的短文案） */
+const COUPON_UNAVAILABLE_REASONS = {
+  disabled: '优惠券已停用',
+  pending: '优惠券还没到开始时间',
+  expired: '优惠券已过期',
+  soldout: '优惠券已被抢完'
+}
+
+/** 顾客级资格（不含"购物车金额是否够门槛"——那是 couponUsableForCart / orderCreate 的事） */
+async function couponUserEligibility(ctx, coupon, openid, now) {
+  const status = couponStatusOf(coupon, now)
+  if (status.key !== 'active') {
+    return {
+      ok: false,
+      reason: COUPON_UNAVAILABLE_REASONS[status.key] || status.text,
+      used: 0
+    }
+  }
+  const type = String(coupon.type)
+  if (type !== COUPON_TYPE_NEW && type !== COUPON_TYPE_THRESHOLD) {
+    return { ok: false, reason: '券类型不正确', used: 0 }
+  }
+  const used = await userCouponUsed(ctx, openid, coupon._id)
+  const perLimit = effectivePerUserLimitOf(coupon)
+  if (perLimit > 0 && used >= perLimit) {
+    return {
+      ok: false,
+      reason: perLimit === 1 ? '您已经用过这张券了' : '每人限用 ' + perLimit + ' 次（已用完）',
+      used
+    }
+  }
+  if (type === COUPON_TYPE_NEW && used === 0 && await hasPaidOrderHistory(ctx, openid)) {
+    return { ok: false, reason: '仅限新顾客（您已有历史订单）', used }
+  }
+  return { ok: true, reason: '', used }
+}
+
+/** 顾客端可见的券：已启用 + 在有效期内 + 总量没领完（按店主排序） */
+async function loadActiveCoupons(ctx, now) {
+  try {
+    const docs = await ctx.db.find('coupon', { enabled: true }, { sort: 1, field: 'sort' })
+    return docs.filter((c) => c && couponStatusOf(c, now).key === 'active')
+  } catch (e) {
+    // 新环境还没建 coupon 集合时（部署清单里要求建），顾客端按"没有券"处理：
+    // 不能让结算页/下单因为"优惠券功能没初始化"而整体失败。
+    console.error('[coupon] 读取券失败（检查 coupon 集合是否已建）：' + (e && e.message ? e.message : e))
+    return []
+  }
+}
+
+/**
+ * 只读接口：顾客端可见的券 + 该顾客自己的资格。
+ * 用途：结算页显示"有 N 张券"；H5/后续"我的券"页面也用它。
+ */
+async function couponList(payload, ctx) {
+  const now = Date.now()
+  const docs = await loadActiveCoupons(ctx, now)
+  const coupons = []
+  for (const c of docs) {
+    const elig = await couponUserEligibility(ctx, c, ctx.openid, now)
+    coupons.push(Object.assign(couponViewOf(c, now), {
+      eligible: elig.ok,
+      reason: elig.reason
+    }))
+  }
+  return ok({ coupons, serverNow: now })
+}
+
+/**
+ * 只读接口：结算页的"可用券 + 预估优惠"。
+ * 金额口径与 orderCreate **完全一致**（同一个 couponUserEligibility / 同样的门槛与封顶），
+ * 前端只展示这里给的 discount，不自己算。
+ */
+async function couponUsableForCart(payload, ctx) {
+  const now = Date.now()
+  const summary = await cartSummary(ctx, ctx.openid, channelOf(payload))
+  const cart = summary.data || {}
+  const goodsAmount = Math.round((Number(cart.price) || 0) * 100) / 100
+  const docs = await loadActiveCoupons(ctx, now)
+
+  const coupons = []
+  for (const c of docs) {
+    const elig = await couponUserEligibility(ctx, c, ctx.openid, now)
+    let usable = elig.ok
+    let reason = elig.reason
+    let discount = 0
+    if (usable && String(c.type) === COUPON_TYPE_THRESHOLD) {
+      const threshold = Number(c.threshold) || 0
+      if (goodsAmount < threshold) {
+        usable = false
+        reason = '再买 ¥' + moneyText(Math.round((threshold - goodsAmount) * 100) / 100) + ' 可用'
+      }
+    }
+    if (usable) {
+      // 优惠不超过商品金额：否则会出现"优惠比商品还多"，实付金额算成负数
+      discount = Math.round(Math.min(Number(c.amount) || 0, goodsAmount) * 100) / 100
+      if (discount <= 0) {
+        usable = false
+        reason = '优惠金额为 0'
+        discount = 0
+      }
+    }
+    coupons.push(Object.assign(couponViewOf(c, now), {
+      usable: usable,
+      reason: reason,
+      discount: discount
+    }))
+  }
+
+  // 可用券按优惠金额从大到小（同额保持店主的排序）→ 结算页默认选第一张
+  const usableCoupons = coupons.filter((x) => x.usable)
+  usableCoupons.sort((a, b) => b.discount - a.discount)
+  const best = usableCoupons[0] || null
+
+  return ok({
+    goodsAmount: goodsAmount,
+    packingFee: Number(cart.packingFee) || 0,
+    cartNumber: Number(cart.number) || 0,
+    coupons: coupons,
+    usableCoupons: usableCoupons,
+    bestCouponId: best ? best.id : '',
+    bestDiscount: best ? best.discount : 0,
+    serverNow: now
+  })
+}
+
+// ----- 写接口：店主建券 / 改券 / 停用（阶段 11 第 5 步）-----
+
+async function couponAdminList(payload, ctx) {
+  const denied = requireAdmin(ctx)
+  if (denied) return denied
+  const now = Date.now()
+  let docs = []
+  try {
+    docs = await ctx.db.find('coupon', {}, { sort: 1, field: 'sort' })
+  } catch (e) {
+    console.error('[coupon] 店主券列表读取失败（检查 coupon 集合是否已建）：' +
+      (e && e.message ? e.message : e))
+    return fail('优惠券读取失败：请先在云开发控制台新建 coupon 集合（见 docs/云开发初始化清单.md）')
+  }
+  const list = docs.map((c) => couponAdminView(c, now))
+  const statusCounts = { active: 0, pending: 0, expired: 0, soldout: 0, disabled: 0 }
+  list.forEach((c) => {
+    if (statusCounts[c.statusKey] !== undefined) statusCounts[c.statusKey]++
+  })
+  return ok({ couponList: list, total: list.length, statusCounts, serverNow: now })
+}
+
+/**
+ * 新增 / 编辑优惠券（店主）
+ * 参数：{ id?, name?, type?, threshold?, amount?, startTime?, endTime?,
+ *        totalLimit?, perUserLimit?, enabled?, sort? }
+ *   · 不带 id = 新增；带 id = 编辑；
+ *   · **没传的字段沿用旧值**（可只传 { id, enabled } 做启用/停用）；
+ *   · `usedCount` 只由服务端维护，payload 里传了也不采纳。
+ */
+async function couponUpsert(payload, ctx) {
+  const denied = requireAdmin(ctx)
+  if (denied) return denied
+
+  const p = payload || {}
+  const id = String(p.id || p._id || '').trim()
+  const now = Date.now()
+
+  let existing = null
+  if (id) {
+    try {
+      existing = await ctx.db.get('coupon', id)
+    } catch (e) {
+      console.error('[coupon] 读取券失败（检查 coupon 集合是否已建）：' + (e && e.message ? e.message : e))
+      return fail('优惠券读取失败：请先在云开发控制台新建 coupon 集合（见部署清单）')
+    }
+    if (!existing) return fail('优惠券不存在（可能已被删除），请返回列表刷新')
+  }
+  const base = existing || {}
+  const creating = !existing
+
+  // 只切启用/停用：快速通道，不重新校验其它字段（与 goodsUpsert 同一理由 ——
+  // 历史脏数据不能把"停用"这张安全操作卡死）
+  if (existing) {
+    const changed = Object.keys(p).filter((k) => k !== 'id' && k !== '_id')
+    if (changed.length === 1 && changed[0] === 'enabled') {
+      if (typeof p.enabled !== 'boolean') return fail('启用状态不正确')
+      await ctx.db.update('coupon', existing._id, {
+        enabled: p.enabled,
+        updBy: ctx.openid,
+        updTime: now
+      })
+      return ok({
+        id: existing._id,
+        created: false,
+        coupon: couponAdminView(Object.assign({}, existing, { enabled: p.enabled, updTime: now }), now)
+      })
+    }
+  }
+
+  const nameRes = normalizeText(hasField(p, 'name') ? p.name : base.name, {
+    max: COUPON_NAME_MAX,
+    msg: '请填写优惠券名称（最多 ' + COUPON_NAME_MAX + ' 个字）'
+  })
+  if (!nameRes.ok) return fail(nameRes.msg)
+
+  const typeRaw = String(hasField(p, 'type') ? p.type : (base.type || COUPON_TYPE_THRESHOLD))
+  if (typeRaw !== COUPON_TYPE_NEW && typeRaw !== COUPON_TYPE_THRESHOLD) {
+    return fail('优惠券类型不正确（只能是新客立减或满减）')
+  }
+
+  const amountRes = normalizeMoney(hasField(p, 'amount') ? p.amount : base.amount, {
+    minExclusive: 0,
+    max: COUPON_AMOUNT_MAX,
+    msg: '优惠金额必须大于 0 且不超过 ' + COUPON_AMOUNT_MAX + ' 元'
+  })
+  if (!amountRes.ok) return fail(amountRes.msg)
+
+  let threshold = 0
+  if (typeRaw === COUPON_TYPE_THRESHOLD) {
+    const thrRes = normalizeMoney(hasField(p, 'threshold') ? p.threshold : base.threshold, {
+      minExclusive: 0,
+      max: COUPON_THRESHOLD_MAX,
+      msg: '满减门槛必须大于 0 且不超过 ' + COUPON_THRESHOLD_MAX + ' 元'
+    })
+    if (!thrRes.ok) return fail(thrRes.msg)
+    threshold = thrRes.value
+    // 优惠 ≥ 门槛 = 白送（顾客实付 0），这基本一定是填错了，直接拒绝
+    if (amountRes.value >= threshold) {
+      return fail('优惠金额必须小于满减门槛（当前门槛 ' + threshold + ' 元）')
+    }
+  }
+  // 新客券没有门槛：threshold 恒为 0（传入值忽略，避免"新客券却要求满 X"的四不像）
+
+  const startResStart = normalizeCouponTime(hasField(p, 'startTime') ? p.startTime : base.startTime)
+  const endResEnd = normalizeCouponTime(hasField(p, 'endTime') ? p.endTime : base.endTime)
+  if (startResStart === null) return fail('请选择开始时间')
+  if (endResEnd === null) return fail('请选择结束时间')
+  if (startResStart < COUPON_TIME_MIN || endResEnd > COUPON_TIME_MAX) {
+    return fail('时间超出合理范围，请重新选择')
+  }
+  if (startResStart >= endResEnd) return fail('结束时间必须晚于开始时间')
+  const startTime = startResStart
+  const endTime = endResEnd
+
+  const totalLimitRes = normalizeInt(
+    hasField(p, 'totalLimit') ? p.totalLimit : (base.totalLimit === undefined ? 0 : base.totalLimit),
+    { min: 0, max: COUPON_LIMIT_MAX, msg: '总量必须是 0 ~ ' + COUPON_LIMIT_MAX + ' 的整数（0 = 不限）' }
+  )
+  if (!totalLimitRes.ok) return fail(totalLimitRes.msg)
+
+  const perLimitRes = normalizeInt(
+    hasField(p, 'perUserLimit') ? p.perUserLimit : (base.perUserLimit === undefined ? 1 : base.perUserLimit),
+    { min: 0, max: COUPON_PER_USER_MAX, msg: '每人限用必须是 0 ~ ' + COUPON_PER_USER_MAX + ' 的整数（0 = 不限）' }
+  )
+  if (!perLimitRes.ok) return fail(perLimitRes.msg)
+  // 新客券的每人上限强制为 1：**存 1**，而不是"存店主填的 5、但实际只按 1 算" ——
+  // 否则店主在编辑页看到 5，会以为能发 5 次（与 effectivePerUserLimitOf 同一口径）
+  const perUserLimit = typeRaw === COUPON_TYPE_NEW ? 1 : perLimitRes.value
+
+  const sortRes = normalizeInt(
+    hasField(p, 'sort') ? p.sort : (base.sort === undefined ? 10 : base.sort),
+    { min: 0, max: COUPON_SORT_MAX, optional: true, msg: '排序必须是 0 ~ ' + COUPON_SORT_MAX + ' 的整数' }
+  )
+  if (!sortRes.ok) return fail(sortRes.msg)
+
+  const enabledRaw = hasField(p, 'enabled') ? p.enabled : (creating ? true : base.enabled !== false)
+  if (typeof enabledRaw !== 'boolean') return fail('启用状态不正确')
+
+  const doc = {
+    name: nameRes.value,
+    type: typeRaw,
+    threshold: threshold,
+    amount: amountRes.value,
+    startTime: startTime,
+    endTime: endTime,
+    totalLimit: totalLimitRes.value,
+    perUserLimit: perUserLimit,
+    enabled: enabledRaw,
+    sort: sortRes.value === undefined ? 10 : sortRes.value,
+    updBy: ctx.openid,
+    updTime: now
+  }
+
+  let saved
+  if (creating) {
+    doc.usedCount = 0
+    doc.createBy = ctx.openid
+    doc.createTime = now
+    let added = null
+    try {
+      added = await ctx.db.add('coupon', doc)
+    } catch (e) {
+      console.error('[coupon] 新建券失败（检查 coupon 集合是否已建）：' + (e && e.message ? e.message : e))
+      return fail('保存失败：请先在云开发控制台新建 coupon 集合后重试')
+    }
+    saved = Object.assign({}, doc, { _id: (added && added._id) || doc._id })
+  } else {
+    // usedCount 是服务端计数器：编辑时不写它（云库 update 只覆盖传入字段）
+    await ctx.db.update('coupon', existing._id, doc)
+    saved = Object.assign({}, existing, doc)
+    saved._id = existing._id
+  }
+
+  return ok({ id: saved._id, created: creating, coupon: couponAdminView(saved, now) })
+}
+
+// ----- 下单时的原子占券（并发不超发 / 不突破每人限用）-----
+
+/**
+ * 抢占一次券使用名额：先总量、再每人，任一失败都会把已占的次数还回去。
+ * @returns {Promise<{ok:boolean, msg?:string}>}
+ */
+async function claimCouponUsage(ctx, coupon, openid) {
+  const totalLimit = Number(coupon.totalLimit) || 0
+  // ① 总使用上限：inc 后必须 ≤ totalLimit（条件在数据库端判断，不先读后判）
+  const totalRes = await ctx.db.incField(
+    'coupon',
+    { _id: coupon._id },
+    'usedCount',
+    1,
+    totalLimit > 0 ? { max: totalLimit } : {}
+  )
+  if (totalLimit > 0 && (!totalRes || totalRes.updated <= 0)) {
+    return { ok: false, msg: '这张优惠券已经被抢完了' }
+  }
+
+  // ② 每人上限：先确保计数行存在，再条件自增
+  const row = await ensureCouponUserRow(ctx, openid, coupon._id)
+  if (!row) {
+    await ctx.db.incField('coupon', { _id: coupon._id }, 'usedCount', -1, { min: 0 })
+    return { ok: false, msg: '用券记录创建失败，请稍后重试' }
+  }
+  const perLimit = effectivePerUserLimitOf(coupon)
+  const userRes = await ctx.db.incField(
+    'coupon_user',
+    { _id: row._id, _openid: openid },
+    'usedCount',
+    1,
+    perLimit > 0 ? { max: perLimit } : {}
+  )
+  if (perLimit > 0 && (!userRes || userRes.updated <= 0)) {
+    // 没抢到每人名额 → 把刚占的总次数还回去（不能白吃一次）
+    await ctx.db.incField('coupon', { _id: coupon._id }, 'usedCount', -1, { min: 0 })
+    return {
+      ok: false,
+      msg: perLimit === 1 ? '这张券您已经用过了' : '这张券每人限用 ' + perLimit + ' 次'
+    }
+  }
+  return { ok: true }
+}
+
+/** 回滚一次券使用名额（落单失败时用；失败也不影响主流程，只记日志） */
+async function releaseCouponUsage(ctx, coupon, openid) {
+  try {
+    await ctx.db.incField('coupon', { _id: coupon._id }, 'usedCount', -1, { min: 0 })
+    const row = await ctx.db.findOne('coupon_user', { _openid: openid, couponId: String(coupon._id) })
+    if (row) {
+      await ctx.db.incField('coupon_user', { _id: row._id, _openid: openid }, 'usedCount', -1, { min: 0 })
+    }
+  } catch (e) {
+    console.error('[coupon] 回滚用券次数失败：' + (e && e.message ? e.message : e))
+  }
 }
 
 // ===========================================================================
@@ -1856,6 +2459,10 @@ function orderCreateOk(o, duplicated) {
     goodsAmount: o.goodsAmount,
     packingFee: o.packingFee || 0,
     freight: o.freight || 0,
+    // 阶段 11：优惠券抵扣（0 = 本单没用券）
+    couponId: o.couponId || '',
+    couponName: o.couponName || '',
+    couponAmount: Number(o.couponAmount) || 0,
     freightText: (q && q.freightText) || '免配送费',
     distanceKm: q ? q.distanceKm : null,
     status: o.status,
@@ -1899,6 +2506,18 @@ async function orderCreate(payload, ctx) {
     if (existed) return orderCreateOk(existed, true)
   } else {
     console.warn('[orderCreate] 请求未带幂等键 clientOrderToken（弱网重试可能重复下单）openid=' + ctx.openid)
+  }
+  /**
+   * 幂等重放探测（阶段 11 补强）。
+   * 为什么不能只在函数开头查一次：带券下单时，**并发**的第二个请求可能先通过开头的
+   * 查重、接着在"券已被用掉/已被抢完"的校验处失败 —— 但此时第一笔单其实已经建好。
+   * 顾客（或弱网重试）应当拿到那一张单，而不是一句"券用过了"。
+   * 因此券相关的每一条失败分支都先探测一次"同一 token 是否已有订单"。
+   */
+  const idempotentReplay = async () => {
+    if (!clientOrderToken) return null
+    const existed = await ctx.db.findOne('order', { _openid: ctx.openid, clientOrderToken })
+    return existed ? orderCreateOk(existed, true) : null
   }
 
   let goodsJson = []
@@ -2021,6 +2640,38 @@ async function orderCreate(payload, ctx) {
 
   amount = Math.round(amount * 100) / 100
 
+  // ===== 阶段 11：优惠券校验（优惠金额的唯一出处）=====
+  // 前端传来的 couponId 只是"想用哪张券"，能不能用、能减多少都以这里为准。
+  // 校验顺序：参数 → 券存在 → 顾客资格（有效期/停用/新客/每人限用/总量）→ 金额门槛。
+  const couponIdRes = parseCouponId(payload && payload.couponId)
+  if (!couponIdRes.ok) return fail(couponIdRes.msg)
+  let couponDoc = null
+  let couponDiscount = 0
+  if (couponIdRes.id) {
+    try {
+      couponDoc = await ctx.db.get('coupon', couponIdRes.id)
+    } catch (e) {
+      console.error('[coupon] 下单时读取券失败：' + (e && e.message ? e.message : e))
+      return fail('优惠券暂不可用，请重新选择')
+    }
+    if (!couponDoc) return fail('优惠券不存在，请重新选择')
+    const elig = await couponUserEligibility(ctx, couponDoc, ctx.openid, Date.now())
+    if (!elig.ok) {
+      // 并发重试时这单可能已经建好（见 idempotentReplay 注释）→ 返回那一单
+      const replayed = await idempotentReplay()
+      if (replayed) return replayed
+      return fail(elig.reason)
+    }
+    // 门槛按**商品金额**判断（不含打包费/运费），与 couponUsableForCart 同口径
+    if (String(couponDoc.type) === COUPON_TYPE_THRESHOLD &&
+      amount < (Number(couponDoc.threshold) || 0)) {
+      return fail('订单金额未满 ¥' + moneyText(couponDoc.threshold) + '，不能使用这张优惠券')
+    }
+    // 优惠不超过商品金额：amountReal 绝不会因优惠变成负数
+    couponDiscount = Math.round(Math.min(Number(couponDoc.amount) || 0, amount) * 100) / 100
+    if (couponDiscount <= 0) return fail('该优惠券暂不可用')
+  }
+
   // ===== 2026-10-14 审查修复：期望时间的**服务端**权威校验 =====
   // 背景：`checkAdvanceTime`（营业时间 + 蛋糕提前 3 小时）此前只被客户端
   //   （pages/select-time 与结算页）调用，云函数里一行都没有 ——
@@ -2098,7 +2749,23 @@ async function orderCreate(payload, ctx) {
   packingFeeTotal = Math.round(packingFeeTotal * 100) / 100
 
   // 阶段 9：应付 = 商品金额（按配送方式算） + 打包费 + 配送费
-  const totalAmount = Math.round((amount + packingFeeTotal + freight) * 100) / 100
+  // 阶段 11：再用优惠券抵扣（只抵商品金额；Math.max(0, …) 保证不会出现负实付）
+  const payableGoods = Math.max(0, Math.round((amount - couponDiscount) * 100) / 100)
+  const totalAmount = Math.round((payableGoods + packingFeeTotal + freight) * 100) / 100
+
+  // ===== 阶段 11：先原子占券，再生成订单号/落单 =====
+  // 放在所有校验（含能否配送、期望时间）之后：被拒绝的请求不该消耗顾客的券。
+  // 落单失败会在下面回滚（releaseCouponUsage），不会白吃一次使用次数。
+  let couponClaimed = false
+  if (couponDoc) {
+    const claim = await claimCouponUsage(ctx, couponDoc, ctx.openid)
+    if (!claim.ok) {
+      const replayed = await idempotentReplay()
+      if (replayed) return replayed
+      return fail(claim.msg)
+    }
+    couponClaimed = true
+  }
 
   // 2026-10-09：库存概念整体删除。
   // 删除内容：原先在这里对每个商品做「原子条件扣减 stores + 失败回滚」，
@@ -2111,7 +2778,11 @@ async function orderCreate(payload, ctx) {
   const orderNo = await generateUniqueOrderField(ctx, 'orderNumber', ORDER_NO_TRIES, (i) =>
     ORDER_NO_PREFIX + orderNoDatePart(now) + '-' + pad((randomInt(10000) + i * RETRY_STEP) % 10000, 4)
   )
-  if (!orderNo) return fail('订单号生成失败，请稍后重试')
+  if (!orderNo) {
+    // 订单号都没生成出来，这单不会落库 → 券次数要还回去
+    if (couponClaimed) await releaseCouponUsage(ctx, couponDoc, ctx.openid)
+    return fail('订单号生成失败，请稍后重试')
+  }
 
   // 取餐码 = 订单号最后 4 位（自提叫号用，例 8342）
   const pickupCode = pickupCodeOf(orderNo)
@@ -2128,6 +2799,13 @@ async function orderCreate(payload, ctx) {
     // 阶段 9：打包费合计（元）。没配 packingFee 时为 0
     packingFee: packingFeeTotal,
     freight: freight,
+    // 阶段 11：优惠券快照（券面 + 实际抵扣额）。
+    // 取消订单/超时未支付**不退券**（本期明确取舍，结算页有文案说明）：
+    // 因此 usedCount 记的是"已用次数"，不随订单取消回退。
+    couponId: couponDoc ? couponDoc._id : '',
+    couponName: couponDoc ? couponDoc.name : '',
+    couponType: couponDoc ? couponDoc.type : '',
+    couponAmount: couponDiscount,
     deliveryMode: deliveryMode,
     // 收货地址快照（仅外送订单）
     address: deliveryMode === 'delivery' ? (payload.address || null) : null,
@@ -2162,18 +2840,32 @@ async function orderCreate(payload, ctx) {
   try {
     res = await ctx.db.add('order', order)
   } catch (e) {
-    if (!clientOrderToken) throw e
+    if (!clientOrderToken) {
+      // 落单失败（非幂等场景）→ 把刚占的券次数还回去
+      if (couponClaimed) await releaseCouponUsage(ctx, couponDoc, ctx.openid)
+      throw e
+    }
     // ① 并发重复提交：另一个请求已用同一 token 建好单 → 返回那一单（这才是幂等该有的结果）
     const dup = await ctx.db.findOne('order', { _openid: ctx.openid, clientOrderToken })
-    if (dup) return orderCreateOk(dup, true)
-    // ② 该环境不允许自定义 _id（见 stableDocId 注释）→ 去掉 _id 重试一次。
+    if (dup) {
+      // 这张单的用券次数由先成功的那个请求承担，本请求刚占的那次必须还回去
+      if (couponClaimed) await releaseCouponUsage(ctx, couponDoc, ctx.openid)
+      return orderCreateOk(dup, true)
+    }
+    // ② 该环境不允许自定义 _id（见 stableDocId 注释）→ 去掉 _id 再试一次。
     //    宁可退化为"并发下仍可能重复"，也不能让顾客完全下不了单；
     //    此时仍有上面的 token 查重兜底（顺序重试依然安全）。
     if (order._id) {
       console.warn('[orderCreate] 自定义 _id 写入失败，降级为默认 _id 重试：' + (e && e.message))
       delete order._id
-      res = await ctx.db.add('order', order)
+      try {
+        res = await ctx.db.add('order', order)
+      } catch (e2) {
+        if (couponClaimed) await releaseCouponUsage(ctx, couponDoc, ctx.openid)
+        throw e2
+      }
     } else {
+      if (couponClaimed) await releaseCouponUsage(ctx, couponDoc, ctx.openid)
       throw e
     }
   }
@@ -2235,6 +2927,9 @@ function adminOrderView(o) {
     amountReal: o.amountReal,
     goodsAmount: o.goodsAmount,
     packingFee: o.packingFee || 0,
+    // 阶段 11：本单用了什么券、抵了多少（店主对账用；0 = 没用券）
+    couponName: o.couponName || '',
+    couponAmount: Number(o.couponAmount) || 0,
     freight: o.freight,
     goodsNumber: o.goodsNumber,
     // ===== 接单要用的联系信息 =====
@@ -2365,6 +3060,9 @@ async function orderList(payload, ctx) {
       statusStr: statusTextOf(o.status),
       amountReal: o.amountReal,
       goodsNumber: o.goodsNumber,
+      // 阶段 11：优惠券抵扣（列表页可显示「券 -¥10」；0 = 没用券）
+      couponAmount: Number(o.couponAmount) || 0,
+      couponName: o.couponName || '',
       // 2026-10-12：待支付订单的自动取消时刻（时间戳）。
       // 由服务端下发、前端只做倒计时展示，避免把 15 分钟这个数字硬编码到页面上。
       autoCancelAt: o.status === ORDER_STATUS.UNPAID && Number(o.dateAdd) > 0
@@ -2409,6 +3107,11 @@ async function orderDetail(payload, ctx) {
       // 而运费那行取的是 extJson 里**客户端下单时写的快照**，行项与总额对不上。
       goodsAmount: o.goodsAmount,
       packingFee: o.packingFee || 0,
+      // 阶段 11：优惠券（订单详情页显示"优惠券 -¥X"一行；0 = 没用券）
+      couponId: o.couponId || '',
+      couponName: o.couponName || '',
+      couponType: o.couponType || '',
+      couponAmount: Number(o.couponAmount) || 0,
       freight: o.freight,
       deliveryQuote: o.deliveryQuote || null,
       // 收货地址快照（外送单才有；自提单为 null）
@@ -2922,6 +3625,12 @@ const handlers = {
   orderFinish,
   // 店主端运费补录（「运费待确认」订单的补款入口，阶段 10）
   orderFreightConfirm,
+  // 优惠券（阶段 11）：顾客端只读两个（券列表 / 结算页可用券+预估优惠），
+  // 店主端两个写读接口（一律 requireAdmin + 入参校验 + usedCount 服务端维护）
+  couponList,
+  couponUsableForCart,
+  couponAdminList,
+  couponUpsert,
   // 支付统一下单（当前返回"未接入"，不伪造支付成功）
   wxpay
 }
@@ -2990,5 +3699,13 @@ module.exports = {
   cancelExpiredOrders,
   // 2026-10-12：读取兜底取消与超时时间读取器，同样不放进路由表，仅供测试/内部调用
   expireUnpaidForViewer,
-  orderTimeoutMs
+  orderTimeoutMs,
+  // 阶段 11：优惠券纯函数/校验器（导出便于测试直接断言边界，不必绕过 action 层）
+  parseCouponId,
+  normalizeCouponTime,
+  couponStatusOf,
+  couponRuleText,
+  couponViewOf,
+  effectivePerUserLimitOf,
+  COUPON_TYPES: { NEW: COUPON_TYPE_NEW, THRESHOLD: COUPON_TYPE_THRESHOLD }
 }

@@ -18,7 +18,9 @@
     "pages/admin/orders/index",
     "pages/admin/goods/index",
     "pages/admin/goods-edit/index",
-    "pages/admin/delivery/index"
+    "pages/admin/delivery/index",
+    "pages/admin/coupons/index",
+    "pages/admin/coupons-edit/index"
   ],
   "requiredPrivateInfos": [
     "getLocation",

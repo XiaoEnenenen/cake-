@@ -1,0 +1,131 @@
+/* 店主端 · 新建/编辑优惠券（阶段 11） */
+.ce-page {
+  min-height: 100vh;
+  padding-bottom: 160rpx;
+  box-sizing: border-box;
+}
+
+.ce-guard {
+  margin-top: 200rpx;
+  text-align: center;
+}
+.ce-guard-title {
+  font-size: 34rpx;
+  font-weight: 600;
+  color: #1f1f1f;
+}
+.ce-guard-sub {
+  margin-top: 16rpx;
+  font-size: 26rpx;
+  color: #8a8a8a;
+}
+
+.ce-hint {
+  padding: 120rpx 0;
+  text-align: center;
+  font-size: 28rpx;
+  color: #8a8a8a;
+}
+.ce-error {
+  margin: 40rpx 24rpx;
+  padding: 60rpx 0;
+  text-align: center;
+  background-color: #ffffff;
+  border-radius: 16rpx;
+}
+.ce-error-text {
+  font-size: 28rpx;
+  color: #8a8a8a;
+}
+.ce-retry {
+  display: inline-block;
+  margin-top: 24rpx;
+  padding: 12rpx 40rpx;
+  font-size: 28rpx;
+  background-color: #ffd100;
+  border-radius: 100rpx;
+  color: #1f1f1f;
+}
+
+.ce-card {
+  margin: 0 24rpx 20rpx;
+  padding: 6rpx 24rpx 16rpx;
+  background-color: #ffffff;
+  border-radius: 16rpx;
+}
+.ce-card-title {
+  padding: 22rpx 0 10rpx;
+  font-size: 28rpx;
+  font-weight: 600;
+  color: #1f1f1f;
+}
+
+.ce-row {
+  display: flex;
+  align-items: center;
+  min-height: 92rpx;
+  border-bottom: 1rpx solid #f2f2f2;
+}
+.ce-label {
+  width: 220rpx;
+  flex-shrink: 0;
+  font-size: 28rpx;
+  color: #3c3c3c;
+}
+.ce-input {
+  flex: 1;
+  font-size: 28rpx;
+  color: #1f1f1f;
+}
+.ce-picker {
+  font-size: 28rpx;
+  color: #1f1f1f;
+  padding: 10rpx 0;
+}
+.ce-time-group {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.ce-quick {
+  display: flex;
+  padding-top: 16rpx;
+}
+.ce-quick-btn {
+  margin-right: 16rpx;
+  padding: 10rpx 26rpx;
+  font-size: 24rpx;
+  color: #3c3c3c;
+  border: 1rpx solid #d9d9d9;
+  border-radius: 100rpx;
+}
+
+.ce-hint-text {
+  padding: 10rpx 0 6rpx;
+  font-size: 22rpx;
+  line-height: 34rpx;
+  color: #8a8a8a;
+}
+
+.ce-bottom-holder {
+  height: 140rpx;
+}
+.ce-bottom-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 110rpx;
+  line-height: 110rpx;
+  text-align: center;
+  font-size: 30rpx;
+  font-weight: 600;
+  color: #1f1f1f;
+  background-color: #ffd100;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.ce-bottom-disabled {
+  opacity: 0.6;
+}

@@ -330,6 +330,10 @@ function viewOf(o) {
     goodsAmountText: '¥' + (Number(o.goodsAmount) || 0),
     packingFeeText: '¥' + (Number(o.packingFee) || 0),
     freightText: o.freight > 0 ? '¥' + o.freight : ((quote && quote.freightText) || '免配送费'),
+    // 阶段 11：本单用了什么券、抵了多少（对账时一眼能看到；0 = 没用券）
+    couponText: Number(o.couponAmount) > 0
+      ? '券 ' + (o.couponName || '') + ' -¥' + (Number(o.couponAmount) || 0)
+      : '',
     needFreight: needFreight,
     canFinish: Number(o.status) === 1,
     // 取餐码：自提单最显眼（叫号用）；外送单显示"外送"

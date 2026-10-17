@@ -383,3 +383,138 @@ page {
 .pay-byn-disabled {
   opacity: 0.6;
 }
+
+/* ===== 阶段 11：优惠券 ===== */
+
+/* 券入口选中态：金额行用醒目的红（与底部合计同色，提示"已经减了钱"） */
+.coupon-on {
+  color: #ff4b33;
+  font-weight: 600;
+}
+
+/* 费用区的抵扣行 */
+.fee-coupon {
+  color: #ff4b33;
+}
+
+/* 选券弹层（van-popup 的 custom-class） */
+.coupon-pop {
+  border-radius: 24rpx 24rpx 0 0;
+  background-color: #f5f5f5;
+}
+
+.coupon-pop-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 32rpx 32rpx 20rpx;
+}
+
+.coupon-pop-title {
+  font-size: 32rpx;
+  font-weight: 600;
+  color: #1f1f1f;
+}
+
+.coupon-pop-close {
+  font-size: 26rpx;
+  color: #8a8a8a;
+  padding: 8rpx 0 8rpx 24rpx;
+}
+
+.coupon-pop-hint {
+  padding: 60rpx 0;
+  text-align: center;
+  font-size: 26rpx;
+  color: #8a8a8a;
+}
+
+.coupon-item {
+  display: flex;
+  align-items: center;
+  margin: 0 24rpx 16rpx;
+  padding: 24rpx;
+  background-color: #ffffff;
+  border-radius: 16rpx;
+}
+
+/* 不可用的券也列出来（说明差多少可用），但整体变淡、不可选 */
+.coupon-item-off {
+  opacity: 0.55;
+}
+
+.coupon-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.coupon-line1 {
+  display: flex;
+  align-items: baseline;
+}
+
+.coupon-amount {
+  margin-right: 12rpx;
+  font-size: 38rpx;
+  font-weight: 600;
+  color: #ff4b33;
+}
+
+.coupon-name {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: #1f1f1f;
+}
+
+.coupon-rule {
+  margin-top: 6rpx;
+  font-size: 24rpx;
+  color: #3c3c3c;
+}
+
+.coupon-valid {
+  margin-top: 4rpx;
+  font-size: 22rpx;
+  color: #b3b3b3;
+}
+
+.coupon-reason {
+  margin-top: 6rpx;
+  font-size: 22rpx;
+  color: #d46b08;
+}
+
+.coupon-discount {
+  margin-top: 6rpx;
+  font-size: 22rpx;
+  color: #ff4b33;
+}
+
+/* 单选圈：选中的圈里有一个实心点 */
+.coupon-radio {
+  width: 36rpx;
+  height: 36rpx;
+  margin-left: 20rpx;
+  flex-shrink: 0;
+  border: 2rpx solid #d9d9d9;
+  border-radius: 50%;
+  box-sizing: border-box;
+}
+
+.coupon-radio-on {
+  border-color: #ff4b33;
+  background-color: #ff4b33;
+  box-shadow: inset 0 0 0 6rpx #ffffff;
+}
+
+.coupon-pop-foot {
+  padding: 8rpx 32rpx 0;
+  font-size: 22rpx;
+  color: #b3b3b3;
+  line-height: 34rpx;
+}
+
+.coupon-pop-safe {
+  height: env(safe-area-inset-bottom);
+  padding-bottom: 24rpx;
+}

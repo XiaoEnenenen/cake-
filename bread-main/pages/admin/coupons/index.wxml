@@ -1,0 +1,60 @@
+<!-- 店主端 · 优惠券 / 满减（阶段 11）：自己建券、随时停用。普通顾客看不到入口 -->
+<view class="cp-page">
+  <view wx:if="{{ !isAdminUser }}" class="cp-guard">
+    <view class="cp-guard-title">无店主权限</view>
+    <view class="cp-guard-sub">该入口仅店主本人可见可用</view>
+  </view>
+
+  <block wx:else>
+    <view class="cp-head">
+      <view class="cp-head-title">优惠券 / 满减</view>
+      <view class="cp-head-sub">顾客结算时自动看到可用的券；每单限用 1 张</view>
+    </view>
+
+    <view wx:if="{{ loading }}" class="cp-hint">正在读取优惠券…</view>
+
+    <view wx:elif="{{ loadError }}" class="cp-error">
+      <view class="cp-error-text">优惠券读取失败，请检查网络后重试</view>
+      <view class="cp-retry" bindtap="retryLoad">点击重试</view>
+    </view>
+
+    <block wx:else>
+      <view class="cp-stats">共 {{ total }} 张 · {{ statsText }}</view>
+
+      <view wx:if="{{ couponList.length == 0 }}" class="cp-empty">
+        <view>还没有优惠券</view>
+        <view class="cp-empty-sub">点下面「新建优惠券」，可以设"新客立减"或"满 X 减 Y"</view>
+      </view>
+
+      <view
+        wx:for="{{ couponList }}"
+        wx:key="id"
+        class="cp-item {{ item.enabled ? '' : 'cp-item-off' }}"
+        data-id="{{ item.id }}"
+        bindtap="goEdit"
+      >
+        <view class="cp-item-left">
+          <view class="cp-amount"><text class="cp-yen">¥</text>{{ item.amount }}</view>
+          <view class="cp-rule">{{ item.ruleText }}</view>
+        </view>
+        <view class="cp-item-body">
+          <view class="cp-name">{{ item.name }}</view>
+          <view class="cp-sub">{{ item.validText }}</view>
+          <view class="cp-sub">
+            <text class="cp-status cp-status-{{ item.statusKey }}">{{ item.statusText }}</text>
+            · {{ item.usageText }}
+          </view>
+          <view class="cp-sub">每人上限 {{ item.effectivePerUserLimit > 0 ? (item.effectivePerUserLimit + ' 次') : '不限' }}</view>
+        </view>
+        <view
+          class="cp-toggle {{ item.enabled ? 'cp-toggle-off' : 'cp-toggle-on' }}"
+          data-index="{{ index }}"
+          catchtap="toggleEnabled"
+        >{{ togglingId == item.id ? '处理中' : (item.enabled ? '停用' : '启用') }}</view>
+      </view>
+
+      <view class="cp-bottom-holder"></view>
+      <view class="cp-bottom-bar" bindtap="goCreate">＋ 新建优惠券</view>
+    </block>
+  </block>
+</view>

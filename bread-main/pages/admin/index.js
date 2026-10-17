@@ -35,9 +35,7 @@ Page({
     offSaleCount: 0, // 已下架商品
     // 仅开发版 / 体验版显示：把原始 openid 复制出来填白名单（正式版不显示）
     myOpenid: '',
-    isDevEnv: false,
-    // 优惠券是阶段 11 的功能：这里如实说明"还没上线"，不做半截功能
-    couponsReady: false
+    isDevEnv: false
   },
 
   async onLoad() {
@@ -110,8 +108,8 @@ Page({
   },
 
   goCoupons() {
-    // 阶段 11 才做：这里明确说明，不放一个点了没反应的按钮
-    wx.showToast({ title: '优惠券功能还没上线（下一阶段）', icon: 'none' })
+    // 阶段 11：优惠券已上线，直接进券管理（列表 + 新建/编辑/停用）
+    wx.navigateTo({ url: '/pages/admin/coupons/index' })
   },
 
   /** 复制原始 openid（仅开发版 / 体验版可见；填进 shop-config.js 的 adminOpenids） */

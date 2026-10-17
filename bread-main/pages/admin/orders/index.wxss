@@ -164,6 +164,10 @@
 .ao-money-item {
   margin-right: 22rpx;
 }
+/* 阶段 11：优惠券抵扣用红字，与"实付"呼应 */
+.ao-money-coupon {
+  color: #ff4b33;
+}
 .ao-money-total {
   margin-left: auto;
   font-size: 28rpx;

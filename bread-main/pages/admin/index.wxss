@@ -116,9 +116,6 @@
 .entry-item:last-child {
   border-bottom: none;
 }
-.entry-item-pending .entry-title {
-  color: #8a8a8a;
-}
 .entry-icon {
   width: 72rpx;
   height: 72rpx;
