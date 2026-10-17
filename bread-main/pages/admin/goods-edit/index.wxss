@@ -233,18 +233,24 @@
   color: #3c3c3c;
 }
 
-/* 底部保存栏 */
+/* 底部保存栏
+   ⚠️ 必须给 z-index：真机（iOS）上 input 是原生组件（同层渲染），
+   页面滚动时输入框会盖在 position: fixed 的底部栏上方（店主 2026-10-17 截图反馈）。
+   给固定栏一个正 z-index 后，输入框会被正常盖住。
+   占位高度要含安全区（iPhone 底部横条），否则最后一行仍会被按钮压住。 */
 .age-bottom-holder {
-  height: 160rpx;
+  height: calc(160rpx + env(safe-area-inset-bottom));
 }
 .age-bottom-bar {
   position: fixed;
   left: 0;
   right: 0;
   bottom: 0;
+  z-index: 10;
   padding: 16rpx 24rpx;
   padding-bottom: calc(16rpx + env(safe-area-inset-bottom));
   background-color: #ffffff;
+  border-top: 1rpx solid #f2f2f2;
   box-shadow: 0 -4rpx 16rpx rgba(0, 0, 0, 0.06);
 }
 .age-save {

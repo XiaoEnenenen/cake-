@@ -122,11 +122,14 @@
   margin-left: 20rpx;
 }
 
-/* ===== 底部按钮 ===== */
+/* ===== 底部按钮 =====
+   ⚠️ z-index 不能省：真机上 input 是原生组件，页面滚动时会盖在 fixed 元素上方
+   （地址编辑页有姓名/电话/详细地址三个输入框）。占位高度要含安全区。 */
 .addr-bottom {
   position: fixed;
   left: 0;
   bottom: 0;
+  z-index: 10;
   width: 750rpx;
   padding: 20rpx 30rpx calc(20rpx + env(safe-area-inset-bottom));
   box-sizing: border-box;
@@ -150,9 +153,9 @@
   color: #b3b3b3;
 }
 
-/* 列表底部留白，避免被固定按钮遮挡 */
+/* 列表底部留白，避免被固定按钮遮挡（含 iPhone 安全区） */
 .addr-list-bottom {
-  height: 180rpx;
+  height: calc(160rpx + env(safe-area-inset-bottom));
 }
 
 /* ===== 表单（编辑页）===== */

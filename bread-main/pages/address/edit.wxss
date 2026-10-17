@@ -8,10 +8,10 @@
   line-height: 32rpx;
 }
 
-/* 2026-10-09 新增：底部固定「保存」按钮的占位高度。
-   原表单最后一行的「标签」卡片正好落在固定按钮下面（截图反馈被遮挡），
-   删除标签后由本占位保证「设为默认地址」行完整可见。
-   高度 = 按钮 88rpx + 上下内边距 40rpx + 安全区，取 180rpx。 */
+/* 底部固定「保存」按钮的占位高度。
+   高度 = 按钮 88rpx + 上下内边距 40rpx + iPhone 安全区（约 68rpx）。
+   2026-10-17 修正：原来写死 180rpx，在有安全区的机型上最后一行仍会被按钮压住；
+   改成 calc(160rpx + env(safe-area-inset-bottom))，与底部栏的实际高度对得上。 */
 .edit-bottom-holder {
-  height: 180rpx;
+  height: calc(160rpx + env(safe-area-inset-bottom));
 }

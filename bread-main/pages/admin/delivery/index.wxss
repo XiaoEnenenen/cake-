@@ -175,18 +175,23 @@
   color: #3c3c3c;
 }
 
-/* 底部保存 */
+/* 底部保存栏
+   ⚠️ 必须给 z-index：真机上 input（原生组件）滚动时会盖在 fixed 底部栏上方
+   （店主 2026-10-17 截图反馈「按钮与内容重合」——其实是输入框文字盖在按钮上）。
+   占位高度含安全区，避免最后一行被按钮压住。 */
 .ad-bottom-holder {
-  height: 160rpx;
+  height: calc(160rpx + env(safe-area-inset-bottom));
 }
 .ad-bottom-bar {
   position: fixed;
   left: 0;
   right: 0;
   bottom: 0;
+  z-index: 10;
   padding: 16rpx 24rpx;
   padding-bottom: calc(16rpx + env(safe-area-inset-bottom));
   background-color: #ffffff;
+  border-top: 1rpx solid #f2f2f2;
   box-shadow: 0 -4rpx 16rpx rgba(0, 0, 0, 0.06);
 }
 .ad-save {

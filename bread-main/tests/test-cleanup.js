@@ -443,6 +443,40 @@ function main() {
     relReqFiles.some((f) => /require\(\s*['"]\./.test(src(f))))
 
   // =========================================================================
+  console.log('\n=== 7.2) 固定底部栏必须 z-index（真机 UI 反馈：输入框文字盖住按钮）===')
+  // =========================================================================
+  // 背景（2026-10-17 真机反馈）：商品编辑 / 配送设置两页，页面滚动时
+  //   `input`（原生组件）里的文字会盖在 `position: fixed` 的底部保存按钮上方，
+  //   店主看到的是"按钮和下面的内容重合了"。
+  //   修法：给固定底部栏一个正的 z-index（同层渲染下就能正常盖住输入框），
+  //   占位高度同时要含 env(safe-area-inset-bottom)，否则 iPhone 最后一行仍可能被按钮压住。
+  const fixedBars = [
+    ['pages/admin/goods-edit/index.wxss', 'age-bottom-bar', 'age-bottom-holder'],
+    ['pages/admin/delivery/index.wxss', 'ad-bottom-bar', 'ad-bottom-holder'],
+    ['pages/admin/goods/index.wxss', 'ag-bottom-bar', 'ag-bottom-holder'],
+    ['pages/admin/coupons/index.wxss', 'cp-bottom-bar', 'cp-bottom-holder'],
+    ['pages/admin/coupons-edit/index.wxss', 'ce-bottom-bar', 'ce-bottom-holder'],
+    ['pages/address/common.wxss', 'addr-bottom', 'addr-list-bottom'],
+    ['pages/select-time/index.wxss', 'st-bottom', null]
+  ]
+  const barProblems = []
+  for (const [file, barSel, holderSel] of fixedBars) {
+    const css = code(src(file))
+    const bar = new RegExp('\\.' + barSel + '\\s*\\{([^}]*)\\}').exec(css)
+    if (!bar || !/z-index\s*:\s*\d+/.test(bar[1])) {
+      barProblems.push(file + ' → .' + barSel + ' 缺少 z-index')
+    }
+    if (holderSel) {
+      const holder = new RegExp('\\.' + holderSel + '\\s*\\{([^}]*)\\}').exec(css)
+      if (!holder || !/env\(safe-area-inset-bottom\)/.test(holder[1])) {
+        barProblems.push(file + ' → .' + holderSel + ' 占位高度未含安全区')
+      }
+    }
+  }
+  check('★ ' + fixedBars.length + ' 个固定底部栏都有 z-index、占位高度都含安全区',
+    barProblems.length === 0, barProblems)
+
+  // =========================================================================
   console.log('\n=== 8) 云端导入数据：.json 与 .jsonl 必须一致 ===')
   // =========================================================================
   // 背景：cloud-data/ 下的种子数据同时放 `.jsonl`（原始/生成格式）与 `.json`（同内容副本）——

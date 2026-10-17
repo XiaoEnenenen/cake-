@@ -176,13 +176,15 @@
 }
 
 .ag-bottom-holder {
-  height: 120rpx;
+  height: calc(140rpx + env(safe-area-inset-bottom));
 }
 .ag-bottom-bar {
   position: fixed;
   left: 0;
   right: 0;
   bottom: 0;
+  /* z-index：真机上 input 等原生组件会盖在 fixed 元素上方，底部栏必须抬高层级 */
+  z-index: 10;
   height: 110rpx;
   line-height: 110rpx;
   text-align: center;

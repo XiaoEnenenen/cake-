@@ -110,13 +110,16 @@
 }
 
 .ce-bottom-holder {
-  height: 140rpx;
+  height: calc(160rpx + env(safe-area-inset-bottom));
 }
 .ce-bottom-bar {
   position: fixed;
   left: 0;
   right: 0;
   bottom: 0;
+  /* z-index：真机上 input 等原生组件会盖在 fixed 元素上方（输入框文字穿透到底部按钮），
+     底部保存栏必须抬高层级；占位高度含安全区，避免最后一行被压住 */
+  z-index: 10;
   height: 110rpx;
   line-height: 110rpx;
   text-align: center;
@@ -124,6 +127,7 @@
   font-weight: 600;
   color: #1f1f1f;
   background-color: #ffd100;
+  border-top: 1rpx solid #f2f2f2;
   padding-bottom: env(safe-area-inset-bottom);
 }
 .ce-bottom-disabled {

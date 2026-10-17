@@ -79,6 +79,8 @@
   position: fixed;
   left: 0;
   bottom: 0;
+  /* z-index：真机上原生组件（input 等）会盖在 fixed 元素上方，底部操作栏必须抬高层级 */
+  z-index: 10;
   width: 750rpx;
   padding: 20rpx 30rpx calc(20rpx + env(safe-area-inset-bottom));
   box-sizing: border-box;
