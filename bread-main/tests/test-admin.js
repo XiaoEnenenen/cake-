@@ -239,6 +239,38 @@ async function main() {
   SHOP_CFG.adminOpenids.push(ADMIN_OPENID)
 
   // =========================================================================
+  console.log('\n=== 1b) appConfig：只下发 isAdmin 布尔标记，不下发店主 openid 白名单 ===')
+  // =========================================================================
+  {
+    const db = createMockDb(seedData())
+    const adminCfg = await dispatch('appConfig', {}, asAdmin(db))
+    const adminRow = (adminCfg.data || []).filter((x) => x && x.key === 'isAdmin')[0]
+    check('★ 店主调 appConfig → isAdmin = 1',
+      adminCfg.code === 0 && adminRow && adminRow.value === '1', adminCfg.data)
+
+    const ordinaryCfg = await dispatch('appConfig', {}, { db, openid: 'user_ordinary' })
+    const ordinaryRow = (ordinaryCfg.data || []).filter((x) => x && x.key === 'isAdmin')[0]
+    check('★ 普通顾客调 appConfig → isAdmin = 0（同一接口按人计算）',
+      ordinaryCfg.code === 0 && ordinaryRow && ordinaryRow.value === '0', ordinaryCfg.data)
+
+    check('★ appConfig 不再下发 order_hx_uids（店主 openid 白名单已移除）',
+      !(adminCfg.data || []).some((x) => x && x.key === 'order_hx_uids') &&
+      !(ordinaryCfg.data || []).some((x) => x && x.key === 'order_hx_uids'),
+      adminCfg.data)
+    check('★ 店主 openid 不出现在任何返回体里（不泄露给顾客）',
+      JSON.stringify(adminCfg.data).indexOf(ADMIN_OPENID) < 0 &&
+      JSON.stringify(ordinaryCfg.data).indexOf(ADMIN_OPENID) < 0)
+
+    // 旧云库里可能还留着 order_hx_uids 记录：即使如此也不能下发
+    const legacyDb = createMockDb(Object.assign({}, seedData(), {
+      app_config: [{ _id: 'c_legacy', key: 'order_hx_uids', value: 'admin_openid_list_should_not_leak' }]
+    }))
+    const legacyCfg = await dispatch('appConfig', {}, asAdmin(legacyDb))
+    check('  app_config 集合里的旧 order_hx_uids 记录也不会被下发',
+      JSON.stringify(legacyCfg.data).indexOf('admin_openid_list_should_not_leak') < 0, legacyCfg.data)
+  }
+
+  // =========================================================================
   console.log('\n=== 2) goodsAdminList：含已下架商品 + 编辑页要的字段齐全 ===')
   // =========================================================================
   {
@@ -826,7 +858,7 @@ async function main() {
     const myJs = src('pages/my/index.js')
     const myWxml = src('pages/my/index.wxml')
     check('★「我的」页的店主中心入口受 isShopAdmin 判定控制',
-      /isAdminUser/.test(myWxml) && /isAdminByOpenid/.test(myJs))
+      /isAdminUser/.test(myWxml) && /isAdminUserSafe/.test(myJs))
     check('  入口跳转到 pages/admin/index', /pages\/admin\/index/.test(myJs))
     check('★ 原始 openid 只在开发版/体验版显示（正式版顾客看不到）',
       /isDevEnv && myOpenid/.test(myWxml))
@@ -835,13 +867,18 @@ async function main() {
     check('utils/admin.js 提供闸门与 openid 自查', (() => {
       const admin = require('../utils/admin')
       return typeof admin.guardShopAdminPage === 'function' &&
-        typeof admin.isAdminOpenid === 'function' &&
+        typeof admin.isAdminUser === 'function' &&
+        typeof admin.ensureAdminFlag === 'function' &&
         typeof admin.getMyOpenid === 'function'
     })())
-    check('★ isAdminOpenid 是纯本地判断（不调云函数）',
-      /function isAdminOpenid[\s\S]*?getStorageSync[\s\S]*?\n\}/.test(src('utils/admin.js')))
+    check('★ isAdminUser 是纯本地判断（不调云函数）',
+      /function isAdminUser[\s\S]*?getStorageSync[\s\S]*?\n\}/.test(src('utils/admin.js')))
+    check('★ 前端不再接收店主 openid 白名单（appConfig 只下发 isAdmin 布尔标记）',
+      !/order_hx_uids/.test(src('utils/admin.js')) &&
+      !/order_hx_uids/.test(src('cloudfunctions/api/handlers.js')) &&
+      /key: 'isAdmin'/.test(src('cloudfunctions/api/handlers.js')))
 
-    // ---- 白名单竞态：app.js 写 storage 与本页判断身份是并发的 ----
+    // ---- 店主标记竞态：app.js 写 storage 与本页判断身份是并发的 ----
     {
       const store = {}
       let fail = false
@@ -856,7 +893,7 @@ async function main() {
               userDetail: async () => ({ code: 0, data: { base: { id: 'o_boss' } } }),
               appConfig: async () => (fail
                 ? { code: 500, msg: '云函数调用失败' }
-                : { code: 0, data: [{ key: 'order_hx_uids', value: 'o_boss' }] })
+                : { code: 0, data: [{ key: 'isAdmin', value: '1' }] })
             }
           }
           if (/utils\/log$/.test(p) || /^\.\/log$/.test(p)) return QUIET_LOG
@@ -872,16 +909,16 @@ async function main() {
       sandbox.module.exports = sandbox.exports
       vm.runInNewContext(src('utils/admin.js'), vm.createContext(sandbox), { filename: 'utils/admin.js' })
       const A = sandbox.module.exports
-      check('★ 白名单还没写进 storage 时能自己补拉一次（否则店主首次进入看不到入口）',
-        A.isAdminOpenid('o_boss') === false &&
-        (await A.ensureWhitelist()) === true &&
-        store['order_hx_uids'] === 'o_boss' &&
-        A.isAdminOpenid('o_boss') === true, store)
-      check('isShopAdmin 也会在缺白名单时自愈', (await A.isShopAdmin()) === true)
-      delete store['order_hx_uids']
+      check('★ 店主标记还没写进 storage 时能自己补拉一次（否则店主首次进入看不到入口）',
+        A.isAdminUser() === false &&
+        (await A.ensureAdminFlag()) === true &&
+        store['isAdmin'] === '1' &&
+        A.isAdminUser() === true, store)
+      check('isShopAdmin 也会在缺标记时自愈', (await A.isShopAdmin()) === true)
+      delete store['isAdmin']
       fail = true
-      check('拉不到白名单时按非店主处理（fail-closed）',
-        (await A.ensureWhitelist()) === false && (await A.isShopAdmin()) === false)
+      check('拉不到店主标记时按非店主处理（fail-closed）',
+        (await A.ensureAdminFlag()) === false && (await A.isShopAdmin()) === false)
     }
   }
 
@@ -949,7 +986,8 @@ async function main() {
 
     const ADMIN_STUB = {
       isShopAdmin: async () => true,
-      isAdminOpenid: () => true,
+      isAdminUser: () => true,
+      ensureAdminFlag: async () => true,
       getMyOpenid: async () => 'o_test',
       guardShopAdminPage: async () => true
     }
@@ -1383,7 +1421,7 @@ async function main() {
       }
     }
 
-    // ---- 9.5 「我的」页：先补白名单再判断身份，否则店主首次进入看不到入口 ----
+    // ---- 9.5 「我的」页：先补店主标记再判断身份，否则店主首次进入看不到入口 ----
     {
       const order = []
       const api = {
@@ -1403,8 +1441,8 @@ async function main() {
             formatFull: () => ''
           },
           'utils/admin$': {
-            ensureWhitelist: async () => { order.push('ensureWhitelist'); return true },
-            isAdminOpenid: () => true,
+            ensureAdminFlag: async () => { order.push('ensureAdminFlag'); return true },
+            isAdminUser: () => true,
             isShopAdmin: async () => true
           },
           'utils/format$': FMT,
@@ -1414,8 +1452,8 @@ async function main() {
       await page.onShow()
       await new Promise((r) => setTimeout(r, 0))
       await new Promise((r) => setTimeout(r, 0))
-      check('★「我的」页先确保白名单到手、再判断店主身份',
-        order[0] === 'ensureWhitelist' && order.indexOf('userDetail') > 0, order)
+      check('★「我的」页先确保店主标记到手、再判断店主身份',
+        order[0] === 'ensureAdminFlag' && order.indexOf('userDetail') > 0, order)
       check('  于是店主能看到「店主中心」入口（isAdminUser = true）',
         page.data.isAdminUser === true, page.data)
       check('  顾客界面仍只显示不可反推的短编号', /^QH[0-9A-Z]{6}$/.test(page.data.userNo), page.data.userNo)    }

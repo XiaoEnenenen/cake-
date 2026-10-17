@@ -872,6 +872,94 @@ async function main() {
     check('重试后再次完成', page.data.loaded === true && page.data.loadError === false)
   }
 
+  // =========================================================================
+  // 2026-10-17 顾客端审查 backlog：失败不能静默
+  // =========================================================================
+  {
+    console.log('\n=== 6) 取消/删除订单失败、购物车改数量被拒 必须给提示 ===')
+
+    // ---- 取消订单失败：不能静默 ----
+    {
+      const api = makeApi({
+        orderClose: async () => ({ code: 400, msg: '订单状态不允许取消' })
+      })
+      const modals = []
+      const page = loadPage('pages/current-order/index.js', {
+        requires: {
+          'api-map$': api,
+          'utils/auth$': { checkHasLogined: async () => true, authorize: async () => ({}) },
+          'shop-config$': SHOP_STUB
+        },
+        wx: {
+          showModal(m) {
+            modals.push(m)
+            if (m && typeof m.success === 'function') m.success({ confirm: true })
+          }
+        }
+      })
+      page.cancelOrderTap({ currentTarget: { dataset: { id: 'o1' } } })
+      await flush()
+      check('★ 取消订单失败 → 明确提示原因（不是静默）',
+        page.__toasts.some((t) => /订单状态不允许取消|取消订单失败/.test(String(t))),
+        page.__toasts)
+    }
+
+    // ---- 删除订单失败：不能静默 ----
+    {
+      const api = makeApi({
+        orderDelete: async () => ({ code: 400, msg: '订单不能删除' })
+      })
+      const page = loadPage('pages/current-order/index.js', {
+        requires: {
+          'api-map$': api,
+          'utils/auth$': { checkHasLogined: async () => true, authorize: async () => ({}) },
+          'shop-config$': SHOP_STUB
+        },
+        wx: {
+          showModal(m) {
+            if (m && typeof m.success === 'function') m.success({ confirm: true })
+          }
+        }
+      })
+      page.deleteorder({ currentTarget: { dataset: { id: 'o1' } } })
+      await flush()
+      check('★ 删除订单失败 → 明确提示原因（不是静默）',
+        page.__toasts.some((t) => /订单不能删除|删除订单失败/.test(String(t))),
+        page.__toasts)
+    }
+
+    // ---- 购物车改数量被服务端拒绝：给原因并重拉真实数量 ----
+    {
+      let cartCalls = 0
+      const api = {
+        __isCloudMode: () => true,
+        __dataSource: () => 'cloud',
+        shippingCarInfoModifyNumber: async () => ({ code: 400, msg: '最少购买 2 份' }),
+        shippingCarInfo: async () => {
+          cartCalls++
+          return { code: 0, data: { number: 2, price: 20, items: [] } }
+        }
+      }
+      const page = loadPage('pages/orders/index.js', {
+        requires: {
+          'api-map$': api,
+          'utils/auth$': { checkHasLogined: async () => true, authorize: async () => ({}) },
+          'shop-config$': SHOP_STUB,
+          'utils/delivery$': {
+            PICKUP: 'pickup', DELIVERY: 'delivery',
+            isDelivery: () => false, isDeliveryEnabled: () => false, setMode() {}
+          }
+        }
+      })
+      await page.changeNumber({ target: { dataset: { key: 'k1' } }, detail: 1 })
+      await flush()
+      check('★ 购物车改数量被拒 → 明确提示原因（不是静默）',
+        page.__toasts.some((t) => /最少购买 2 份|修改数量失败/.test(String(t))),
+        page.__toasts)
+      check('★ 被拒后重拉购物车（stepper 回到服务端真实数量）', cartCalls >= 1, { cartCalls })
+    }
+  }
+
   console.log('\n' + '='.repeat(60))
   console.log((fail === 0 ? '全部通过' : '存在失败') + '：' + pass + ' 通过 / ' + fail + ' 失败')
   process.exit(fail === 0 ? 0 : 1)

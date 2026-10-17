@@ -359,8 +359,9 @@ const API = {
   banners: () => callCloud('banners', {}),
 
   /**
-   * 平台/店铺配置（mallName / order_remark_msg / order_hx_uids）。
-   * 云函数 action appConfig。
+   * 平台/店铺配置（mallName / order_remark_msg / isAdmin / delivery_rule）。
+   * 云函数 action appConfig。2026-10-17 起不再下发店主 openid 白名单，
+   * 只下发按当前用户算好的 isAdmin（'1'/'0'）。
    */
   appConfig: () => callCloud('appConfig', {}),
 

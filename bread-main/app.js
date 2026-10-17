@@ -62,7 +62,8 @@ App({
     }
 
     // 云开发模式：调统一数据层的 appConfig（云函数 action appConfig），
-    // 把 mallName / order_remark_msg / order_hx_uids 写入 storage。
+    // 把 mallName / order_remark_msg / isAdmin（店主标记）/ delivery_rule 写入 storage。
+    // 2026-10-17：店主身份不再下发 openid 白名单，只下发按当前用户算好的 '1'/'0'。
     // 店铺名同样以本地配置为准，避免被后端值覆盖。
     API.appConfig().then(res => {
       if (res && res.code == 0 && Array.isArray(res.data)) {

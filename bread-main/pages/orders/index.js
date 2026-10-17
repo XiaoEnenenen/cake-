@@ -312,9 +312,17 @@ Page({
         title: '',
       })
       // https://www.yuque.com/apifm/nu0f75/kbi5b0
-      await API.shippingCarInfoModifyNumber(token, key, e.detail)
-      this.shippingCarInfo()
+      const res = await API.shippingCarInfoModifyNumber(token, key, e.detail)
       wx.hideLoading()
+      // 2026-10-17：服务端拒绝（如低于起购量 / 商品下架）时给原因；
+      // 无论成功失败都重拉一次购物车，让 stepper 回到服务端的真实数量。
+      if (res && res.code != 0) {
+        wx.showToast({
+          title: (res && res.msg) || '修改数量失败',
+          icon: 'none'
+        })
+      }
+      this.shippingCarInfo()
     }
   },
   // 改造：购物车列表里的「删除」按钮（走同一个 RemoveItem 接口）

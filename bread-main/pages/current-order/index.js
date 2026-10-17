@@ -1,4 +1,4 @@
-﻿const API = require('../../utils/api-map')
+const API = require('../../utils/api-map')
 const AUTH = require('../../utils/auth')
 const SHOP_CONFIG = require('../../shop-config')
 const FMT = require('../../utils/format')
@@ -242,7 +242,13 @@ Page({
           API.orderClose(wx.getStorageSync('token'), orderId).then(function(res) {
             if (res.code == 0) {
               that.orderList();
+            } else {
+              // 2026-10-17：失败不能静默 —— 顾客要知道"没取消成功"以及原因
+              wx.showToast({ title: (res && res.msg) || '取消订单失败，请稍后重试', icon: 'none' })
             }
+          }).catch(function(err) {
+            LOG.error('[current-order] 取消订单异常', err)
+            wx.showToast({ title: '取消订单失败，请稍后重试', icon: 'none' })
           })
         }
       }
@@ -260,7 +266,13 @@ Page({
           API.orderDelete(wx.getStorageSync('token'), orderId).then(function(res) {
             if (res.code == 0) {
               that.orderList();
+            } else {
+              // 2026-10-17：失败不能静默
+              wx.showToast({ title: (res && res.msg) || '删除订单失败，请稍后重试', icon: 'none' })
             }
+          }).catch(function(err) {
+            LOG.error('[current-order] 删除订单异常', err)
+            wx.showToast({ title: '删除订单失败，请稍后重试', icon: 'none' })
           })
         }
       }

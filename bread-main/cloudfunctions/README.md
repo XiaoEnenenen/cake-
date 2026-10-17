@@ -47,7 +47,7 @@ cloudfunctions/
 |---|---|---|
 | `getUser` | `userDetail` | 当前用户资料（身份取 OPENID） |
 | `updateUser` | `modifyUserInfoV2` | 更新昵称/头像/性别/生日/手机号 |
-| `appConfig` | `queryConfigBatch` | 店铺配置：`mallName` / `order_remark_msg` / `order_hx_uids`（2026-09-26 阶段一新增） |
+| `appConfig` | `queryConfigBatch` | 店铺配置：`mallName` / `order_remark_msg` / `isAdmin`（按 ctx.openid 算出的 '1'/'0'）/ `delivery_rule`（2026-09-26 阶段一新增；2026-10-17 起**不再下发店主 openid 白名单**） |
 | `cmsPage` | `cmsPage` | 用户隐私协议 / 常见问题正文，内容取自 `api/shop-config.js` 的 `cms`（阶段一新增） |
 | `importData` | — | 初始化用：把种子数据（分类/商品/轮播/店铺配置）一次性写入集合。与 `cloud-data/*.jsonl` 内容一致。**⚠️ 2026-10-09 阶段二起已从公开路由移除**：只能在云开发控制台「云函数 → 云端测试」或本地测试脚本里调用，`callFunction` 拿不到（见下方路由表处注释） |
 | `banners` | `banners` | 首页轮播图 |
@@ -232,6 +232,7 @@ node tests/test-admin.js     # 阶段 10 店主端
 node tests/test-coupon.js    # 阶段 11 优惠券（含并发防超发 / 结算页 / 店主建券）
 node tests/test-profile.js   # 阶段 12 隐私合规 / 退出登录 / 编辑资料
 node tests/test-login-gate.js # 2026-10-17 登录门禁（未登录不能加购/结算/支付）
+node tests/test-pay.js       # 2026-10-17 支付失败体验（不弹原始 JSON / 未接入提示）
 ```
 
 `tests/test-cloud-api.js` 用内存版数据库跑完整流程：分类 → 商品 → 加购 → 下单 → 查单 → 取消 → 核销，

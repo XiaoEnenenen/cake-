@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 2026-10-17 第二轮顾客反馈：登录门禁 + 退出后重新弹隐私
  * ---------------------------------------------------------------------------
  * 顾客原话：
@@ -310,7 +310,9 @@ async function main() {
         'utils/auth$': { checkHasLogined: async () => true, authorize: async () => ({}) },
         'shop-config$': SHOP_STUB,
         'utils/admin$': {
-          isAdminOpenid: () => false, ensureWhitelist: async () => true,
+          isShopAdmin: async () => false,
+          isAdminUser: () => false,
+          ensureAdminFlag: async () => true,
           canFinishOrder: () => false
         },
         'utils/pay$': { wxpay() { calls.pay++ } }

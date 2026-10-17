@@ -865,7 +865,8 @@ async function main() {
   // =========================================================================
   const ADMIN_STUB = {
     isShopAdmin: async () => true,
-    isAdminOpenid: () => true,
+    isAdminUser: () => true,
+    ensureAdminFlag: async () => true,
     getMyOpenid: async () => 'o_test',
     guardShopAdminPage: async () => true
   }

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 阶段 5.7「整洁度」回归测试（2026-10-12 新增）
  * ---------------------------------------------------------------------------
  * 背景：审计报告 §4.3 列了一批 P2/P3 整洁度问题（死代码 / 死数据 / 日志散落 /
@@ -147,6 +147,15 @@ function main() {
     !new RegExp('<' + name + '(?=[\\s/>])').test(wxmlAll)
   )
   check('注册的组件都真的被用到', unused.length === 0, unused)
+
+  // 2026-10-17：内部文档/测试/云函数源码不能被打进小程序包（包体 & 信息泄露）
+  {
+    const projectCfg = JSON.parse(src('project.config.json'))
+    const ignored = (((projectCfg.packOptions || {}).ignore) || []).map((x) => x && x.value)
+    ;['cloudfunctions', 'cloud-data', 'tests', 'node_modules', 'docs'].forEach((v) => {
+      check('打包忽略 ' + v + '/（内部资料不进小程序包）', ignored.indexOf(v) >= 0, ignored)
+    })
+  }
 
   // =========================================================================
   console.log('\n=== 4) 图片资源 ===')

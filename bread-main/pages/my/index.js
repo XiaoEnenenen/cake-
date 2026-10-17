@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 「我的」页面
  * ---------------------------------------------------------------------------
  * 改造说明（MulanPSL-2.0 变更留痕，2026-02-14）：
@@ -38,14 +38,16 @@ const app = getApp()
 const ORDER_ENTRIES = OS.ORDER_ENTRIES
 
 /**
- * 阶段 10：按当前用户 openid 判断是否为店主（决定「店主中心」入口显不显示）。
+ * 阶段 10：判断当前用户是否为店主（决定「店主中心」入口显不显示）。
+ * 2026-10-17：不再按 openid 白名单比较（云函数已不下发白名单），改为读云函数按
+ *   当前用户算好的 `isAdmin` 标记（'1'/'0'）。
  * 为什么要包一层 try/catch：utils/admin.js 依赖 storage 与 wx 环境，
  *   任何异常都不该把「我的」页的资料展示带崩 —— 取不到就按"非店主"处理（宁可不显示）。
  */
-function isAdminByOpenid(openid) {
+function isAdminUserSafe() {
   try {
-    if (!ADMIN || typeof ADMIN.isAdminOpenid !== 'function') return false
-    return ADMIN.isAdminOpenid(openid)
+    if (!ADMIN || typeof ADMIN.isAdminUser !== 'function') return false
+    return ADMIN.isAdminUser()
   } catch (e) {
     LOG.error('[my] 店主身份判断失败，按非店主处理', e)
     return false
@@ -82,7 +84,7 @@ Page({
     //（正式版为 false，顾客看不到）
     isDevEnv: false,
     // ===== 阶段 10：店主中心入口 =====
-    // 仅当 isShopAdmin() 为真时渲染（读 storage 的白名单，**只是展示判断**；
+    // 仅当 isAdminUser 为真时渲染（读云函数按当前用户算好的布尔标记，**只是展示判断**；
     // 真正的权限在云函数每个店主 action 的 requireAdmin）。
     isAdminUser: false,
     // 原始 openid：只在开发版 / 体验版显示，用于把它填进店主白名单
@@ -106,9 +108,9 @@ Page({
       this.setData({ userInfo: null, userNo: '', isAdminUser: false, profileError: false, myOpenid: '' })
       return
     }
-    // 阶段 10 复核整改：app.js 写白名单 storage 与本次 userDetail 是并发的 ——
-    // 先确保白名单到手再判断身份，否则刚配好白名单的店主第一次进来会看不到「店主中心」。
-    this.ensureWhitelistThenLoad()
+    // 阶段 10 复核整改：app.js 写 isAdmin storage 与本次 userDetail 是并发的 ——
+    // 先确保店主标记到手再判断身份，否则刚配好白名单的店主第一次进来会看不到「店主中心」。
+    this.ensureAdminThenLoad()
   },
 
   /** 本机是否已退出登录（storage 标志；不涉及云端身份） */
@@ -120,12 +122,12 @@ Page({
     }
   },
 
-  /** 见上：白名单缺失时补一次 appConfig（拿到就写 storage，之后纯本地判断） */
-  async ensureWhitelistThenLoad() {
+  /** 见上：店主标记缺失时补一次 appConfig（拿到就写 storage，之后纯本地判断） */
+  async ensureAdminThenLoad() {
     try {
-      if (ADMIN && typeof ADMIN.ensureWhitelist === 'function') await ADMIN.ensureWhitelist()
+      if (ADMIN && typeof ADMIN.ensureAdminFlag === 'function') await ADMIN.ensureAdminFlag()
     } catch (e) {
-      LOG.error('[my] 读取店主白名单失败，按非店主处理', e)
+      LOG.error('[my] 读取店主标记失败，按非店主处理', e)
     }
     // 阶段 5.6 复核整改：AUTH.authorize() 在云函数不通时会 throw，
     // 原来没有 .catch → 未处理的 Promise rejection（真机上还伴随一条报错）。
@@ -193,7 +195,7 @@ Page({
         // ===== 阶段 10 =====
         // 店主中心入口的显隐。注意：这只是"要不要显示入口"，不是鉴权 ——
         // 云函数每个店主 action 都会用 ctx.openid 在服务端重新校验白名单。
-        isAdminUser: isAdminByOpenid(base.id),
+        isAdminUser: isAdminUserSafe(),
         // 原始 openid 只在开发版 / 体验版回填（用于填白名单），正式版为空串
         myOpenid: this.data.isDevEnv ? String(base.id || '') : ''
       })
@@ -248,7 +250,7 @@ Page({
     this.setData({ loggedOut: false, profileError: false })
     // 微信登录是静默完成的（微信不会弹授权框），给一句明确反馈，避免顾客以为"点了没反应"
     wx.showToast({ title: '登录成功', icon: 'success' })
-    this.ensureWhitelistThenLoad()
+    this.ensureAdminThenLoad()
   },
 
   // 2026-10-17 顾客反馈：退出登录入口从「我的」页移到「编辑资料」页底部

@@ -17,6 +17,10 @@
       {
         "type": "folder",
         "value": "node_modules"
+      },
+      {
+        "type": "folder",
+        "value": "docs"
       }
     ],
     "include": []

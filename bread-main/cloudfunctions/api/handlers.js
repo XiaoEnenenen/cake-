@@ -382,11 +382,12 @@ function resolveOrderSku(goods, propertyChildIds) {
 
 /**
  * 当前调用者是否为商家管理员（完成订单等店主操作的鉴权依据）。
- * 白名单来源：cloudfunctions/api/shop-config.js 的 adminOpenids（回退 app_config.order_hx_uids）。
+ * 白名单来源：cloudfunctions/api/shop-config.js 的 adminOpenids。
  *
  * ⚠️ 为什么不读前端传来的身份：前端只是"要不要显示按钮"的展示开关
  *    （依赖本地 storage，可篡改），**不能作为鉴权依据**。
  *    真正的鉴权必须在这里用云函数自动注入的 ctx.openid 判断。
+ * 2026-10-17：前端不再接收 openid 白名单（见 appConfig），只接收这里算出的布尔标记。
  */
 function isAdmin(ctx) {
   const SHOP = require('./shop-config')
@@ -2329,16 +2330,19 @@ async function banners(payload, ctx) {
  * 平台/店铺配置
  * 前端用法：app.js onLaunch → 把返回的每项写入 storage，键名即为 key
  *
- * 对应原 api工厂 的 queryConfigBatch('mallName,order_remark_msg,order_hx_uids')。
- * 三个键的用途：
+ * 返回的键：
  *   mallName          店铺名（前台导航标题）
  *   order_remark_msg  下单备注快捷短语，pages/add-note 按 \n 拆分成列表
- *   order_hx_uids     店主 openid 白名单（键名沿用旧的核销配置，避免动云库数据），
- *                     前端据此决定「完成订单」按钮显不显示
+ *   isAdmin           '1' / '0'，**按当前调用者 ctx.openid 现场算出**的店主标记
+ *                     （2026-10-17 安全整改：原来下发店主 openid 白名单，等于把店主的
+ *                      openid 发给每一个顾客；现在前端只拿得到这个布尔标记）
+ *   delivery_rule     完整生效的配送规则（阶段 8）
  *
  * 数据来源优先级：
- *   1) 云数据库 app_config 集合（key/value 结构）
- *   2) 本地配置兜底（shop-config.js：门店名；adminOpenids：店主白名单）
+ *   1) 云数据库 app_config 集合（key/value 结构；mallName / order_remark_msg 可覆盖）
+ *   2) 本地配置兜底（shop-config.js）
+ *   isAdmin / delivery_rule **不允许**被 app_config 覆盖：前者必须按调用者身份算，
+ *   后者由 loadDeliveryRule() 合并成完整规则后下发。
  *
  * 返回结构与 api 工厂 一致：res.code === 0 时 res.data 为 [{ key, value }]
  */
@@ -2352,10 +2356,7 @@ async function appConfig(payload, ctx) {
     mallName: (SHOP.shop && SHOP.shop.name) || '',
     // 下单备注快捷短语：当前为空（业务方第一版不提供，保留用户手动输入备注）。
     // 补充方式：改 cloudfunctions/api/shop-config.js 的 orderRemarkMsg，或写 app_config 集合覆盖。
-    order_remark_msg: SHOP.orderRemarkMsg || '',
-    // 店主白名单：当前为空（待管理员账号确定后填入 shop-config.js 的 adminOpenids）。
-    // 留空时前端不显示「完成订单」按钮（服务端也会拒绝调用）。
-    order_hx_uids: (SHOP.adminOpenids || []).join(',')
+    order_remark_msg: SHOP.orderRemarkMsg || ''
   }
 
   const data = []
@@ -2375,6 +2376,10 @@ async function appConfig(payload, ctx) {
     }
     data.push({ key, value: value === undefined ? '' : value })
   }
+
+  // 2026-10-17：店主标记按当前调用者现场计算，**绝不下发 openid 白名单**。
+  // 前端只拿它决定「店主中心 / 完成订单」按钮显不显示；真正鉴权仍是 requireAdmin(ctx)。
+  data.push({ key: 'isAdmin', value: isAdmin(ctx) ? '1' : '0' })
 
   // 阶段 8：配送规则下发给前端（结算页要用**同一份**规则算运费）
   // 注意这里的值永远是"完整的生效规则"（不是云库里的半截覆盖），
@@ -3433,10 +3438,11 @@ async function importData(payload, ctx) {
   // 阶段 5.2（缺陷 D-06）：mallName 的种子值同样取自 shop-config.js（不再写字面量），
   // 与 cloud-data/app-config.jsonl、shop-config.js 保持一致；
   // 改店名时只需改 shop-config.js + 重新部署云函数。
+  // 2026-10-17：不再种子化店主白名单键（appConfig 改为按 ctx.openid 计算 isAdmin，
+  // 店主 openid 只存在 cloudfunctions/api/shop-config.js 的 adminOpenids 里，不下发前端）。
   const APP_CONFIG = [
     { key: 'mallName', value: (require('./shop-config').shop || {}).name || '' },
-    { key: 'order_remark_msg', value: '' },
-    { key: 'order_hx_uids', value: '' }
+    { key: 'order_remark_msg', value: '' }
   ]
 
   const GOODS = [

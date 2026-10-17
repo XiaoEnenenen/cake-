@@ -458,7 +458,7 @@ async function main() {
         'utils/auth$': auth,
         'shop-config$': SHOP_STUB,
         'utils/address$': { getDefault: () => null, formatFull: () => '' },
-        'utils/admin$': { isAdminOpenid: () => false, ensureWhitelist: async () => true },
+        'utils/admin$': { isAdminUser: () => false, ensureAdminFlag: async () => true },
         'utils/location$': { isDevOrTrialEnv: () => false, openNavigation: async () => {} },
         'utils/log$': QUIET_LOG
       },
