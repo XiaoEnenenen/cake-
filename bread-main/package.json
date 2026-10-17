@@ -4,7 +4,7 @@
   "description": "",
   "main": "app.js",
   "scripts": {
-    "test": "node tests/test-cloud-api.js && node tests/test-spec.js && node tests/test-address.js && node tests/test-address-page.js && node tests/test-build-goods.js && node tests/test-migrate-env.js && node tests/test-delivery.js && node tests/test-security.js && node tests/test-location.js && node tests/test-data-source.js && node tests/test-format.js && node tests/test-order-no.js && node tests/test-stage4.js && node tests/test-distance-display.js && node tests/test-page-interaction.js && node tests/test-order-countdown.js && node tests/test-orders-category.js && node tests/test-orders-layout.js && node tests/test-stage5.js && node tests/test-stage5-page.js && node tests/test-admin.js && node tests/test-coupon.js && node tests/test-cleanup.js",
+    "test": "node tests/test-cloud-api.js && node tests/test-spec.js && node tests/test-address.js && node tests/test-address-page.js && node tests/test-build-goods.js && node tests/test-migrate-env.js && node tests/test-delivery.js && node tests/test-security.js && node tests/test-location.js && node tests/test-data-source.js && node tests/test-format.js && node tests/test-order-no.js && node tests/test-stage4.js && node tests/test-distance-display.js && node tests/test-page-interaction.js && node tests/test-order-countdown.js && node tests/test-orders-category.js && node tests/test-orders-layout.js && node tests/test-stage5.js && node tests/test-stage5-page.js && node tests/test-admin.js && node tests/test-coupon.js && node tests/test-profile.js && node tests/test-cleanup.js",
     "test:api": "node tests/test-cloud-api.js",
     "test:spec": "node tests/test-spec.js",
     "test:address": "node tests/test-address.js",
@@ -27,6 +27,7 @@
     "test:stage5page": "node tests/test-stage5-page.js",
     "test:admin": "node tests/test-admin.js",
     "test:coupon": "node tests/test-coupon.js",
+    "test:profile": "node tests/test-profile.js",
     "test:cleanup": "node tests/test-cleanup.js"
   },
   "author": "",

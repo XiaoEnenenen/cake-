@@ -64,9 +64,7 @@
   white-space: nowrap;
 }
 
-/* ===== 阶段 5.5：资料编辑（chooseAvatar + nickname）===== */
-
-/* 右侧「编辑 / 去填写」入口 */
+/* ===== 用户卡片右侧入口（阶段 12：改为进入「编辑资料」页）===== */
 .user-edit {
   flex-shrink: 0;
   margin-left: 16rpx;
@@ -77,69 +75,14 @@
   border-radius: 28rpx;
 }
 
-/* 头像选择按钮：去掉 button 默认样式（边框/背景/内边距），
-   否则 110rpx 的圆头像外面会多出一圈灰框 */
-.user-avatar-btn {
-  padding: 0;
-  margin: 0;
-  width: 110rpx;
-  height: 110rpx;
-  line-height: 1;
-  background-color: transparent;
-  border: none;
-  border-radius: 50%;
-  flex-shrink: 0;
-  overflow: visible;
-}
-.user-avatar-btn::after {
-  border: none;
-}
-
-/* 昵称输入框 */
-.user-nick-input {
-  font-size: 32rpx;
-  font-weight: 600;
-  color: #1f1f1f;
-  height: 56rpx;
-  line-height: 56rpx;
-  border-bottom: 2rpx solid #f0f0f0;
-}
-
-/* 头像未上传成功时的提示（此时不允许保存，见 pages/my/index.js 的 saveProfile） */
-.user-avatar-warn {
-  margin-top: 8rpx;
+/* 退出登录后的说明（让顾客知道订单没丢） */
+.user-logout-tip {
+  margin-top: 20rpx;
+  padding-top: 16rpx;
+  border-top: 1rpx solid #f2f3f5;
   font-size: 22rpx;
-  color: #ff4b33;
-}
-
-.user-actions {
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  margin-top: 24rpx;
-}
-
-.user-btn {
-  min-width: 140rpx;
-  text-align: center;
-  padding: 14rpx 0;
-  font-size: 28rpx;
-  border-radius: 40rpx;
-}
-
-.user-btn-ghost {
-  color: #666666;
-  background-color: #f5f5f5;
-  margin-right: 16rpx;
-}
-
-.user-btn-primary {
-  color: #1f1f1f;
-  background-color: #ffd100;
-}
-
-.user-btn-disabled {
-  opacity: 0.6;
+  line-height: 32rpx;
+  color: #b3b3b3;
 }
 
 /* ===== 通用分区 ===== */
@@ -323,4 +266,14 @@
 /* ===== 底部留白（给自定义 tabbar 让位）===== */
 .bottom {
   height: 180rpx;
+}
+
+/* ===== 阶段 12：退出登录 ===== */
+.list-item-logout {
+  justify-content: center;
+  padding: 30rpx;
+}
+.list-title-logout {
+  text-align: center;
+  color: #c0392b;
 }

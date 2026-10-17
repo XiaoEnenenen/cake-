@@ -326,7 +326,7 @@ async function main() {
   }
 
   // =========================================================================
-  console.log('\n=== 5.5 「我的」页登录态（缺陷 P-06 / P-12）===')
+  console.log('\n=== 5.5 「我的」页登录态（缺陷 P-06 / P-12；阶段 12 起编辑资料独立成页）===')
   // =========================================================================
   {
     const myJs = src('pages/my/index.js')
@@ -336,69 +336,54 @@ async function main() {
       .replace(/\/\*[\s\S]*?\*\//g, '')
       .replace(/(^|[^:])\/\/[^\n]*/g, '$1')
     check('★ 代码里不再使用已匿名化的 wx.getUserProfile', !/wx\.getUserProfile/.test(myCode))
-    check('wxml 使用 open-type="chooseAvatar"', /open-type="chooseAvatar"/.test(myWxml))
-    check('wxml 绑定 bind:chooseavatar', /bind:chooseavatar="onChooseAvatar"/.test(myWxml))
-    check('wxml 使用 <input type="nickname">', /type="nickname"/.test(myWxml))
     check('★ wxml 不再直接展示原始 openid（userInfo.id）',
       !/\{\{\s*userInfo\.id\s*\}\}/.test(myWxml))
     check('wxml 展示派生短编号 userNo', /\{\{\s*userNo\s*\}\}/.test(myWxml))
     check('js 用 FMT.shortUserNo 生成短编号', /FMT\.shortUserNo\(/.test(myJs))
-    check('头像上传走 api-map 的唯一出口（uploadFile）', /API\.uploadFile\(/.test(myJs))
-    check('api-map 暴露 uploadFile', /uploadFile:\s*uploadFile/.test(src('utils/api-map.js')))
+    // 阶段 12：头像/昵称编辑搬到「编辑资料」页（入口在用户卡与常用功能里）
+    const profileJs = src('pages/profile-edit/index.js')
+    const profileWxml = src('pages/profile-edit/index.wxml')
+    check('★ 头像选择能力在「编辑资料」页（open-type=chooseAvatar）',
+      /open-type="chooseAvatar"/.test(profileWxml) &&
+      /bind:chooseavatar="onChooseAvatar"/.test(profileWxml))
+    check('★ 昵称填写能力在「编辑资料」页（<input type="nickname">）',
+      /type="nickname"/.test(profileWxml))
+    check('头像上传走 api-map 的唯一出口（uploadFile）',
+      /API\.uploadFile\(/.test(profileJs) && /uploadFile:\s*uploadFile/.test(src('utils/api-map.js')))
     check('页面里不直接调用 wx.cloud.uploadFile（保持单一出口）',
-      !/wx\.cloud\.uploadFile/.test(myJs) && !/wx\.cloud/.test(myJs))
-    check('保存前拦住"头像还没上传成功"的情况', /draftAvatarIsLocal[\s\S]{0,200}请重新选择/.test(myJs))
+      !/wx\.cloud\.uploadFile/.test(profileJs) && !/wx\.cloud/.test(profileJs))
+    check('保存前拦住"头像还没上传成功"的情况',
+      /avatarIsLocal[\s\S]{0,200}请重新选择/.test(profileJs))
+    check('「我的」页有进入编辑资料的入口', /goProfileEdit/.test(myJs) && /编辑资料/.test(myWxml))
+    check('「我的」页不再内联编辑（旧编辑态字段已删除）',
+      !/profileEditing/.test(myJs) && !/draftNick/.test(myJs))
   }
   {
-    // 真实行为：昵称校验 + 保存时只提交白名单字段
-    let modified = null
+    // 真实行为：点用户卡进入编辑资料页 / 短编号
+    const navigations = []
     const api = makeApi({
-      modifyUserInfoV2: async (d) => { modified = d; return { code: 0, data: {} } },
       userDetail: async () => ({ code: 0, data: { base: { id: 'oABC123456', nick: '小明', avatarUrl: 'cloud://a.png' } } })
     })
     const page = loadPage('pages/my/index.js', {
       requires: {
         'api-map$': api,
-        'utils/auth$': { checkHasLogined: async () => true, authorize: async () => ({}) },
+        'utils/auth$': { checkHasLogined: async () => true, authorize: async () => ({}), loginOut() {} },
         'shop-config$': SHOP_STUB,
         'utils/location$': { isDevOrTrialEnv: () => false, openNavigation: async () => {} },
+        'utils/privacy$': { hasAgreed: () => true, resetAgreed() {} },
         'utils/log$': { debug() {}, warn() {}, error() {} }
+      },
+      wx: {
+        navigateTo(o) { navigations.push(o && o.url) },
+        getStorageSync(k) { return k === 'loggedOut' ? '' : '' },
+        setStorageSync() {}, removeStorageSync() {}
       }
     })
-    check('进入编辑态：带入当前昵称与头像', (() => {
-      page.data.userInfo = { id: 'oABC123456', nick: '小明', avatarUrl: 'cloud://a.png' }
-      page.startEditProfile()
-      return page.data.profileEditing === true && page.data.draftNick === '小明' && page.data.draftAvatarUrl === 'cloud://a.png'
-    })())
-    check('昵称校验：空 → 拒绝', page.validateNick('   ').ok === false)
-    check('昵称校验：超长 → 拒绝', page.validateNick('一'.repeat(21)).ok === false)
-    check('昵称校验：正常 → 通过并去空格', (() => {
-      const r = page.validateNick('  小明明  ')
-      return r.ok === true && r.value === '小明明'
-    })())
-
-    // 头像还是本地临时路径 → 不允许保存（否则写进库里是碎图）
-    page.data.draftNick = '小明明'
-    page.data.draftAvatarUrl = 'wxfile://tmp_xxx.jpg'
-    page.data.draftAvatarIsLocal = true
-    modified = null
-    await page.saveProfile()
-    check('★ 头像未上传成功时拒绝保存', modified === null)
-    check('并给出明确提示', page.__toasts.indexOf('头像还没上传成功，请重新选择') >= 0, page.__toasts)
-
-    // 正常保存
-    page.data.draftAvatarIsLocal = false
-    page.data.draftAvatarUrl = 'cloud://x/avatar.png'
-    await page.saveProfile()
-    check('★ 正常保存：只提交 nick / avatarUrl（白名单内的字段）',
-      modified && modified.nick === '小明明' && modified.avatarUrl === 'cloud://x/avatar.png',
-      modified)
-    check('不再提交服务端会静默丢弃的 city/province/gender',
-      modified && modified.city === undefined && modified.province === undefined && modified.gender === undefined,
-      modified)
-    check('不提交 token', modified && modified.token === undefined)
-    check('保存成功后退出编辑态', page.data.profileEditing === false)
-    check('保存中标志复位（防重复提交）', page.data.savingProfile === false)
+    page.data.loggedOut = false
+    page.data.userInfo = { id: 'oABC123456', nick: '小明', avatarUrl: 'cloud://a.png' }
+    page.onTapUserCard()
+    check('★ 点用户卡 → 进入「编辑资料」页',
+      navigations[0] === '/pages/profile-edit/index', navigations)
 
     // 短编号：稳定、不可反推
     const no1 = FMT.shortUserNo('oABC123456')
@@ -410,9 +395,6 @@ async function main() {
       no1 !== 'oABC123456' && no1.replace(/^QH/, '') !== 'ABC123456', no1)
     check('短编号对空入参返回空串', FMT.shortUserNo('') === '' && FMT.shortUserNo(undefined) === '')
     check('不同 openid 得到不同编号', FMT.shortUserNo('oa') !== FMT.shortUserNo('ob'))
-    // 只填昵称、不选头像时，卡片也要展示（复核整改：原来又变回"点击完善资料"）
-    check('★ 展示分支条件含 userInfo.nick（只填昵称也算已完善）',
-      /userInfo\.avatarUrl \|\| userInfo\.nick/.test(src('pages/my/index.wxml')))
   }
 
   // =========================================================================
@@ -512,11 +494,16 @@ async function main() {
     check('详情 wxss 定义了错误态样式', /\.order-error\s*\{/.test(src('pages/order-view/index.wxss')))
     // 加强（原来只断言"存在 block wx:else"，几乎任何 wxml 都满足）：
     // 错误分支必须在正文之前，且正文整段被 block 包住（文件以 </block> 收尾）。
+    // 阶段 12：文件末尾追加了全局 <privacy-popup />，判断"收尾"时先把它剥掉。
     const errIdx = viewWxml.indexOf('loadError')
     const blockIdx = viewWxml.indexOf('<block wx:else>')
+    const viewWxmlCore = viewWxml
+      .replace(/<privacy-popup\s*\/>/g, '')
+      .replace(/<!--[\s\S]*?-->/g, '')
+      .trim()
     check('★ 错误态在正文之前，正文被 <block wx:else> 整段包住',
-      errIdx >= 0 && blockIdx > errIdx && viewWxml.trim().endsWith('</block>'),
-      { errIdx, blockIdx, tail: viewWxml.trim().slice(-20) })
+      errIdx >= 0 && blockIdx > errIdx && viewWxmlCore.endsWith('</block>'),
+      { errIdx, blockIdx, tail: viewWxmlCore.slice(-20) })
     check('★ 详情页有「加载中」分支（慢网不闪空标题）',
       /wx:elif="\{\{\s*!loaded\s*\}\}"/.test(viewWxml))
     check('详情页 data 里有 loaded 字段', /loaded:\s*false/.test(src('pages/order-view/index.js')))
@@ -788,29 +775,8 @@ async function main() {
   }
 
   {
-    // ④ 「我的」页：连选两次头像，先发的旧上传返回后不能覆盖后选的
-    const resolvers = []
-    const api = makeApi({ uploadFile: () => new Promise((res) => resolvers.push(res)) })
-    const page = loadPage('pages/my/index.js', {
-      requires: {
-        'api-map$': api,
-        'utils/auth$': { checkHasLogined: async () => true, authorize: async () => ({}) },
-        'shop-config$': SHOP_STUB,
-        'utils/location$': { isDevOrTrialEnv: () => false, openNavigation: async () => {} },
-        'utils/log$': { debug() {}, warn() {}, error() {} }
-      }
-    })
-    page.data.userInfo = { id: 'oX' }
-    const p1 = page.onChooseAvatar({ detail: { avatarUrl: 'wxfile://a.jpg' } })
-    const p2 = page.onChooseAvatar({ detail: { avatarUrl: 'wxfile://b.png' } })
-    check('两次选择都在上传中', resolvers.length === 2, resolvers.length)
-    resolvers[1]({ code: 0, fileID: 'cloud://b.png' }) // 后选的先返回
-    await p2
-    check('后选的头像先返回 → 生效', page.data.draftAvatarUrl === 'cloud://b.png', page.data.draftAvatarUrl)
-    resolvers[0]({ code: 0, fileID: 'cloud://a.jpg' }) // 先选的后返回
-    await p1
-    check('★ 先发的旧上传返回后不覆盖顾客最后选的头像',
-      page.data.draftAvatarUrl === 'cloud://b.png', page.data.draftAvatarUrl)
+    // ④ 「我的」页头像并发上传的回归已随「编辑资料」独立页迁移到 tests/test-profile.js
+    check('头像并发上传回归已迁移到 test-profile.js（本文件不再重复）', true)
   }
 
   {

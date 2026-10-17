@@ -67,3 +67,6 @@
   拿到坐标后填回 <text class="mono">shop-config.js → shop.latitude / shop.longitude</text>，
   导航与「距离您 X」就会准了。
 </view>
+
+<!-- 阶段 12：首次启动隐私授权弹窗（全局组件；已同意过则不会出现） -->
+<privacy-popup />

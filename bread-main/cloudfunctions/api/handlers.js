@@ -2242,18 +2242,61 @@ async function getUser(payload, ctx) {
 }
 
 /**
- * 更新用户资料（昵称/头像/性别/生日/手机号）
- * 前端用法：modifyUserInfoV2({ token, nick, avatarUrl, ... })
+ * 更新用户资料
+ * 前端用法：modifyUserInfoV2({ nick, avatarUrl, mobile, sex, birthday })
+ *
+ * 2026-10-17（阶段 12）：补上服务端入参校验。原来直接原样写库：
+ *   · nick 可以是 10 万字（会把「我的」页 / 店主端订单撑爆）；
+ *   · avatarUrl 可以写 `wxfile://` 这种本地临时路径（顾客端头像裂图）；
+ *   · mobile 可以写任意字符串（订单联系不上人）。
+ * 现在只接受白名单字段，逐个校验/归一化；payload 里的 openid / _id 等一律忽略。
+ * 手机号与生日都允许传空字符串（清空），但**不允许前端传来的格式不合法**。
  */
 async function updateUser(payload, ctx) {
-  const user = await ctx.db.findOne('user', { _openid: ctx.openid })
-  const allow = ['nick', 'avatarUrl', 'sex', 'birthday', 'mobile']
+  const p = payload || {}
   const patch = {}
-  allow.forEach((k) => {
-    if (payload && payload[k] !== undefined) patch[k] = payload[k]
-  })
+
+  if (hasField(p, 'nick')) {
+    const nickRes = normalizeText(p.nick, { max: 20, msg: '昵称不能为空，且最多 20 个字' })
+    if (!nickRes.ok) return fail(nickRes.msg)
+    patch.nick = nickRes.value
+  }
+
+  if (hasField(p, 'avatarUrl')) {
+    const s = String(p.avatarUrl === undefined || p.avatarUrl === null ? '' : p.avatarUrl).trim()
+    if (s) {
+      if (s.length > 512) return fail('头像地址过长')
+      // 本地临时路径写进库里，顾客端就是裂图（与商品图片同一类防呆）
+      if (/^(wxfile:|blob:|https?:\/\/tmp)/i.test(s)) {
+        return fail('头像还没上传成功，请重新选择')
+      }
+      patch.avatarUrl = s
+    } else {
+      patch.avatarUrl = ''
+    }
+  }
+
+  if (hasField(p, 'mobile')) {
+    const s = String(p.mobile === undefined || p.mobile === null ? '' : p.mobile).trim()
+    if (s && !/^1\d{10}$/.test(s)) return fail('手机号格式不正确（需 11 位）')
+    patch.mobile = s
+  }
+
+  if (hasField(p, 'sex')) {
+    const n = Number(p.sex)
+    if ([0, 1, 2].indexOf(n) < 0) return fail('性别参数不正确')
+    patch.sex = n
+  }
+
+  if (hasField(p, 'birthday')) {
+    const s = String(p.birthday === undefined || p.birthday === null ? '' : p.birthday).trim()
+    if (s && !/^\d{4}-\d{2}-\d{2}$/.test(s)) return fail('生日格式不正确（应为 YYYY-MM-DD）')
+    patch.birthday = s
+  }
+
   if (!Object.keys(patch).length) return fail('没有需要更新的字段')
 
+  const user = await ctx.db.findOne('user', { _openid: ctx.openid })
   if (user) {
     await ctx.db.update('user', user._id, patch)
   } else {

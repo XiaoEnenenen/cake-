@@ -252,3 +252,6 @@
   <view class="pay-byn">结算</view>
 </view> -->
 </block>
+
+<!-- 阶段 12：首次启动隐私授权弹窗（全局组件；已同意过则不会出现） -->
+<privacy-popup />

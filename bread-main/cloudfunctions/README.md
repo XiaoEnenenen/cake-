@@ -131,13 +131,15 @@ const res = await API.goodsv2({ categoryId: cid })   // 原来：WXAPI.goodsv2(.
 > 经核对，`utils/tools.js` **已不存在**（全项目无该文件）。
 >
 > **2026-10-12 阶段 5.7 再次核对**（`tests/test-cleanup.js` 会重新数一遍并断言本文档的数字）：
-> **2026-10-17 阶段 11 更新**：新增 2 个店主端优惠券页面后，实际接线为 **15 个页面** +
-> `utils/auth.js` + `utils/pay.js` + `utils/admin.js` + `components/bind-mobile` + `app.js`。
-> 15 个页面是：`about-us/detail`、`current-order`、`goods-details`、`index`、`my`、
-> `order-view`、`orders`、`pay`，以及阶段 10 的 5 个店主端页面
+> **2026-10-17 阶段 12 更新**：新增「编辑资料」页后，实际接线为 **16 个页面** +
+> `utils/auth.js` + `utils/pay.js` + `utils/admin.js` + `utils/privacy.js` +
+> `components/bind-mobile` + `components/privacy-popup` + `app.js`。
+> 16 个页面是：`about-us/detail`、`current-order`、`goods-details`、`index`、`my`、
+> `order-view`、`orders`、`pay`，阶段 10 的 5 个店主端页面
 > `admin/index`、`admin/orders/index`、`admin/goods/index`、`admin/goods-edit/index`、
-> `admin/delivery/index`，和阶段 11 的 2 个优惠券页面
-> `admin/coupons/index`（券列表）、`admin/coupons-edit/index`（新建/编辑）
+> `admin/delivery/index`，阶段 11 的 2 个优惠券页面
+> `admin/coupons/index`（券列表）、`admin/coupons-edit/index`（新建/编辑），
+> 以及阶段 12 的 `profile-edit/index`（编辑资料）
 > （店主端 7 个页面都不进 tabBar，普通顾客看不到入口）。
 > （此前这里写的「13 个页面」是 api 工厂时代的数字，从未复核过；报告 E-07 已记录该文档与代码不符。）
 >
@@ -227,6 +229,7 @@ node tests/test-address.js
 node tests/test-delivery.js
 node tests/test-admin.js     # 阶段 10 店主端
 node tests/test-coupon.js    # 阶段 11 优惠券（含并发防超发 / 结算页 / 店主建券）
+node tests/test-profile.js   # 阶段 12 隐私合规 / 退出登录 / 编辑资料
 ```
 
 `tests/test-cloud-api.js` 用内存版数据库跑完整流程：分类 → 商品 → 加购 → 下单 → 查单 → 取消 → 核销，

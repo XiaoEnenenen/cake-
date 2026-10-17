@@ -78,6 +78,15 @@ App({
     // 说明：本店不做分销，且该段依赖 api 工厂 SaaS（云开发模式下不可用）。
     //
     // 自动登录（云开发模式下 AUTH.checkHasLogined 会走 OPENID 分支）
+    // 阶段 12：用户主动「退出登录」后，本次启动不再自动建立/刷新登录态；
+    // 资料由「我的」页点「登录」时重新拉取（底层 openid 仍由微信自动注入，不影响下单）。
+    let loggedOut = false
+    try {
+      loggedOut = wx.getStorageSync('loggedOut') === '1'
+    } catch (e) {
+      loggedOut = false
+    }
+    if (loggedOut) return
     AUTH.checkHasLogined().then(isLogined => {
       if (!isLogined) {
         AUTH.login()

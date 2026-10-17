@@ -1,0 +1,124 @@
+/* 隐私授权弹窗（阶段 12） */
+.pp-mask {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  z-index: 9999;
+  background-color: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: flex-end;
+}
+
+.pp-panel {
+  width: 100%;
+  padding: 40rpx 36rpx calc(28rpx + env(safe-area-inset-bottom));
+  box-sizing: border-box;
+  background-color: #ffffff;
+  border-radius: 28rpx 28rpx 0 0;
+}
+
+.pp-title {
+  font-size: 36rpx;
+  font-weight: 600;
+  color: #1f1f1f;
+  text-align: center;
+}
+
+.pp-sub {
+  margin-top: 16rpx;
+  font-size: 26rpx;
+  line-height: 40rpx;
+  color: #6b6b6b;
+  text-align: center;
+}
+
+.pp-list {
+  margin-top: 24rpx;
+  padding: 20rpx 24rpx;
+  background-color: #faf7ee;
+  border-radius: 16rpx;
+}
+
+.pp-item {
+  font-size: 24rpx;
+  line-height: 40rpx;
+  color: #4a4a4a;
+}
+
+.pp-check-row {
+  display: flex;
+  align-items: flex-start;
+  margin-top: 30rpx;
+}
+
+.pp-checkbox {
+  width: 34rpx;
+  height: 34rpx;
+  margin-top: 4rpx;
+  flex-shrink: 0;
+  border: 2rpx solid #c9c9c9;
+  border-radius: 50%;
+  box-sizing: border-box;
+  font-size: 24rpx;
+  line-height: 32rpx;
+  text-align: center;
+  color: #ffffff;
+}
+
+.pp-checkbox-on {
+  border-color: #ffd100;
+  background-color: #ffd100;
+  color: #1f1f1f;
+}
+
+.pp-check-text {
+  flex: 1;
+  margin-left: 14rpx;
+  font-size: 24rpx;
+  line-height: 38rpx;
+  color: #3c3c3c;
+}
+
+.pp-link {
+  color: #b8741a;
+  text-decoration: underline;
+}
+
+.pp-sep {
+  color: #6b6b6b;
+}
+
+.pp-tip {
+  margin-top: 10rpx;
+  font-size: 22rpx;
+  color: #d46b08;
+}
+
+.pp-agree {
+  margin-top: 26rpx;
+  width: 100% !important;
+  height: 88rpx;
+  line-height: 88rpx;
+  font-size: 30rpx;
+  font-weight: 600;
+  color: #1f1f1f;
+  background-color: #ffd100;
+  border-radius: 100rpx;
+}
+
+/* 未勾选时置灰（button 的 disabled 默认样式也一并覆盖） */
+.pp-agree-disabled,
+.pp-agree[disabled] {
+  background-color: #f1e6b8 !important;
+  color: #a89f85 !important;
+}
+
+.pp-disagree {
+  margin-top: 18rpx;
+  text-align: center;
+  font-size: 26rpx;
+  color: #8a8a8a;
+  padding: 10rpx 0;
+}

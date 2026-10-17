@@ -3,102 +3,59 @@
      2026-09-26 阶段二：会员卡 / 积分 / 积分记录 / 编辑会员卡信息 已**整体删除**
      （页面文件、app.json 路由、云函数 action、数据库集合引用均已移除）。
      2026-10-10：扫码核销也整体下线（本页入口与 scan-result 页一起删除），
-     店主改为在订单列表里对取餐码点「完成订单」。因此本页只保留：
-     用户信息、订单入口、收货地址、客服、门店信息、导航、拨号。
+     店主改为在订单列表里对取餐码点「完成订单」。
+     2026-10-17（阶段 12）：
+       · 头像/昵称/手机号统一到「编辑资料」页修改（本页不再内联编辑）；
+       · 增加「退出登录」（只清本机展示，不删订单/地址）；
+       · 增加隐私授权弹窗（首次启动告知，见 components/privacy-popup）。
 
      注意：门店信息全部来自 shop-config.js（用户提供的真实值），页面不写死任何门店数据。
 -->
 
-<!-- ===== 1. 用户信息区 =====
-     2026-10-12 阶段 5.5（缺陷 P-06）重做：
-       原实现用 wx.getUserProfile 拿头像昵称，但该接口自 2022 年起只返回匿名数据
-       （灰色头像 + "微信用户"），于是本页永远停在"点击登录"。
-       现改用微信官方的「头像昵称填写能力」：
-         · 头像 → <button open-type="chooseAvatar" bind:chooseavatar>
-         · 昵称 → <input type="nickname">
-       选中的头像会先上传到云存储（utils/api-map 的 uploadFile），保存时只写 fileID。
-     同时按报告 P-12：这里显示的是 openid 派生的**短编号**（userNo），不再直接展示 OPENID。
--->
+<!-- ===== 1. 用户信息区 ===== -->
 <view class="mycard"></view>
 <view class="card-bar">
 
-  <!-- 展示态：已有头像或昵称即可（2026-10-12 复核整改：
-       原来只判断 avatarUrl，顾客"只填昵称、不选头像"保存成功后，卡片又变回
-       「点击完善资料」，看不到刚填的昵称，会以为没保存而反复提交。） -->
-  <block wx:if="{{ userInfo && (userInfo.avatarUrl || userInfo.nick) && !profileEditing }}">
+  <!-- 已退出登录（本机标志；微信身份仍在，点登录即恢复） -->
+  <block wx:if="{{ loggedOut }}">
+    <view class="user-row" bindtap="onTapUserCard">
+      <view class="user-avatar user-avatar-empty"></view>
+      <view class="user-meta">
+        <view class="user-nick">登录 / 注册</view>
+        <view class="user-id">点此登录后可查看资料与订单</view>
+      </view>
+      <view class="user-edit">登录</view>
+    </view>
+    <view class="user-logout-tip">已退出登录；订单和收货地址仍保留在当前微信下</view>
+  </block>
+
+  <!-- 资料加载失败（云函数不通与"未登录"要区分开） -->
+  <block wx:elif="{{ profileError }}">
     <view class="user-row">
+      <view class="user-avatar user-avatar-empty"></view>
+      <view class="user-meta">
+        <view class="user-nick">资料加载失败</view>
+        <view class="user-id">请检查网络后重试</view>
+      </view>
+      <view class="user-edit" bindtap="retryProfile">点击重试</view>
+    </view>
+  </block>
+
+  <!-- 已登录：展示资料，点击进入「编辑资料」页 -->
+  <block wx:else>
+    <view class="user-row" bindtap="onTapUserCard">
       <image
-        wx:if="{{ userInfo.avatarUrl }}"
+        wx:if="{{ userInfo && userInfo.avatarUrl }}"
         class="user-avatar"
         mode="aspectFill"
         src="{{ userInfo.avatarUrl }}"
       ></image>
       <view wx:else class="user-avatar user-avatar-empty"></view>
       <view class="user-meta">
-        <view class="user-nick">{{ userInfo.nick || '微信用户' }}</view>
+        <view class="user-nick">{{ (userInfo && userInfo.nick) || '点击完善资料' }}</view>
         <view class="user-id">用户编号：{{ userNo }}</view>
       </view>
-      <view class="user-edit" bindtap="startEditProfile">编辑</view>
-    </view>
-  </block>
-
-  <!-- 未完善资料：引导填写（不再调用 getUserProfile） -->
-  <block wx:elif="{{ !profileEditing }}">
-    <view class="user-row">
-      <view class="user-avatar user-avatar-empty"></view>
-      <view class="user-meta">
-        <!-- 2026-10-14 审查修复：把"云函数不通/资料没拉到"与"还没登录"区分开，
-             否则顾客看到「点击完善资料」点进去也保存不了，且没有任何提示 -->
-        <block wx:if="{{ profileError }}">
-          <view class="user-nick">资料加载失败</view>
-          <view class="user-id">请检查网络后重试</view>
-        </block>
-        <block wx:else>
-          <view class="user-nick">点击完善资料</view>
-          <view class="user-id">填写头像与昵称，方便我们称呼您</view>
-        </block>
-      </view>
-      <view wx:if="{{ profileError }}" class="user-edit" bindtap="retryProfile">点击重试</view>
-      <view wx:else class="user-edit" bindtap="startEditProfile">去填写</view>
-    </view>
-  </block>
-
-  <!-- 编辑态：选头像 + 填昵称 + 保存 -->
-  <block wx:else>
-    <view class="user-row">
-      <button
-        class="user-avatar-btn"
-        open-type="chooseAvatar"
-        bind:chooseavatar="onChooseAvatar"
-      >
-        <image
-          wx:if="{{ draftAvatarUrl }}"
-          class="user-avatar"
-          mode="aspectFill"
-          src="{{ draftAvatarUrl }}"
-        ></image>
-        <view wx:else class="user-avatar user-avatar-empty"></view>
-      </button>
-      <view class="user-meta">
-        <input
-          class="user-nick-input"
-          type="nickname"
-          maxlength="20"
-          value="{{ draftNick }}"
-          placeholder="请输入昵称"
-          bindinput="onNickInput"
-          bindblur="onNickInput"
-        />
-        <view wx:if="{{ draftAvatarIsLocal }}" class="user-avatar-warn">头像还没上传成功</view>
-        <view wx:else class="user-id">点击左侧头像可选择微信头像</view>
-      </view>
-    </view>
-    <view class="user-actions">
-      <view class="user-btn user-btn-ghost" bindtap="cancelEditProfile">取消</view>
-      <view
-        class="user-btn user-btn-primary {{ savingProfile ? 'user-btn-disabled' : '' }}"
-        bindtap="saveProfile"
-      >{{ savingProfile ? '保存中…' : '保存' }}</view>
+      <view class="user-edit">编辑资料</view>
     </view>
   </block>
 </view>
@@ -129,6 +86,16 @@
     <view class="list-body">
       <view class="list-title">店主中心</view>
       <view class="list-sub">改商品、看订单、调配送费</view>
+    </view>
+    <view class="list-arrow"></view>
+  </view>
+
+  <!-- 阶段 12：编辑资料（头像 / 昵称 / 手机号 / 收货地址） -->
+  <view wx:if="{{ !loggedOut }}" class="list-item" bindtap="goProfileEdit">
+    <image class="list-icon" mode="aspectFit" src="/images/user-icon-edit@2x.png"></image>
+    <view class="list-body">
+      <view class="list-title">编辑资料</view>
+      <view class="list-sub">头像、昵称、手机号、收货地址</view>
     </view>
     <view class="list-arrow"></view>
   </view>
@@ -223,7 +190,20 @@
   </view>
 </view>
 
+<!-- ===== 6. 退出登录（阶段 12；只清本机展示，不删除任何订单/地址） ===== -->
+<view wx:if="{{ !loggedOut }}" class="section">
+  <view class="list-item list-item-logout" bindtap="logout">
+    <view class="list-body">
+      <view class="list-title list-title-logout">退出登录</view>
+      <view class="list-sub">仅清除本机资料展示，订单与地址不会删除</view>
+    </view>
+  </view>
+</view>
+
 <view class="bottom"></view>
 <!-- 底部导航栏 -->
 <import src="/template/tabbar/index.wxml" />
 <template is="tabbar" data="{{ tabbarActive: 3 }}" />
+
+<!-- 阶段 12：首次启动隐私授权弹窗（已同意过则不会出现） -->
+<privacy-popup id="privacy-popup" bind:agree="onPrivacyAgree" />

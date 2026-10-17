@@ -274,3 +274,6 @@
   <view class="coupon-pop-foot">每单限用 1 张优惠券；优惠券使用后取消订单不退回。</view>
   <view class="coupon-pop-safe"></view>
 </van-popup>
+
+<!-- 阶段 12：首次启动隐私授权弹窗（全局组件；已同意过则不会出现） -->
+<privacy-popup />

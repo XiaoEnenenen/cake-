@@ -1,0 +1,83 @@
+<!-- 编辑资料（阶段 12）：头像 / 昵称 / 手机号 / 收货地址入口 -->
+<view class="pe-page">
+  <view wx:if="{{ loading }}" class="pe-hint">正在读取资料…</view>
+
+  <view wx:elif="{{ loadError }}" class="pe-error">
+    <view class="pe-error-text">资料读取失败，请检查网络后重试</view>
+    <view class="pe-retry" bindtap="retryLoad">点击重试</view>
+  </view>
+
+  <block wx:else>
+    <view class="pe-card">
+      <!-- 头像 -->
+      <view class="pe-avatar-row">
+        <button class="pe-avatar-btn" open-type="chooseAvatar" bind:chooseavatar="onChooseAvatar">
+          <image wx:if="{{ avatarUrl }}" class="pe-avatar" mode="aspectFill" src="{{ avatarUrl }}"></image>
+          <view wx:else class="pe-avatar pe-avatar-empty"></view>
+        </button>
+        <view class="pe-avatar-tip">
+          <view class="pe-avatar-title">点击头像修改</view>
+          <view wx:if="{{ avatarIsLocal }}" class="pe-avatar-warn">头像还没上传成功，不能保存</view>
+          <view wx:else class="pe-avatar-sub">可使用微信头像或相册图片</view>
+        </view>
+      </view>
+
+      <!-- 昵称 -->
+      <view class="pe-row">
+        <view class="pe-label">昵称</view>
+        <input
+          class="pe-input"
+          type="nickname"
+          maxlength="20"
+          value="{{ nick }}"
+          placeholder="请填写昵称（最多 20 字）"
+          bindinput="onNickInput"
+          bindblur="onNickInput"
+        />
+      </view>
+
+      <!-- 手机号 -->
+      <view class="pe-row">
+        <view class="pe-label">手机号</view>
+        <input
+          class="pe-input"
+          type="number"
+          maxlength="11"
+          value="{{ mobile }}"
+          placeholder="选填，用于订单联系"
+          bindinput="onMobileInput"
+        />
+      </view>
+      <view wx:if="{{ mobileError }}" class="pe-row-hint">{{ mobileError }}</view>
+
+      <!-- 用户编号（只读） -->
+      <view class="pe-row">
+        <view class="pe-label">用户编号</view>
+        <view class="pe-value">{{ userNo }}</view>
+      </view>
+    </view>
+
+    <!-- 收货地址入口 -->
+    <view class="pe-card pe-card-link" bindtap="goAddress">
+      <view class="pe-row pe-row-link">
+        <view class="pe-label">收货地址</view>
+        <view class="pe-value {{ addressText ? '' : 'pe-value-empty' }}">{{ addressText || '还没有收货地址，点击管理' }}</view>
+        <view class="pe-arrow"></view>
+      </view>
+    </view>
+
+    <view class="pe-note">
+      昵称、头像与手机号只用于订单展示和联系，可在本页随时修改。
+    </view>
+
+    <view class="pe-bottom-holder"></view>
+    <view class="pe-bottom-bar">
+      <view class="pe-save {{ saving ? 'pe-save-disabled' : '' }}" bindtap="save">
+        {{ saving ? '保存中…' : '保存' }}
+      </view>
+    </view>
+  </block>
+
+  <!-- 首次使用时的隐私授权弹窗（全局组件） -->
+  <privacy-popup />
+</view>

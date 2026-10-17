@@ -457,7 +457,8 @@ function main() {
     ['pages/admin/coupons/index.wxss', 'cp-bottom-bar', 'cp-bottom-holder'],
     ['pages/admin/coupons-edit/index.wxss', 'ce-bottom-bar', 'ce-bottom-holder'],
     ['pages/address/common.wxss', 'addr-bottom', 'addr-list-bottom'],
-    ['pages/select-time/index.wxss', 'st-bottom', null]
+    ['pages/select-time/index.wxss', 'st-bottom', null],
+    ['pages/profile-edit/index.wxss', 'pe-bottom-bar', 'pe-bottom-holder']
   ]
   const barProblems = []
   for (const [file, barSel, holderSel] of fixedBars) {

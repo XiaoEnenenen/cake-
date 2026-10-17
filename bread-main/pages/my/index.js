@@ -26,6 +26,8 @@ const LOC = require('../../utils/location')
 const OS = require('../../utils/order-status')
 const FMT = require('../../utils/format')
 const LOG = require('../../utils/log')
+// 阶段 12：隐私授权（首次启动告知 / 登录前先同意）
+const PRIVACY = require('../../utils/privacy')
 // 阶段 10：店主中心入口的显隐判断（只是展示判断，鉴权在云函数 requireAdmin）
 const ADMIN = require('../../utils/admin')
 const app = getApp()
@@ -58,19 +60,10 @@ Page({
     profileError: false,
     // 用户编号（阶段 5.5 / P-12）：由 openid 派生的短编号，**不再把 OPENID 直接显示给顾客**
     userNo: '',
-    // ===== 阶段 5.5（缺陷 P-06）：登录 / 资料编辑 =====
-    // 原实现用 wx.getUserProfile，该接口已匿名化（拿不到真实昵称头像），
-    // 于是「我的」页永远显示"点击登录"。现改为：
-    //   · 头像：<button open-type="chooseAvatar">（微信头像填写能力）
-    //   · 昵称：<input type="nickname">（微信昵称填写能力）
-    // 编辑态由 profileEditing 控制；草稿字段避免"边选边写库"。
-    profileEditing: false,
-    draftAvatarUrl: '',
-    draftNick: '',
-    // 草稿头像是本地临时路径（尚未上传成功）时为 true —— 此时不允许保存，
-    // 否则会把 wxfile:// 这种会话级路径写进用户资料，下次打开就是碎图。
-    draftAvatarIsLocal: false,
-    savingProfile: false,
+    // ===== 阶段 12：登录态 / 退出登录 =====
+    // 微信小程序没有"账号密码"，身份就是当前微信的 openid。这里的 loggedOut 只是
+    // 本机展示状态：退出后「我的」页显示登录卡片，重新点登录即恢复（订单/地址一直都在）。
+    loggedOut: false,
     // 订单入口
     orderEntries: ORDER_ENTRIES,
     // 门店信息（来自 shop-config.js，全部为用户提供的真实值）
@@ -104,9 +97,26 @@ Page({
   onShow() {
     this.loadShopConfig()
     this.loadDefaultAddress()
+    // 阶段 12：本机"退出登录"状态优先 —— 退出后不再自动拉资料/判断店主身份，
+    // 用户点「登录」再恢复（底层 openid 仍由微信提供，不影响订单查询）。
+    const loggedOut = this.isLoggedOut()
+    this.setData({ loggedOut: loggedOut })
+    if (loggedOut) {
+      this.setData({ userInfo: null, userNo: '', isAdminUser: false, profileError: false, myOpenid: '' })
+      return
+    }
     // 阶段 10 复核整改：app.js 写白名单 storage 与本次 userDetail 是并发的 ——
     // 先确保白名单到手再判断身份，否则刚配好白名单的店主第一次进来会看不到「店主中心」。
     this.ensureWhitelistThenLoad()
+  },
+
+  /** 本机是否已退出登录（storage 标志；不涉及云端身份） */
+  isLoggedOut() {
+    try {
+      return wx.getStorageSync('loggedOut') === '1'
+    } catch (e) {
+      return false
+    }
   },
 
   /** 见上：白名单缺失时补一次 appConfig（拿到就写 storage，之后纯本地判断） */
@@ -191,105 +201,77 @@ Page({
     this.setData({ profileError: true })
   },
 
-  // ===== 阶段 5.5：登录 / 更新头像昵称 =====
-  // 原实现（已删除）：
-  //   wx.getUserProfile({ success: res => this._updateUserInfo(res.userInfo) })
-  //   —— 该接口自 2022 年起返回的是匿名数据（灰色头像 + "微信用户"），
-  //      拿不到真实昵称头像，导致「我的」页永远停在"点击登录"。
-  // 现实现：进入编辑态 → 用 open-type="chooseAvatar" 选头像（会上传到云存储）、
-  //        用 <input type="nickname"> 填写昵称 → 保存时一次性写入云函数。
-  startEditProfile() {
-    const u = this.data.userInfo || {}
-    this.setData({
-      profileEditing: true,
-      draftAvatarUrl: u.avatarUrl || '',
-      draftNick: u.nick || '',
-      draftAvatarIsLocal: false
-    })
+  // ===== 阶段 12：登录 / 退出登录 / 编辑资料 =====
+  // 说明（与旧版内联编辑的区别）：
+  //   旧版在本页直接改头像+昵称；现在统一进「编辑资料」页（头像/昵称/手机号/地址入口），
+  //   本页只负责"展示 + 进入编辑 + 登录/退出"。
+  //   微信小程序的账号就是当前微信的 openid，没有真正的"注销登录"：
+  //   退出只是清掉本机展示状态（storage.loggedOut），订单/地址仍归当前微信。
+  goProfileEdit() {
+    wx.navigateTo({ url: '/pages/profile-edit/index' })
   },
 
-  cancelEditProfile() {
-    this.setData({
-      profileEditing: false,
-      draftAvatarUrl: '',
-      draftNick: '',
-      draftAvatarIsLocal: false
-    })
-  },
-
-  /**
-   * 选择头像（<button open-type="chooseAvatar" bind:chooseavatar>）。
-   * e.detail.avatarUrl 是**本地临时路径**，必须先上传到云存储拿到 fileID 才能持久化，
-   * 否则重启小程序后就是碎图（云函数只存字符串，不存文件）。
-   */
-  async onChooseAvatar(e) {
-    const temp = e && e.detail && e.detail.avatarUrl
-    if (!temp) return
-    // 先本地预览，让顾客立刻看到自己选的头像
-    this.setData({ draftAvatarUrl: temp, draftAvatarIsLocal: true })
-    // 阶段 5.5 复核整改：连选两次头像时，先发的上传可能后返回，
-    // 会把顾客最后选的那一张覆盖掉。用序号丢弃过期结果。
-    this._avatarSeq = (this._avatarSeq || 0) + 1
-    const seq = this._avatarSeq
-    const openid = (this.data.userInfo && this.data.userInfo.id) || wx.getStorageSync('uid') || 'anonymous'
-    const ext = (/\.(png|jpg|jpeg|webp)$/i.exec(temp) || [null, 'png'])[1].toLowerCase()
-    wx.showLoading({ title: '上传头像…' })
-    const res = await API.uploadFile(temp, 'avatars/' + openid + '_' + Date.now() + '.' + ext)
-    wx.hideLoading()
-    if (seq !== this._avatarSeq) return // 已有更新的一次选择，丢弃这次上传结果
-    if (res.code == 0 && res.fileID) {
-      this.setData({ draftAvatarUrl: res.fileID, draftAvatarIsLocal: false })
-    } else {
-      // 上传失败：保留本地预览，但标记为"未上传成功"，保存时会被拦住并提示重试
-      LOG.error('[my] 头像上传失败', res && res.msg)
-      wx.showToast({ title: '头像上传失败，请重试', icon: 'none' })
-    }
-  },
-
-  /**
-   * 昵称输入（<input type="nickname"> 的 bindinput / bindblur / bindchange 都会带 value）
-   */
-  onNickInput(e) {
-    this.setData({ draftNick: String((e && e.detail && e.detail.value) || '') })
-  },
-
-  /**
-   * 校验昵称长度。微信昵称最长 32 字符（中文按字数），这里只做基本约束，
-   * 服务端/微信侧还有各自的限制。
-   */
-  validateNick(nick) {
-    const text = String(nick || '').trim()
-    if (!text) return { ok: false, msg: '请填写昵称' }
-    if (text.length > 20) return { ok: false, msg: '昵称最多 20 个字' }
-    return { ok: true, value: text }
-  },
-
-  async saveProfile() {
-    if (this.data.savingProfile) return // 防重复提交
-    const nickRes = this.validateNick(this.data.draftNick)
-    if (!nickRes.ok) {
-      wx.showToast({ title: nickRes.msg, icon: 'none' })
+  /** 点用户卡片：已登录 → 编辑资料；已退出 → 重新登录 */
+  onTapUserCard() {
+    if (this.data.loggedOut) {
+      this.login()
       return
     }
-    if (this.data.draftAvatarIsLocal) {
-      wx.showToast({ title: '头像还没上传成功，请重新选择', icon: 'none' })
+    this.goProfileEdit()
+  },
+
+  /** 重新登录（清除本机退出标志 → 拉资料） */
+  login() {
+    // 隐私政策没同意前不建立资料展示；弹窗由页面上的 privacy-popup 负责
+    if (PRIVACY && typeof PRIVACY.hasAgreed === 'function' && !PRIVACY.hasAgreed()) {
+      this._pendingLogin = true
+      const popup = typeof this.selectComponent === 'function' ? this.selectComponent('#privacy-popup') : null
+      if (popup && typeof popup.show === 'function') popup.show()
+      wx.showToast({ title: '请先阅读并同意隐私政策', icon: 'none' })
       return
     }
-    this.setData({ savingProfile: true })
     try {
-      const postData = { nick: nickRes.value }
-      if (this.data.draftAvatarUrl) postData.avatarUrl = this.data.draftAvatarUrl
-      const res = await API.modifyUserInfoV2(postData)
-      if (!res || res.code != 0) {
-        wx.showToast({ title: (res && res.msg) || '保存失败', icon: 'none' })
-        return
-      }
-      wx.showToast({ title: '已保存', icon: 'success' })
-      this.setData({ profileEditing: false })
+      wx.removeStorageSync('loggedOut')
+    } catch (e) {}
+    this.setData({ loggedOut: false, profileError: false })
+    AUTH.authorize().then(() => {
       this.userDetail()
-    } finally {
-      this.setData({ savingProfile: false })
-    }
+    }).catch(() => {
+      this.setData({ profileError: true })
+    })
+  },
+
+  /** 隐私弹窗同意后：如果刚才是在等登录，就继续登录 */
+  onPrivacyAgree() {
+    if (!this._pendingLogin) return
+    this._pendingLogin = false
+    this.login()
+  },
+
+  /** 退出登录（只清本机展示，不删除云端资料/订单） */
+  logout() {
+    wx.showModal({
+      title: '退出登录',
+      content: '退出后本机不再显示你的资料；订单和收货地址仍保留在当前微信下，重新登录即可恢复。确认退出？',
+      confirmText: '退出',
+      cancelText: '取消',
+      success: (r) => {
+        if (!r.confirm) return
+        AUTH.loginOut()
+        try {
+          wx.setStorageSync('loggedOut', '1')
+        } catch (e) {}
+        this.setData({
+          loggedOut: true,
+          userInfo: null,
+          userNo: '',
+          isAdminUser: false,
+          profileError: false,
+          myOpenid: ''
+        })
+        wx.showToast({ title: '已退出登录', icon: 'none' })
+      }
+    })
   },
 
   // ===== 订单管理：跳转到订单页并带状态参数 =====

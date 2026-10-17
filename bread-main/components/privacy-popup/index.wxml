@@ -1,0 +1,36 @@
+<!-- 隐私授权弹窗（阶段 12）：首次启动主动告知 + 勾选同意 -->
+<view wx:if="{{ show }}" class="pp-mask" catchtouchmove="noop">
+  <view class="pp-panel">
+    <view class="pp-title">欢迎光临卿欢蛋糕</view>
+    <view class="pp-sub">为了完成下单、配送和售后，我们会使用以下信息：</view>
+
+    <view class="pp-list">
+      <view class="pp-item">· 微信昵称、头像：用于展示与称呼（可随时在「编辑资料」里修改）</view>
+      <view class="pp-item">· 手机号、收货地址：用于下单、配送联系（由你主动填写）</view>
+      <view class="pp-item">· 位置信息：仅在你授权后用于计算配送距离与导航</view>
+      <view class="pp-item">· 订单与优惠券记录：用于履约、对账与售后</view>
+    </view>
+
+    <view class="pp-check-row" bindtap="toggleCheck">
+      <view class="pp-checkbox {{ checked ? 'pp-checkbox-on' : '' }}">{{ checked ? '✓' : '' }}</view>
+      <view class="pp-check-text">
+        我已阅读并同意
+        <text class="pp-link" catchtap="onOpenPolicy">《隐私政策》</text>
+        <text class="pp-sep">和</text>
+        <text class="pp-link" catchtap="onOpenContract">《微信隐私保护指引》</text>
+      </view>
+    </view>
+
+    <view wx:if="{{ !checked }}" class="pp-tip">请先勾选同意后再继续</view>
+
+    <button
+      class="pp-agree {{ checked ? '' : 'pp-agree-disabled' }}"
+      open-type="agreePrivacyAuthorization"
+      disabled="{{ !checked }}"
+      bindagreeprivacyauthorization="onAgreeAuth"
+      bindtap="onAgreeTap"
+    >同意并继续</button>
+
+    <view class="pp-disagree" bindtap="onDisagree">暂不使用</view>
+  </view>
+</view>
