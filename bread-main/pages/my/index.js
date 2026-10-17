@@ -26,8 +26,9 @@ const LOC = require('../../utils/location')
 const OS = require('../../utils/order-status')
 const FMT = require('../../utils/format')
 const LOG = require('../../utils/log')
-// 阶段 12：隐私授权（首次启动告知 / 登录前先同意）
-const PRIVACY = require('../../utils/privacy')
+// 阶段 12：隐私授权（首次启动告知 / 登录前必须重新勾选）已收敛到两个组件：
+//   · components/privacy-popup —— 首次启动的主动告知（只弹一次）；
+//   · components/login-sheet  —— 登录弹层（每次重新登录都必须重新勾选同意）。
 // 阶段 10：店主中心入口的显隐判断（只是展示判断，鉴权在云函数 requireAdmin）
 const ADMIN = require('../../utils/admin')
 const app = getApp()
@@ -220,32 +221,32 @@ Page({
     this.goProfileEdit()
   },
 
-  /** 重新登录（清除本机退出标志 → 拉资料） */
+  /**
+   * 重新登录（2026-10-17 顾客反馈整改）
+   * -------------------------------------------------------------------------
+   * 以前：本地记过隐私同意就直接 AUTH.authorize() 静默登录 —— 顾客点「登录」后
+   *   没再看到隐私政策，也看不到手机号/微信登录的可选项（反馈第 2 条）。
+   * 现在：**永远先打开登录弹层**（components/login-sheet）：里面隐私勾选框每次重置为未勾选，
+   *   顾客必须重新勾选并选择「手机号一键登录 / 微信登录」；弹层登录成功后才回调本页。
+   *   这样"退出登录后重新登录必须先过隐私政策"就是代码保证的，而不是靠本地同意状态碰运气。
+   */
   login() {
-    // 隐私政策没同意前不建立资料展示；弹窗由页面上的 privacy-popup 负责
-    if (PRIVACY && typeof PRIVACY.hasAgreed === 'function' && !PRIVACY.hasAgreed()) {
-      this._pendingLogin = true
-      const popup = typeof this.selectComponent === 'function' ? this.selectComponent('#privacy-popup') : null
-      if (popup && typeof popup.show === 'function') popup.show()
-      wx.showToast({ title: '请先阅读并同意隐私政策', icon: 'none' })
+    const sheet = typeof this.selectComponent === 'function' ? this.selectComponent('#login-sheet') : null
+    if (sheet && typeof sheet.open === 'function') {
+      sheet.open()
       return
     }
+    // 组件没挂上（页面结构被改坏 / 极老版本）时不要静默登录，明确提示
+    wx.showToast({ title: '登录组件未就绪，请退出重进', icon: 'none' })
+  },
+
+  /** 登录弹层登录成功：清本机退出标志 → 重新拉资料/店主身份 */
+  onLoginSuccess() {
     try {
       wx.removeStorageSync('loggedOut')
     } catch (e) {}
     this.setData({ loggedOut: false, profileError: false })
-    AUTH.authorize().then(() => {
-      this.userDetail()
-    }).catch(() => {
-      this.setData({ profileError: true })
-    })
-  },
-
-  /** 隐私弹窗同意后：如果刚才是在等登录，就继续登录 */
-  onPrivacyAgree() {
-    if (!this._pendingLogin) return
-    this._pendingLogin = false
-    this.login()
+    this.ensureWhitelistThenLoad()
   },
 
   // 2026-10-17 顾客反馈：退出登录入口从「我的」页移到「编辑资料」页底部

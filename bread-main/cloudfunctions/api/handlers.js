@@ -2413,14 +2413,19 @@ async function cmsPage(payload, ctx) {
 // ===========================================================================
 /**
  * 手机号绑定
- * 前端用法：components/bind-mobile → e.detail.code（getPhoneNumber 回调）
+ * 前端用法：components/login-sheet 的「手机号一键登录」
+ *          → wx.getPhoneNumber 回调 e.detail.code（新版）或 encryptedData+iv（旧版）
  *
- * 说明：云开发下需要用 cloud.getWXContext() + 微信开放接口用 code 换手机号，
- *       需要小程序后台开通「手机号快速验证」，属于第 2 阶段工作。
- *       在接入之前这里明确返回"未接入"，绝不伪造绑定成功。
+ * 说明（2026-10-17 更新）：
+ *   · 云开发下需要用 cloud.openapi.phonenumber.getPhoneNumber 用 code 换手机号；
+ *   · 前提是小程序后台开通「手机号快速验证」（个人主体不支持，本项目当前未开通）；
+ *   · 未开通时前端收到的是 getPhoneNumber:fail no permission，**根本走不到这里**；
+ *     但若基础库/后台状态异常导致走到这里，仍然返回"未接入"，绝不伪造绑定成功。
+ *   · 开通后的实现位置就在这里：调用 cloud.openapi 换手机号 → 写 user.mobile →
+ *     返回与 getUser 相同结构。届时把 cloud 句柄作为 ctx.cloud 由 index.js 注入即可。
  */
 async function bindMobile(payload, ctx) {
-  return fail('云开发模式下手机号绑定尚未接入（需先在小程序后台开通手机号快速验证）', 501)
+  return fail('手机号快速验证未开通（需在小程序后台开通「手机号快速验证」，个人主体不支持）', 501)
 }
 
 // ===========================================================================

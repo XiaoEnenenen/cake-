@@ -47,7 +47,7 @@ cloudfunctions/
 |---|---|---|
 | `getUser` | `userDetail` | 当前用户资料（身份取 OPENID） |
 | `updateUser` | `modifyUserInfoV2` | 更新昵称/头像/性别/生日/手机号 |
-| `bindMobile` | `bindMobileWxappV2` | 手机号绑定（**当前返回"未接入"**，需小程序后台开通手机号快速验证） |
+| `bindMobile` | `bindMobileWxappV2` | 手机号绑定（**当前返回 501「手机号快速验证未开通」**，需小程序后台开通该能力；前端入口在 `components/login-sheet` 的「手机号一键登录」，失败时兜底「微信登录」） |
 | `appConfig` | `queryConfigBatch` | 店铺配置：`mallName` / `order_remark_msg` / `order_hx_uids`（2026-09-26 阶段一新增） |
 | `cmsPage` | `cmsPage` | 用户隐私协议 / 常见问题正文，内容取自 `api/shop-config.js` 的 `cms`（阶段一新增） |
 | `importData` | — | 初始化用：把种子数据（分类/商品/轮播/店铺配置）一次性写入集合。与 `cloud-data/*.jsonl` 内容一致。**⚠️ 2026-10-09 阶段二起已从公开路由移除**：只能在云开发控制台「云函数 → 云端测试」或本地测试脚本里调用，`callFunction` 拿不到（见下方路由表处注释） |
@@ -133,7 +133,8 @@ const res = await API.goodsv2({ categoryId: cid })   // 原来：WXAPI.goodsv2(.
 > **2026-10-12 阶段 5.7 再次核对**（`tests/test-cleanup.js` 会重新数一遍并断言本文档的数字）：
 > **2026-10-17 阶段 12 更新**：新增「编辑资料」页后，实际接线为 **16 个页面** +
 > `utils/auth.js` + `utils/pay.js` + `utils/admin.js` + `utils/privacy.js` +
-> `components/bind-mobile` + `components/privacy-popup` + `app.js`。
+> `components/login-sheet` + `components/privacy-popup` + `app.js`。
+> （2026-10-17 顾客反馈整改：`components/bind-mobile` 已归档，手机号一键登录改由 `components/login-sheet` 承担）
 > 16 个页面是：`about-us/detail`、`current-order`、`goods-details`、`index`、`my`、
 > `order-view`、`orders`、`pay`，阶段 10 的 5 个店主端页面
 > `admin/index`、`admin/orders/index`、`admin/goods/index`、`admin/goods-edit/index`、

@@ -6,8 +6,9 @@
      店主改为在订单列表里对取餐码点「完成订单」。
      2026-10-17（阶段 12）：
        · 头像/昵称/手机号统一到「编辑资料」页修改（本页不再内联编辑）；
-       · 增加「退出登录」（只清本机展示，不删订单/地址）；
-       · 增加隐私授权弹窗（首次启动告知，见 components/privacy-popup）。
+       · 「退出登录」入口已移到「编辑资料」页底部（本页只负责展示未登录态）；
+       · 隐私授权弹窗（首次启动告知，只弹一次，见 components/privacy-popup）；
+       · 登录弹层（退出后点「登录」：必须重新勾选隐私政策 + 手机号/微信登录，见 components/login-sheet）。
 
      注意：门店信息全部来自 shop-config.js（用户提供的真实值），页面不写死任何门店数据。
 -->
@@ -185,5 +186,8 @@
 <import src="/template/tabbar/index.wxml" />
 <template is="tabbar" data="{{ tabbarActive: 3 }}" />
 
-<!-- 阶段 12：首次启动隐私授权弹窗（已同意过则不会出现） -->
-<privacy-popup id="privacy-popup" bind:agree="onPrivacyAgree" />
+<!-- 阶段 12：首次启动隐私授权弹窗（只弹一次；已同意/已提示过则不再出现） -->
+<privacy-popup />
+
+<!-- 2026-10-17 顾客反馈：退出登录后点「登录」必须重新弹隐私勾选 + 手机号/微信登录 -->
+<login-sheet id="login-sheet" bind:success="onLoginSuccess" />

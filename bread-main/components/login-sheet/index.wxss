@@ -1,0 +1,167 @@
+/* ===== 登录弹层（2026-10-17）=====
+   配色沿用全站白+黄设计令牌（见 app.wxss）：
+   主黄 #ffd100 / 文字中 #1f1f1f / 辅助 #8a8a8a。 */
+.ls-mask {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  z-index: 9990;
+  background-color: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: flex-end;
+}
+
+.ls-panel {
+  position: relative;
+  width: 100%;
+  padding: 44rpx 36rpx calc(28rpx + env(safe-area-inset-bottom));
+  box-sizing: border-box;
+  background-color: #ffffff;
+  border-radius: 28rpx 28rpx 0 0;
+}
+
+.ls-close {
+  position: absolute;
+  right: 24rpx;
+  top: 18rpx;
+  width: 64rpx;
+  height: 64rpx;
+  line-height: 60rpx;
+  text-align: center;
+  font-size: 44rpx;
+  color: #b3b3b3;
+}
+
+.ls-title {
+  font-size: 38rpx;
+  font-weight: 600;
+  color: #1f1f1f;
+  text-align: center;
+}
+
+.ls-sub {
+  margin-top: 12rpx;
+  font-size: 26rpx;
+  color: #6b6b6b;
+  text-align: center;
+}
+
+.ls-info {
+  margin-top: 24rpx;
+  padding: 18rpx 22rpx;
+  font-size: 23rpx;
+  line-height: 34rpx;
+  color: #6b6b6b;
+  background-color: #faf7ee;
+  border-radius: 14rpx;
+}
+
+.ls-check-row {
+  display: flex;
+  align-items: flex-start;
+  margin-top: 28rpx;
+}
+
+.ls-checkbox {
+  width: 34rpx;
+  height: 34rpx;
+  margin-top: 4rpx;
+  flex-shrink: 0;
+  border: 2rpx solid #c9c9c9;
+  border-radius: 50%;
+  box-sizing: border-box;
+  font-size: 24rpx;
+  line-height: 32rpx;
+  text-align: center;
+  color: #ffffff;
+}
+
+.ls-checkbox-on {
+  border-color: #ffd100;
+  background-color: #ffd100;
+  color: #1f1f1f;
+}
+
+.ls-check-text {
+  flex: 1;
+  margin-left: 14rpx;
+  font-size: 24rpx;
+  line-height: 38rpx;
+  color: #3c3c3c;
+}
+
+.ls-link {
+  color: #b8741a;
+  text-decoration: underline;
+}
+
+.ls-sep {
+  color: #6b6b6b;
+}
+
+.ls-hint {
+  margin-top: 14rpx;
+  padding: 12rpx 18rpx;
+  font-size: 23rpx;
+  line-height: 34rpx;
+  color: #d46b08;
+  background-color: #fff7e6;
+  border-radius: 10rpx;
+}
+
+/* ===== 登录按钮 ===== */
+.ls-btn {
+  margin-top: 24rpx;
+  width: 100% !important;
+  height: 92rpx;
+  line-height: 92rpx;
+  padding: 0;
+  font-size: 30rpx;
+  font-weight: 600;
+  border-radius: 100rpx;
+  border: none;
+  box-sizing: border-box;
+  text-align: center;
+}
+
+/* 微信（小程序）button 自带边框/背景，这里统一清掉 */
+.ls-btn::after {
+  border: none;
+}
+
+.ls-btn-phone {
+  color: #1f1f1f;
+  background-color: #ffd100;
+}
+
+.ls-btn-wechat {
+  margin-top: 18rpx;
+  color: #1f1f1f;
+  background-color: #ffffff;
+  border: 2rpx solid #e3e3e3;
+  line-height: 88rpx;
+}
+
+.ls-btn-disabled {
+  background-color: #f1f1f1 !important;
+  color: #a8a8a8 !important;
+  border-color: #ececec !important;
+}
+
+.ls-phone-tip {
+  margin-top: 16rpx;
+  font-size: 22rpx;
+  line-height: 32rpx;
+  color: #9a9a9a;
+  text-align: center;
+}
+
+.ls-cancel {
+  margin-top: 12rpx;
+  padding: 16rpx 0;
+  text-align: center;
+  font-size: 26rpx;
+  color: #8a8a8a;
+}

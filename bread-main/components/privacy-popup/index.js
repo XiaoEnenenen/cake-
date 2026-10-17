@@ -1,8 +1,16 @@
 /**
- * 隐私授权弹窗（阶段 12）
+ * 隐私授权弹窗（阶段 12；2026-10-17 顾客反馈整改）
  * ---------------------------------------------------------------------------
- * 用途：首次启动（或隐私政策版本更新后）主动告知用户收集哪些信息，必须勾选同意才能继续；
+ * 用途：**首次启动**（或隐私政策版本更新后）主动告知用户收集哪些信息，必须勾选同意才能继续；
  *      也提供「查看隐私政策 / 微信隐私保护指引」入口。
+ *
+ * 2026-10-17 顾客反馈（本组件的两处行为修正）：
+ *   ① 「第二次进小程序、已经是登录状态，还是弹隐私政策」——
+ *      原来只有 agree 状态、没有"已提示"状态：点了「暂不使用」的顾客每次冷启动都会被再弹一次。
+ *      现在弹过一次就记 prompted（见 utils/privacy.js 的 shouldShowOnLaunch），之后不再主动弹；
+ *      真正需要同意时由**登录弹层**（components/login-sheet）强制重新勾选。
+ *   ② 登录态判断不放在这里：微信身份是静默 openid，冷启动时没有可靠的"已登录"信号，
+ *      用"只弹一次"来保证不会重复打扰。
  *
  * 设计取舍：
  *   · **不注册** wx.onNeedPrivacyAuthorization（见 utils/privacy.js 顶部说明）：
@@ -15,7 +23,7 @@
  */
 const PRIVACY = require('../../utils/privacy')
 
-// 同一次运行里只主动弹一次（页面来回切换不重复打扰；下次冷启动仍未同意会再弹）
+// 同一次运行里只主动弹一次（页面来回切换不重复打扰；下次冷启动看首次启动告知是否已弹过）
 let shownThisRun = false
 
 Component({
@@ -27,8 +35,11 @@ Component({
 
   lifetimes: {
     attached() {
-      if (!PRIVACY.hasAgreed() && !shownThisRun) {
+      // 只弹一次：已同意、或已经弹过一次（含点「暂不使用」）都不再主动弹。
+      if (PRIVACY.shouldShowOnLaunch() && !shownThisRun) {
         shownThisRun = true
+        // 先记"已提示"，再延迟显示：即使顾客直接杀进程，下次冷启动也不会重复打扰。
+        PRIVACY.markPrompted()
         // 稍等首屏渲染，避免弹窗把首页内容完全遮住
         this._timer = setTimeout(() => this.setData({ show: true }), 400)
       }
@@ -39,7 +50,7 @@ Component({
   },
 
   methods: {
-    /** 页面可主动打开（例如点「登录」但还没同意隐私政策时） */
+    /** 页面可主动打开（例如需要临门提示时） */
     show() {
       this.setData({ show: true, checked: PRIVACY.hasAgreed() || this.data.checked })
     },
@@ -80,6 +91,7 @@ Component({
       this.agree()
     },
 
+    /** 暂不使用：只是关掉本次告知；"已提示"状态在弹出时已记录，不会下次冷启动再弹 */
     onDisagree() {
       this.setData({ show: false })
       this.triggerEvent('disagree')

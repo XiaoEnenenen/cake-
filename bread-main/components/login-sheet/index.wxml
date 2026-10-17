@@ -1,0 +1,48 @@
+<!-- ===== 登录弹层（2026-10-17）=====
+     顾客反馈：退出登录后点「登录」必须重新弹隐私勾选 + 手机号/微信登录。
+     注意：没勾选隐私政策时不能渲染 open-type="getPhoneNumber" 的真按钮，
+           否则微信会在用户同意之前就弹手机号授权框（见 index.js 顶部说明）。 -->
+<view wx:if="{{ show }}" class="ls-mask" catchtouchmove="noop">
+  <view class="ls-panel" catchtap="noop">
+    <view class="ls-close" bindtap="close">×</view>
+
+    <view class="ls-title">登录 / 注册</view>
+    <view class="ls-sub">登录后可查看订单、保存收货地址</view>
+    <view class="ls-info">我们用微信身份识别你的账号；手机号用于订单联系（可选）</view>
+
+    <view class="ls-check-row" bindtap="toggleCheck">
+      <view class="ls-checkbox {{ checked ? 'ls-checkbox-on' : '' }}">{{ checked ? '✓' : '' }}</view>
+      <view class="ls-check-text">
+        我已阅读并同意
+        <text class="ls-link" catchtap="onOpenPolicy">《隐私政策》</text>
+        <text class="ls-sep">和</text>
+        <text class="ls-link" catchtap="onOpenContract">《微信隐私保护指引》</text>
+      </view>
+    </view>
+
+    <view wx:if="{{ phoneHint }}" class="ls-hint">{{ phoneHint }}</view>
+
+    <block wx:if="{{ checked }}">
+      <button
+        class="ls-btn ls-btn-phone {{ (logging || phoneLoading) ? 'ls-btn-disabled' : '' }}"
+        open-type="getPhoneNumber"
+        disabled="{{ logging || phoneLoading }}"
+        bindgetphonenumber="onGetPhoneNumber"
+      >{{ phoneLoading ? '手机号登录中…' : '手机号一键登录' }}</button>
+      <button
+        class="ls-btn ls-btn-wechat {{ logging ? 'ls-btn-disabled' : '' }}"
+        disabled="{{ logging }}"
+        bindtap="onWechatLogin"
+      >{{ logging ? '登录中…' : '微信登录' }}</button>
+    </block>
+
+    <!-- 没勾选：只渲染普通按钮样式，点击仅提示，不会触发微信授权 -->
+    <block wx:else>
+      <view class="ls-btn ls-btn-phone ls-btn-disabled" bindtap="onLoginBlocked">手机号一键登录</view>
+      <view class="ls-btn ls-btn-wechat ls-btn-disabled" bindtap="onLoginBlocked">微信登录</view>
+    </block>
+
+    <view class="ls-phone-tip">手机号快速验证未开通时，请使用「微信登录」</view>
+    <view class="ls-cancel" bindtap="close">暂不登录</view>
+  </view>
+</view>

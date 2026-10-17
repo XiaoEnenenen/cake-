@@ -138,14 +138,15 @@ function main() {
   check('仍在用的组件没有被误删（van-notice-bar / shop-map 等）',
     !!comps['van-notice-bar'] && !!comps['shop-map'] && !!comps['van-popup'])
   // 全局注册的组件名必须能在某个 wxml 里找到
-  // （bind-mobile 单独豁免：它是留给阶段 4.4「手机号快速验证」的，见 shop-config 注释）
+  // （2026-10-17：原来给 bind-mobile 的豁免已随该组件归档一起删除 —— 登录弹层
+  //  components/login-sheet 接手了「手机号一键登录」，不再有"注册了但没人用"的组件）
   const wxmlAll = walk('.', [])
     .filter((f) => f.endsWith('.wxml'))
     .map((f) => src(f)).join('\n')
   const unused = Object.keys(comps).filter((name) =>
-    name !== 'bind-mobile' && !new RegExp('<' + name + '(?=[\\s/>])').test(wxmlAll)
+    !new RegExp('<' + name + '(?=[\\s/>])').test(wxmlAll)
   )
-  check('注册的组件（bind-mobile 除外）都真的被用到', unused.length === 0, unused)
+  check('注册的组件都真的被用到', unused.length === 0, unused)
 
   // =========================================================================
   console.log('\n=== 4) 图片资源 ===')

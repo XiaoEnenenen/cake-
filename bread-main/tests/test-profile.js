@@ -1,14 +1,19 @@
 /**
- * 阶段 12「用户体系与隐私合规」回归测试（2026-10-17 新增）
+ * 阶段 12「用户体系与隐私合规」回归测试（2026-10-17 新增；2026-10-17 顾客反馈后扩充）
  * ---------------------------------------------------------------------------
- * 覆盖三件事：
+ * 覆盖四件事：
  *
  *   1) **隐私合规**：隐私政策正文不再是"待补充"占位、应用里有勾选同意弹窗
  *      （components/privacy-popup）、首次启动/隐私接口页都挂载了它，
  *      `app.json` 打开隐私检查；后台《用户隐私保护指引》的配置步骤写进文档。
- *   2) **退出登录**：只清本机展示（storage.loggedOut），不删除订单/地址；
- *      退出后「我的」页显示登录卡片、不再自动拉资料；点登录恢复。
- *   3) **编辑资料**：独立页 pages/profile-edit 支持头像 / 昵称 / 手机号 / 收货地址入口；
+ *   2) **首次启动只弹一次**（顾客反馈第 1 条）：弹过即记 `privacyPromptedVersion`，
+ *      第二次进小程序（哪怕还没点同意、已是登录状态）都不再主动弹。
+ *   3) **退出登录后重新登录必须先过隐私**（顾客反馈第 2、3 条）：
+ *      components/login-sheet 每次打开都把勾选框重置为未勾选，
+ *      顾客必须重新勾选后才能「手机号一键登录 / 微信登录」；没勾选时连
+ *      open-type="getPhoneNumber" 的真按钮都不渲染（不会先弹微信授权框）。
+ *      手机号快速验证未开通时明确提示并给「用微信登录」兜底，绝不伪造登录成功。
+ *   4) **编辑资料**：独立页 pages/profile-edit 支持头像 / 昵称 / 手机号 / 收货地址入口；
  *      服务端 updateUser 补了字段校验（昵称 ≤20、手机号 11 位、头像不允许本地临时路径、
  *      payload 里的 _openid 等一律忽略）。
  *
@@ -194,7 +199,85 @@ function loadPage(rel, opts) {
   inst.__toasts = toasts
   inst.__modals = modals
   inst.__navigations = navigations
+  // 组件桩：页面里 this.selectComponent('#login-sheet') 用它
+  inst.selectComponent = (sel) => (o.components && o.components[sel]) || null
   return inst
+}
+
+/**
+ * 组件沙箱（Component() 构造器 + lifetimes.attached）。
+ * 与 loadPage 同一套 require 路径感知；额外提供 __events（triggerEvent 记录）。
+ */
+function loadComponent(rel, opts) {
+  const o = opts || {}
+  const toasts = []
+  const modals = []
+  const events = []
+  const wxBase = Object.assign({
+    showLoading() {}, hideLoading() {},
+    showToast(t) { toasts.push(t && t.title) },
+    showModal(m) { modals.push(m) },
+    getStorageSync() { return '' }, setStorageSync() {}, removeStorageSync() {},
+    navigateTo() {}, openPrivacyContract() {}
+  }, o.wx || {})
+  const wx = new Proxy(wxBase, { get(t, k) { return k in t ? t[k] : () => {} } })
+  const extraReq = o.requires || {}
+  const compAbs = path.join(ROOT, rel)
+  const nodeRequire = createRequire(compAbs)
+  let compObj = null
+  const sandbox = {
+    console: { log() {}, warn() {}, error() {} },
+    setInterval, clearInterval, setTimeout, clearTimeout,
+    Component: (obj) => { compObj = obj },
+    getApp: () => ({ tabbarChange() {}, globalData: {} }),
+    require: (p) => {
+      if (!/^\./.test(p)) return {}
+      const resolved = nodeRequire.resolve(p).replace(/\.js$/, '').replace(/\\/g, '/')
+      for (const key of Object.keys(extraReq)) {
+        if (new RegExp(key).test(resolved)) return extraReq[key]
+      }
+      return nodeRequire(p)
+    },
+    wx
+  }
+  vm.runInNewContext(src(rel), vm.createContext(sandbox), { filename: rel })
+  if (!compObj) throw new Error('Component() 没有被调用：' + rel)
+  const inst = {
+    data: JSON.parse(JSON.stringify(compObj.data || {})),
+    setData(d, cb) {
+      Object.assign(this.data, d)
+      if (cb) cb()
+    },
+    triggerEvent(name, detail) { events.push({ name, detail }) },
+    __toasts: toasts,
+    __modals: modals,
+    __events: events
+  }
+  Object.assign(inst, compObj.methods || {})
+  inst.__attached = () => {
+    if (compObj.lifetimes && typeof compObj.lifetimes.attached === 'function') {
+      compObj.lifetimes.attached.call(inst)
+    }
+  }
+  inst.__detached = () => {
+    if (compObj.lifetimes && typeof compObj.lifetimes.detached === 'function') {
+      compObj.lifetimes.detached.call(inst)
+    }
+  }
+  return inst
+}
+
+/** 用一份可控 storage 重新加载真实的 utils/privacy.js（它直接读全局 wx） */
+function loadPrivacy(store, wxExtra) {
+  const wxStub = Object.assign({
+    getStorageSync(k) { return store[k] === undefined ? '' : store[k] },
+    setStorageSync(k, v) { store[k] = v },
+    removeStorageSync(k) { delete store[k] },
+    navigateTo() {}, openPrivacyContract() {}
+  }, wxExtra || {})
+  global.wx = wxStub
+  delete require.cache[require.resolve('../utils/privacy')]
+  return require('../utils/privacy')
 }
 
 async function main() {
@@ -284,6 +367,27 @@ async function main() {
       /PRIVACY\.markAgreed\(\)/.test(popupJs) && /POLICY_VERSION/.test(src('utils/privacy.js')))
     check('弹窗有「暂不使用」选项（不强制登录）', /暂不使用/.test(popupWxml))
 
+    // 2026-10-17 顾客反馈：首次启动只弹一次；登录必须重新勾选
+    const privacyJs = src('utils/privacy.js')
+    check('★ 隐私"已提示"状态版本化（第二次进小程序不再弹）',
+      /privacyPromptedVersion/.test(privacyJs) && /hasPrompted/.test(privacyJs) &&
+      /markPrompted/.test(privacyJs) && /shouldShowOnLaunch/.test(privacyJs))
+    check('★ 弹窗依赖 shouldShowOnLaunch（不再每次冷启动都主动弹）',
+      /PRIVACY\.shouldShowOnLaunch\(\)/.test(popupJs) && /PRIVACY\.markPrompted\(\)/.test(popupJs))
+    check('★ 登录时主动请求平台级隐私授权（wx.requirePrivacyAuthorize）',
+      /requirePrivacyAuthorize/.test(privacyJs) && /requestPlatformAuthorize/.test(privacyJs))
+    check('★ app.json 注册登录弹层 login-sheet',
+      (appJson.usingComponents || {})['login-sheet'] === '/components/login-sheet/index')
+    ;['index.js', 'index.json', 'index.wxml', 'index.wxss'].forEach((f) => {
+      check('  登录弹层组件文件齐全：' + f, exists('components/login-sheet/' + f))
+    })
+    check('★ 「我的」页挂载登录弹层（退出后重新登录入口）',
+      /<login-sheet/.test(src('pages/my/index.wxml')) &&
+      /bind:success="onLoginSuccess"/.test(src('pages/my/index.wxml')))
+    check('★ 旧 bind-mobile 组件已归档（登录弹层接手手机号一键登录）',
+      !exists('components/bind-mobile/index.js') &&
+      (appJson.usingComponents || {})['bind-mobile'] === undefined)
+
     // 首次启动/隐私接口页面都挂载了弹窗
     const mountedPages = [
       'pages/index/index.wxml',
@@ -328,12 +432,12 @@ async function main() {
   }
 
   // =========================================================================
-  console.log('\n=== 3) 「我的」页：退出登录 / 重新登录 / 隐私门禁 ===')
+  console.log('\n=== 3) 「我的」页：退出登录后重新登录必须先过登录弹层 ===')
   // =========================================================================
   {
     const store = { loggedOut: '1' }
-    const calls = { userDetail: 0, authorize: 0, loginOut: 0 }
-    let privacyAgreed = true
+    const calls = { userDetail: 0, authorize: 0 }
+    const sheet = { opened: 0, open() { this.opened++ } }
     const api = {
       userDetail: async () => {
         calls.userDetail++
@@ -342,12 +446,7 @@ async function main() {
     }
     const auth = {
       checkHasLogined: async () => true,
-      authorize: async () => { calls.authorize++; return {} },
-      loginOut: () => { calls.loginOut++ }
-    }
-    const privacy = {
-      hasAgreed: () => privacyAgreed,
-      resetAgreed() {}
+      authorize: async () => { calls.authorize++; return {} }
     }
     const page = loadPage('pages/my/index.js', {
       requires: {
@@ -357,9 +456,9 @@ async function main() {
         'utils/address$': { getDefault: () => null, formatFull: () => '' },
         'utils/admin$': { isAdminOpenid: () => false, ensureWhitelist: async () => true },
         'utils/location$': { isDevOrTrialEnv: () => false, openNavigation: async () => {} },
-        'utils/privacy$': privacy,
         'utils/log$': QUIET_LOG
       },
+      components: { '#login-sheet': sheet },
       wx: {
         getStorageSync(k) { return store[k] === undefined ? '' : store[k] },
         setStorageSync(k, v) { store[k] = v },
@@ -374,20 +473,20 @@ async function main() {
     check('退出状态说明写清"订单和地址仍保留"',
       /订单/.test(src('pages/my/index.wxml')) && /保留/.test(src('pages/my/index.wxml')))
 
-    // 隐私未同意时点登录 → 不授权、提示先同意
-    privacyAgreed = false
+    // 顾客反馈第 2 条：退出登录后点「登录」不能静默直接登录
     page.login()
-    check('★ 未同意隐私政策时点登录 → 先要求同意（不发起登录）',
-      calls.authorize === 0 && page.__toasts.some((t) => /隐私政策/.test(String(t))), page.__toasts)
+    check('★ 退出登录后点「登录」→ 打开登录弹层（不静默登录）',
+      sheet.opened === 1 && calls.authorize === 0, { sheet, calls })
+    check('★ 页面不再有"隐私同意后自动继续登录"的旧静默逻辑',
+      typeof page.onPrivacyAgree === 'undefined' &&
+      !/_pendingLogin/.test(src('pages/my/index.js')))
 
-    // 弹窗同意后自动继续登录
-    privacyAgreed = true
-    page.onPrivacyAgree()
+    // 弹层登录成功后回调本页：清 loggedOut + 重新拉资料
+    page.onLoginSuccess()
     await new Promise((r) => setTimeout(r, 0))
-    check('★ 隐私同意后自动继续登录（不用再点一次）',
-      calls.authorize === 1 && calls.userDetail === 1 &&
-      page.data.loggedOut === false && store.loggedOut === undefined,
-      { calls, store, loggedOut: page.data.loggedOut })
+    check('★ 弹层登录成功 → 清本机退出标志并恢复资料',
+      calls.userDetail === 1 && page.data.loggedOut === false &&
+      store.loggedOut === undefined, { calls, store, loggedOut: page.data.loggedOut })
 
     // 2026-10-17 顾客反馈：退出登录入口移到「编辑资料」页底部，本页不再放
     check('★ 「我的」页不再有退出登录入口/逻辑',
@@ -395,20 +494,240 @@ async function main() {
       !/bindtap="logout"/.test(src('pages/my/index.wxml')) &&
       !/logout\(\)/.test(src('pages/my/index.js')))
 
-    // 点用户卡：已退出 → 登录；已登录 → 进编辑资料页
+    // 点用户卡：已退出 → 再开登录弹层；已登录 → 进编辑资料页
     page.data.loggedOut = true
-    const before = calls.authorize
     page.onTapUserCard()
-    await new Promise((r) => setTimeout(r, 0))
-    check('已退出时点用户卡 = 重新登录', calls.authorize === before + 1, calls)
+    check('已退出时点用户卡 = 打开登录弹层（仍不静默登录）',
+      sheet.opened === 2 && calls.authorize === 0, { sheet, calls })
     page.data.loggedOut = false
     page.onTapUserCard()
     check('已登录时点用户卡 = 进入「编辑资料」页',
       page.__navigations.indexOf('/pages/profile-edit/index') >= 0, page.__navigations)
+
+    // 已登录状态 onShow：正常拉资料，不触发登录弹层
+    page.onShow()
+    await new Promise((r) => setTimeout(r, 0))
+    check('已登录状态 onShow 正常拉资料（不需要再登录）',
+      calls.userDetail >= 2 && page.data.loggedOut === false, { calls, data: page.data })
   }
 
   // =========================================================================
-  console.log('\n=== 4) 编辑资料页：回填 / 校验 / 保存 / 头像并发 / 地址入口 ===')
+  console.log('\n=== 4) 登录弹层：隐私勾选 / 手机号一键登录 / 微信登录 ===')
+  // =========================================================================
+  {
+    const navs = []
+    const calls = { bind: 0, markAgreed: 0, authorize: 0, lastBind: null }
+    let platformResult = { ok: true, denied: false }
+    let bindResult = { code: 501, msg: '手机号快速验证未开通' }
+    const privacyStub = {
+      async requestPlatformAuthorize() { return platformResult },
+      markAgreed() { calls.markAgreed++ },
+      openPolicy() { navs.push('/pages/about-us/detail?key=agreement') },
+      openContractPage() { navs.push('/pages/about-us/detail?key=agreement') }
+    }
+    const api = {
+      async bindMobile(d) { calls.bind++; calls.lastBind = d; return bindResult }
+    }
+    const auth = { async authorize() { calls.authorize++ } }
+    const sheet = loadComponent('components/login-sheet/index.js', {
+      requires: {
+        'utils/auth$': auth,
+        'api-map$': api,
+        'utils/privacy$': privacyStub,
+        'utils/log$': QUIET_LOG
+      }
+    })
+
+    const wxml = src('components/login-sheet/index.wxml')
+    check('★ 弹层提供隐私勾选 +《隐私政策》《微信隐私保护指引》入口',
+      /toggleCheck/.test(wxml) && /《隐私政策》/.test(wxml) &&
+      /《微信隐私保护指引》/.test(wxml) && /onOpenPolicy/.test(wxml))
+    check('★ 弹层提供「手机号一键登录」(getPhoneNumber) 与「微信登录」',
+      /open-type="getPhoneNumber"/.test(wxml) &&
+      /bindgetphonenumber="onGetPhoneNumber"/.test(wxml) && /微信登录/.test(wxml))
+    check('★ 未勾选时不渲染真正的手机号授权按钮（先同意后授权）',
+      /wx:if="\{\{ checked \}\}"/.test(wxml) && /onLoginBlocked/.test(wxml))
+
+    sheet.open()
+    check('★ 每次打开都把隐私勾选重置为未勾选（退出后重新登录必须重新同意）',
+      sheet.data.show === true && sheet.data.checked === false)
+
+    await sheet.onWechatLogin()
+    check('★ 没勾选隐私政策 → 微信登录不发起',
+      calls.authorize === 0 && sheet.__toasts.some((t) => /隐私政策/.test(String(t))),
+      { calls, toasts: sheet.__toasts })
+
+    // 勾选 + 平台授权通过 → 登录成功
+    sheet.toggleCheck()
+    await sheet.onWechatLogin()
+    check('★ 勾选同意 + 微信登录成功',
+      calls.authorize === 1 && calls.markAgreed === 1 &&
+      sheet.__events.some((e) => e.name === 'success' && e.detail && e.detail.method === 'wechat'),
+      { calls, events: sheet.__events })
+    check('  登录成功后关闭弹层、复位登录中标志',
+      sheet.data.show === false && sheet.data.logging === false)
+
+    // 平台级授权被用户明确拒绝 → 不登录
+    calls.authorize = 0; calls.markAgreed = 0
+    platformResult = { ok: false, denied: true, errMsg: 'requirePrivacyAuthorize:fail auth deny' }
+    sheet.open(); sheet.toggleCheck()
+    await sheet.onWechatLogin()
+    check('★ 用户在微信隐私框里拒绝 → 不登录、不记同意',
+      calls.authorize === 0 && calls.markAgreed === 0 &&
+      sheet.__toasts.some((t) => /隐私政策/.test(String(t))), { calls, toasts: sheet.__toasts })
+
+    // 后台未配置隐私指引 / 旧基础库（非用户拒绝）→ 不能把登录堵死
+    platformResult = { ok: false, denied: false, unsupported: true }
+    calls.authorize = 0; calls.markAgreed = 0
+    sheet.open(); sheet.toggleCheck()
+    await sheet.onWechatLogin()
+    check('  后台未配置隐私指引 / 旧基础库 → 按本地同意继续登录（不堵死登录）',
+      calls.authorize === 1 && calls.markAgreed === 1, calls)
+
+    // ===== 手机号一键登录 =====
+    platformResult = { ok: true, denied: false }
+    calls.authorize = 0; calls.markAgreed = 0; calls.bind = 0
+    sheet.open(); sheet.toggleCheck()
+    const modalsBefore = sheet.__modals.length
+    await sheet.onGetPhoneNumber({ detail: { errMsg: 'getPhoneNumber:fail user deny' } })
+    check('用户取消手机号授权 → 静默返回（不登录、不报错）',
+      sheet.__modals.length === modalsBefore && calls.bind === 0 && calls.authorize === 0)
+
+    await sheet.onGetPhoneNumber({ detail: { errMsg: 'getPhoneNumber:fail no permission' } })
+    check('★ 未开通手机号快速验证 → 明确提示且不伪造登录',
+      sheet.__modals.length === modalsBefore + 1 && calls.bind === 0 &&
+      calls.authorize === 0 &&
+      /手机号快速验证/.test(sheet.__modals[modalsBefore].content),
+      { modals: sheet.__modals, calls })
+    check('  弹层内保留"未开通"常驻提示', /未开通/.test(sheet.data.phoneHint))
+
+    // 点「用微信登录」兜底
+    sheet.__modals[modalsBefore].success({ confirm: true })
+    await new Promise((r) => setTimeout(r, 0))
+    check('★ 手机号不可用时可一键改走微信登录',
+      calls.authorize === 1 && calls.markAgreed === 1, calls)
+
+    // 手机号授权成功但服务端未接入（501）→ 不伪造成功
+    bindResult = { code: 501, msg: '手机号快速验证未开通' }
+    calls.authorize = 0
+    sheet.open(); sheet.toggleCheck()
+    const modals2 = sheet.__modals.length
+    await sheet.onGetPhoneNumber({ detail: { errMsg: 'getPhoneNumber:ok', code: 'CODE-1' } })
+    check('★ 手机号授权成功但服务端未接入 → 不假装登录成功',
+      calls.bind === 1 && calls.authorize === 0 &&
+      sheet.__modals.length === modals2 + 1 &&
+      !sheet.__events.some((e) => e.name === 'success' &&
+        e.detail && e.detail.method === 'phone'),
+      { calls, modals: sheet.__modals.length, events: sheet.__events })
+    check('  云函数返回原因回显给顾客',
+      /未开通/.test(sheet.__modals[modals2].content), sheet.__modals[modals2])
+
+    // 手机号授权成功 + 服务端绑定成功（能力开通后的目标路径已就绪）
+    bindResult = { code: 0, data: { base: { mobile: '13612348371' } } }
+    calls.authorize = 0; calls.markAgreed = 0
+    sheet.open(); sheet.toggleCheck()
+    await sheet.onGetPhoneNumber({ detail: { errMsg: 'getPhoneNumber:ok', code: 'CODE-2' } })
+    check('★ 手机号换绑成功 → 完成登录（能力开通后的路径）',
+      calls.bind === 2 && calls.authorize === 1 && calls.markAgreed === 1 &&
+      sheet.__events.some((e) => e.name === 'success' &&
+        e.detail && e.detail.method === 'phone'),
+      { calls, events: sheet.__events })
+    check('  传给服务端的是 getPhoneNumber 的 code',
+      calls.lastBind && calls.lastBind.code === 'CODE-2', calls.lastBind)
+    sheet.onOpenPolicy()
+    sheet.onOpenContract()
+    check('  隐私政策 / 微信隐私指引入口可用', navs.length === 2, navs)
+  }
+
+  // =========================================================================
+  console.log('\n=== 5) 隐私弹窗：首次启动只弹一次（顾客反馈第 1 条）===')
+  // =========================================================================
+  {
+    // ---- utils/privacy 的状态机 ----
+    const storeA = {}
+    let privacy = loadPrivacy(storeA)
+    check('  未同意/未提示 → 冷启动应主动弹', privacy.shouldShowOnLaunch() === true)
+    privacy.markPrompted()
+    check('★ 弹过一次后（即使点「暂不使用」未同意）不再反复打扰',
+      privacy.shouldShowOnLaunch() === false && privacy.hasAgreed() === false)
+    privacy.markAgreed()
+    check('  同意后记录版本化状态', privacy.hasAgreed() === true)
+    privacy.resetPrompted()
+    check('  已同意时即使清掉"已提示"也不再弹（同意优先）',
+      privacy.shouldShowOnLaunch() === false)
+
+    // ---- requestPlatformAuthorize 的三种结果 ----
+    let platformOk = false
+    privacy = loadPrivacy({}, {
+      requirePrivacyAuthorize(opts) { platformOk ? opts.success() : opts.fail({ errMsg: 'requirePrivacyAuthorize:fail auth deny' }) }
+    })
+    let r = await privacy.requestPlatformAuthorize()
+    check('  平台隐私授权：用户拒绝 → denied=true', r.ok === false && r.denied === true, r)
+    platformOk = true
+    r = await privacy.requestPlatformAuthorize()
+    check('  平台隐私授权：用户同意 → ok=true', r.ok === true && r.denied === false, r)
+    privacy = loadPrivacy({})
+    r = await privacy.requestPlatformAuthorize()
+    check('  旧基础库无 requirePrivacyAuthorize → 按不支持放行', r.ok === true && r.unsupported === true, r)
+
+    // ---- 弹窗组件：首次自动弹、只弹一次 ----
+    const storeB = {}
+    loadPrivacy(storeB)
+    const popup = loadComponent('components/privacy-popup/index.js', {
+      wx: {
+        getStorageSync(k) { return storeB[k] === undefined ? '' : storeB[k] },
+        setStorageSync(k, v) { storeB[k] = v },
+        removeStorageSync(k) { delete storeB[k] }
+      }
+    })
+    popup.__attached()
+    await new Promise((r2) => setTimeout(r2, 450))
+    check('★ 首次启动自动弹隐私告知', popup.data.show === true && popup.data.checked === false)
+    check('★ 弹出即记录"已提示"（下次冷启动不再弹）',
+      storeB.privacyPromptedVersion !== undefined, storeB)
+    popup.onAgreeTap()
+    check('没有勾选 → 同意无效（并提示）',
+      popup.data.show === true && popup.__toasts.some((t) => /隐私政策/.test(String(t))))
+    popup.toggleCheck()
+    popup.onAgreeTap()
+    check('★ 勾选后同意 → 关闭弹窗并记同意',
+      popup.data.show === false && storeB.privacyAgreedVersion !== undefined, storeB)
+
+    // 第二次进小程序：上次点了「暂不使用」（已提示但未同意）→ 不再弹
+    const storeC = { privacyPromptedVersion: '2026-10-17' }
+    loadPrivacy(storeC)
+    const popup2 = loadComponent('components/privacy-popup/index.js', {
+      wx: {
+        getStorageSync(k) { return storeC[k] === undefined ? '' : storeC[k] },
+        setStorageSync(k, v) { storeC[k] = v },
+        removeStorageSync(k) { delete storeC[k] }
+      }
+    })
+    popup2.__attached()
+    await new Promise((r3) => setTimeout(r3, 450))
+    check('★ 第二次进小程序（已提示但未同意）→ 不再弹隐私政策',
+      popup2.data.show === false && popup2.__toasts.length === 0, popup2.data)
+
+    // 已同意过 → 冷启动不弹
+    const storeD = { privacyAgreedVersion: '2026-10-17' }
+    loadPrivacy(storeD)
+    const popup3 = loadComponent('components/privacy-popup/index.js', {
+      wx: {
+        getStorageSync(k) { return storeD[k] === undefined ? '' : storeD[k] },
+        setStorageSync(k, v) { storeD[k] = v },
+        removeStorageSync(k) { delete storeD[k] }
+      }
+    })
+    popup3.__attached()
+    await new Promise((r4) => setTimeout(r4, 450))
+    check('★ 已同意的登录状态再进小程序 → 不弹隐私政策',
+      popup3.data.show === false, popup3.data)
+
+    delete global.wx
+  }
+
+  // =========================================================================
+  console.log('\n=== 6) 编辑资料页：回填 / 校验 / 保存 / 头像并发 / 地址入口 ===')
   // =========================================================================
   {
     let modified = null
@@ -529,7 +848,7 @@ async function main() {
   }
 
   // =========================================================================
-  console.log('\n=== 5) 静态接线：路由 / 组件 / 不再是内联编辑 ===')
+  console.log('\n=== 7) 静态接线：路由 / 组件 / 不再是内联编辑 ===')
   // =========================================================================
   {
     const appJson = JSON.parse(src('app.json'))
@@ -561,6 +880,12 @@ async function main() {
       !/startEditProfile/.test(myJs) && !/saveProfile/.test(myJs) &&
       !/chooseAvatar/.test(myWxml))
     check('我的页挂载了隐私弹窗', /<privacy-popup/.test(myWxml))
+    check('★ 我的页挂载登录弹层（退出后重新登录的隐私门禁入口）',
+      /<login-sheet\b/.test(myWxml) &&
+      (/<privacy-popup/.test(myWxml)) &&
+      !/onPrivacyAgree/.test(myJs))
+    check('★ 登录弹层全局注册且被真实引用（不是零使用组件）',
+      (appJson.usingComponents || {})['login-sheet'] === '/components/login-sheet/index')
     // 2026-10-17 顾客反馈：不要单独的「编辑资料」列表项/文字按钮，点用户卡整行即可
     check('★ 点用户卡整行进入「编辑资料」（不再有单独入口行）',
       /onTapUserCard/.test(myWxml) && /goProfileEdit/.test(myJs) &&

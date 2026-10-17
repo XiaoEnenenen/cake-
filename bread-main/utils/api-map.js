@@ -356,8 +356,8 @@ const API = {
 
   /**
    * 手机号绑定。
-   * 页面/组件用法：utils/pay 的绑定弹层、components/bind-mobile
-   * 云函数 bindMobile 当前返回「未接入」提示，不伪造绑定成功（阶段 4.4）。
+   * 组件用法：components/login-sheet 的「手机号一键登录」（getPhoneNumber 回调的 code）。
+   * 云函数 bindMobile 当前返回「手机号快速验证未开通」提示，不伪造绑定成功（阶段 4.4 的一半）。
    */
   bindMobile: (data) => callCloud('bindMobile', data || {}),
 

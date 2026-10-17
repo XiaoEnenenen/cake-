@@ -35,9 +35,9 @@
   },
   "usingComponents": {
     "parser":"/components/parser.20200414.min/parser",
-    "bind-mobile": "/components/bind-mobile/index",
     "shop-map": "/components/shop-map/index",
     "privacy-popup": "/components/privacy-popup/index",
+    "login-sheet": "/components/login-sheet/index",
     "van-tabbar": "@vant/weapp/tabbar/index",
     "van-tabbar-item": "@vant/weapp/tabbar-item/index",
     "van-button": "@vant/weapp/button/index",
