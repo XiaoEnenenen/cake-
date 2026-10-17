@@ -543,8 +543,14 @@ async function main() {
       !/startEditProfile/.test(myJs) && !/saveProfile/.test(myJs) &&
       !/chooseAvatar/.test(myWxml))
     check('我的页挂载了隐私弹窗', /<privacy-popup/.test(myWxml))
-    check('编辑资料入口出现在常用功能',
-      /goProfileEdit/.test(myWxml) && /编辑资料/.test(myWxml))
+    // 2026-10-17 顾客反馈：不要单独的「编辑资料」列表项/文字按钮，点用户卡整行即可
+    check('★ 点用户卡整行进入「编辑资料」（不再有单独入口行）',
+      /onTapUserCard/.test(myWxml) && /goProfileEdit/.test(myJs) &&
+      !/bindtap="goProfileEdit"/.test(myWxml) &&
+      !/class="user-edit">编辑资料/.test(myWxml),
+      { wxmlHasRow: /list-title">编辑资料/.test(myWxml) })
+    check('  用户卡右侧保留一个指向箭头（可点的视觉提示）',
+      /class="list-arrow"/.test(myWxml))
   }
 
   console.log('\n' + '='.repeat(60))

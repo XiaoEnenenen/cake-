@@ -354,7 +354,7 @@ async function main() {
       !/wx\.cloud\.uploadFile/.test(profileJs) && !/wx\.cloud/.test(profileJs))
     check('保存前拦住"头像还没上传成功"的情况',
       /avatarIsLocal[\s\S]{0,200}请重新选择/.test(profileJs))
-    check('「我的」页有进入编辑资料的入口', /goProfileEdit/.test(myJs) && /编辑资料/.test(myWxml))
+    check('「我的」页点用户卡整行进入编辑资料', /onTapUserCard/.test(myWxml) && /goProfileEdit/.test(myJs))
     check('「我的」页不再内联编辑（旧编辑态字段已删除）',
       !/profileEditing/.test(myJs) && !/draftNick/.test(myJs))
   }

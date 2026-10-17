@@ -41,7 +41,7 @@
     </view>
   </block>
 
-  <!-- 已登录：展示资料，点击进入「编辑资料」页 -->
+  <!-- 已登录：整行可点，直接进入「编辑资料」页（不再放单独的文字按钮/列表项） -->
   <block wx:else>
     <view class="user-row" bindtap="onTapUserCard">
       <image
@@ -55,7 +55,7 @@
         <view class="user-nick">{{ (userInfo && userInfo.nick) || '点击完善资料' }}</view>
         <view class="user-id">用户编号：{{ userNo }}</view>
       </view>
-      <view class="user-edit">编辑资料</view>
+      <view class="list-arrow"></view>
     </view>
   </block>
 </view>
@@ -86,16 +86,6 @@
     <view class="list-body">
       <view class="list-title">店主中心</view>
       <view class="list-sub">改商品、看订单、调配送费</view>
-    </view>
-    <view class="list-arrow"></view>
-  </view>
-
-  <!-- 阶段 12：编辑资料（头像 / 昵称 / 手机号 / 收货地址） -->
-  <view wx:if="{{ !loggedOut }}" class="list-item" bindtap="goProfileEdit">
-    <image class="list-icon" mode="aspectFit" src="/images/user-icon-edit@2x.png"></image>
-    <view class="list-body">
-      <view class="list-title">编辑资料</view>
-      <view class="list-sub">头像、昵称、手机号、收货地址</view>
     </view>
     <view class="list-arrow"></view>
   </view>
