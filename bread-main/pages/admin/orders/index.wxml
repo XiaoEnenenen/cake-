@@ -103,6 +103,13 @@
             data-index="{{ index }}"
             catchtap="openFreight"
           >确认运费</view>
+          <!-- P0-1：待支付单可由店主手动确认线下收款（到店付 / 线下转账）→ 制作中 -->
+          <view
+            wx:if="{{ item.canMarkPaid }}"
+            class="ao-btn ao-btn-primary"
+            data-index="{{ index }}"
+            catchtap="markPaid"
+          >{{ markingPaidId === item.id ? '确认中…' : '确认收款' }}</view>
           <view
             wx:if="{{ item.canFinish }}"
             class="ao-btn ao-btn-primary"

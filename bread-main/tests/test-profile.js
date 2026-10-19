@@ -662,7 +662,11 @@ async function main() {
       platformCalls === 1, { platformCalls })
 
     // 第二次进小程序：上次点了「暂不使用」（已提示但未同意）→ 不再弹
-    const storeC = { privacyPromptedVersion: '2026-10-17' }
+    // 2026-10-19：版本号改为动态读取 utils/privacy 的 POLICY_VERSION。
+    //   原来这里硬编码 '2026-10-17'，P0-4 修正协议后版本升到 '2026-10-19'，
+    //   硬编码会让「已提示/已同意」的桩失效、断言误报。
+    const CUR_POLICY_VERSION = loadPrivacy({}).POLICY_VERSION
+    const storeC = { privacyPromptedVersion: CUR_POLICY_VERSION }
     loadPrivacy(storeC)
     const popup2 = loadComponent('components/privacy-popup/index.js', {
       wx: {
@@ -677,7 +681,7 @@ async function main() {
       popup2.data.show === false && popup2.__toasts.length === 0, popup2.data)
 
     // 已同意过 → 冷启动不弹
-    const storeD = { privacyAgreedVersion: '2026-10-17' }
+    const storeD = { privacyAgreedVersion: CUR_POLICY_VERSION }
     loadPrivacy(storeD)
     const popup3 = loadComponent('components/privacy-popup/index.js', {
       wx: {

@@ -19,7 +19,7 @@
  */
 
 const cloud = require('wx-server-sdk')
-const { dispatch, cancelExpiredOrders, ORDER_STATUS, statusTextOf } = require('./handlers')
+const { dispatch, cancelExpiredOrders, payCallbackCore } = require('./handlers')
 
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV })
 
@@ -76,9 +76,27 @@ const dbAdapter = {
     return { _id: id, ...data }
   },
 
+  /**
+   * 条件更新（2026-10-19 上线收尾新增，见 handlers.js 的 updateWhere）
+   * ---------------------------------------------------------------------------
+   * 为什么必须有它：订单状态流转（支付回调 0→1、超时取消 0→-1、完成 1→3）
+   * 用"先读后写"在并发下会互相覆盖（最危险：已支付却被超时取消）。
+   * `where({ _id, status: 期望值 }).update()` 由数据库端判断条件，
+   * 只有真正改到行才返回 updated=1 —— 天然幂等、不会覆盖别人刚写的状态。
+   * @returns {Promise<{updated:number}>}
+   */
+  async updateWhere(collection, where, data) {
+    const res = await db.collection(collection).where(where || {}).update({ data })
+    const updated = (res && res.stats && res.stats.updated) || 0
+    return { updated }
+  },
+
   async remove(collection, id) {
-    await db.collection(collection).doc(String(id)).remove()
-    return { _id: id }
+    const res = await db.collection(collection).doc(String(id)).remove()
+    // 2026-10-19（P0-3）：把"真正删掉几行"返回给 handlers，
+    // 作为老订单（取消时还没退券）删除前补退优惠券的幂等闸门。
+    const removed = (res && res.stats && res.stats.removed) || 0
+    return { _id: id, removed }
   },
 
   async removeWhere(collection, where) {
@@ -131,51 +149,39 @@ const dbAdapter = {
   //             （并发不丢数量），见 handlers.js 的 cartAdd / incCartNumber。
 }
 
-/**
- * 支付回调（第 2 阶段接微信支付时启用）
- * cloud.cloudPay.unifiedOrder 的支付结果会回调到云函数，
- * 这里预留处理入口，避免将来找不到地方接。
- *
- * ⚠️ 安全警告（2026-10-09 阶段二修复）
- *   以下分支原本是「无 action 且 event 带 outTradeNo/resultCode 就直接当成支付回调」。
- *   但客户端 wx.cloud.callFunction({ data: {...} }) 的 data 会**原样**成为云函数的 event，
- *   因此任何人都能构造 { outTradeNo: '<自己的订单号>', resultCode: 'SUCCESS' }
- *   把自己的未付款订单改成"已支付/制作中" —— 无签名、无来源校验、无金额校验。
- *   而当前项目**还没有任何 cloudPay.unifiedOrder 调用方**，这条分支唯一能被触发的途径就是伪造。
- *
- *   因此接入真实支付之前，本分支由 ENABLE_PAY_CALLBACK 开关关闭（默认 false）。
- *   将来接入时改成独立入口，并且必须做到：
- *     1) 验签（商户平台证书 / 云开发支付回调机制）
- *     2) 校验 totalFee 与订单 amountReal 一致
- *     3) 幂等（以 outTradeNo 为幂等键，且只允许 status 0 → 1）
- */
-const ENABLE_PAY_CALLBACK = false
+// ===========================================================================
+// 支付结果回调（上线收尾 P0-1，2026-10-19 重写）
+// ---------------------------------------------------------------------------
+// 云开发支付的支付结果会回调到本云函数（unifiedOrder 的 functionName）。
+//
+// 安全边界（与旧实现的区别）：
+//   旧实现把 event 里的 outTradeNo / resultCode 直接当成"支付成功"就写库；
+//   但客户端 `wx.cloud.callFunction({ data: { outTradeNo, resultCode: 'SUCCESS' } })`
+//   的 data 会**原样**成为云函数 event —— 任何人都能伪造一份"支付成功"事件，
+//   把自己的未付款订单改成已支付。旧实现因此被开关关闭（ENABLE_PAY_CALLBACK=false）。
+//
+//   现在：回调事件里的字段**只当线索**，真正的支付状态由 handlers.payCallbackCore
+//   调 `cloud.cloudPay.queryOrder()` 向微信支付服务端查单确认，并校验金额、
+//   用条件更新幂等推进订单状态。伪造的事件查单结果是 NOTPAY → 不改任何状态。
+// ===========================================================================
+const payAdapter = {
+  async unifiedOrder(params) {
+    return cloud.cloudPay.unifiedOrder(params)
+  },
+  async queryOrder(params) {
+    return cloud.cloudPay.queryOrder(params)
+  }
+}
 
-async function handlePayCallback(event) {
-  const outTradeNo = event.outTradeNo
-  const resultCode = event.resultCode
-  if (resultCode !== 'SUCCESS') {
-    return { errcode: 0, errmsg: 'ignored' }
-  }
-  const res = await db
-    .collection('order')
-    .where({ orderNumber: outTradeNo })
-    .limit(1)
-    .get()
-  const order = res.data[0]
-  if (order) {
-    await db
-      .collection('order')
-      .doc(order._id)
-      .update({
-        data: {
-          status: ORDER_STATUS.MAKING,
-          statusStr: statusTextOf(ORDER_STATUS.MAKING),
-          payTime: Date.now()
-        }
-      })
-  }
-  return { errcode: 0, errmsg: 'ok' }
+/**
+ * 是否像"支付结果回调"事件：不带 action、带 outTradeNo 与 resultCode/returnCode。
+ * 客户端调用永远带 action，因此不会误进这个分支；
+ * 即使伪造的事件进来，也会因为查单不成功而不改状态（见上方安全边界）。
+ */
+function isPayCallbackEvent(event) {
+  if (!event || event.Type === 'Timer' || event.action) return false
+  if (!event.outTradeNo) return false
+  return event.resultCode !== undefined || event.returnCode !== undefined
 }
 
 exports.main = async (event, context) => {
@@ -187,11 +193,10 @@ exports.main = async (event, context) => {
     return cancelExpiredOrders({}, { db: dbAdapter, openid: '', appid: '' })
   }
 
-  // 支付回调分支：由微信支付触发，不带 action。
-  // 由 ENABLE_PAY_CALLBACK 开关保护（默认关闭），关闭时一律视为普通 action 调用，
-  // 避免客户端伪造 { outTradeNo, resultCode } 把自己的订单改成"已支付"。详见上方安全警告。
-  if (ENABLE_PAY_CALLBACK && event && event.outTradeNo && event.resultCode) {
-    return handlePayCallback(event)
+  // 支付结果回调：由微信支付触发，不带 action，必须在 action 路由之前拦截。
+  // 处理逻辑（查单验真 / 金额校验 / 幂等推进状态）在 handlers.payCallbackCore。
+  if (isPayCallbackEvent(event)) {
+    return payCallbackCore(event, { db: dbAdapter, pay: payAdapter })
   }
 
   const wxContext = cloud.getWXContext()
@@ -200,7 +205,9 @@ exports.main = async (event, context) => {
   const result = await dispatch(action, payload || {}, {
     db: dbAdapter,
     openid: wxContext.OPENID,
-    appid: wxContext.APPID
+    appid: wxContext.APPID,
+    // 支付能力注入：handlers.js 不依赖 wx-server-sdk，靠 ctx.pay 调用云开发支付
+    pay: payAdapter
   })
 
   return result

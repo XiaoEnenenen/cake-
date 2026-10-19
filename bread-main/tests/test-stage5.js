@@ -184,7 +184,9 @@ async function main() {
     goodsJsonStr: JSON.stringify([{ goodsId: 'g_cake', number: 2, propertyChildIds: 'size:s6' }]),
     remark: '',
     extJsonStr: '{}',
-    deliveryMode: 'pickup'
+    deliveryMode: 'pickup',
+    // 2026-10-19 P1-4：含蛋糕订单必须带期望时间（远未来、营业时间内）
+    expectTime: '2099-01-01 12:00'
   }, ctx)
   check('下单成功', created.code === 0, created)
   check('★ 实付金额 = 购物车展示金额（468），不再出现"看到 108 实付 400"',

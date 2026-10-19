@@ -83,6 +83,16 @@ function createMockDb(seed) {
       if (r) Object.assign(r, data)
       return { _id: id, ...data }
     },
+    // 条件更新（2026-10-19 上线收尾 P0-3 新增）：真实实现见
+    // cloudfunctions/api/index.js 的 dbAdapter.updateWhere（数据库端 where + update）。
+    // 这里函数体内没有 await → 单线程下等价原子，并发取消订单用例能真实暴露重复退券。
+    async updateWhere(col, where, data) {
+      const rows = (store[col] || []).filter((r) =>
+        Object.keys(where || {}).every((k) => r[k] === where[k])
+      )
+      rows.forEach((r) => Object.assign(r, data))
+      return { updated: rows.length }
+    },
     async remove(col, id) {
       store[col] = (store[col] || []).filter((x) => x._id !== String(id))
       return { _id: id }
@@ -684,7 +694,7 @@ async function main() {
   }
 
   // =========================================================================
-  console.log('\n=== 7) 订单留痕 / 取消不退券 / 店主补运费不丢优惠 / 幂等 ===')
+  console.log('\n=== 7) 订单留痕 / 取消退券 / 店主补运费不丢优惠 / 幂等 ===')
   // =========================================================================
   {
     const db = createMockDb(seedData([couponDoc({ _id: 'cp_keep', threshold: 5, amount: 3 })]))
@@ -704,13 +714,58 @@ async function main() {
       detail.data.orderInfo.couponId === 'cp_keep' &&
       detail.data.orderInfo.couponName === '满 100 减 10', detail.data.orderInfo)
 
-    // 取消订单：不退券（本期明确取舍）
+    // 取消订单：退回优惠券（2026-10-19 上线收尾 P0-3：原规则"不退券"改为"退券"）
     const closed = await dispatch('orderClose', { id: orderId }, ctx)
     check('取消订单成功', closed.code === 0, closed)
-    check('★ 取消订单不退回优惠券（usedCount 仍是 1）',
-      db._store.coupon[0].usedCount === 1, db._store.coupon[0].usedCount)
+    check('★ 取消订单退回优惠券（usedCount 回到 0）',
+      db._store.coupon[0].usedCount === 0, db._store.coupon[0].usedCount)
+    check('★ 每人已用次数一并回滚（不会白占一次）',
+      db._store.coupon_user[0].usedCount === 0, db._store.coupon_user[0].usedCount)
     check('  订单快照仍保留券信息（对账用）',
       db._store.order[0].couponAmount === 3 && db._store.order[0].status === -1)
+    check('★ 订单留下退券审计字段（couponReleased / 原因 / 时间）',
+      db._store.order[0].couponReleased === true &&
+      db._store.order[0].couponReleaseReason === 'close' &&
+      Number(db._store.order[0].couponReleaseTime) > 0, db._store.order[0])
+
+    // 超时未支付：同样退券（与取消是两个入口，共用 cancelPendingOrder）
+    {
+      const dbT = createMockDb(seedData([couponDoc({ _id: 'cp_timeout', threshold: 5, amount: 3 })]))
+      const ctxT = { db: dbT, openid: 'user_timeout' }
+      const created = await dispatch('orderCreate', orderPayload({ couponId: 'cp_timeout' }), ctxT)
+      check('前置：用券下单成功', created.code === 0, created)
+      const timeoutNow = Date.now() + 20 * 60 * 1000
+      const canceled = await H.cancelExpiredOrders({ now: timeoutNow }, ctxT)
+      check('★ 超时 15 分钟自动取消 → 优惠券退回',
+        canceled.code === 0 && dbT._store.coupon[0].usedCount === 0 &&
+        dbT._store.coupon_user[0].usedCount === 0, {
+          r: canceled,
+          coupon: dbT._store.coupon[0].usedCount,
+          user: dbT._store.coupon_user[0].usedCount
+        })
+      check('  超时取消记 cancelReason=timeout 且标记已退券',
+        dbT._store.order[0].cancelReason === 'timeout' &&
+        dbT._store.order[0].couponReleased === true, dbT._store.order[0])
+    }
+    // 重复取消 / 并发取消：只退一次（不能把 usedCount 减成负数）
+    {
+      const dbD = createMockDb(seedData([couponDoc({ _id: 'cp_dup', threshold: 5, amount: 3 })]))
+      const ctxD = { db: dbD, openid: 'user_dup' }
+      const created = await dispatch('orderCreate', orderPayload({ couponId: 'cp_dup' }), ctxD)
+      const rs = await Promise.all([
+        dispatch('orderClose', { id: created.data.id }, ctxD),
+        dispatch('orderClose', { id: created.data.id }, ctxD)
+      ])
+      // 并发取消时另一路会走「订单已被取消」的幂等分支返回成功，因此不能只数 code 0 的个数；
+      // 真正要守住的是：**券只退回一次**（不能把 usedCount 减成负数/重复返还）。
+      check('★ 并发取消同一订单：不会重复退券',
+        rs.some((r) => r.code === 0) &&
+        dbD._store.coupon[0].usedCount === 0 && dbD._store.coupon_user[0].usedCount === 0,
+        { codes: rs.map((r) => r.code), coupon: dbD._store.coupon[0].usedCount })
+      check('  订单最终只有一张、状态已取消且标记已退券',
+        dbD._store.order.length === 1 && dbD._store.order[0].status === -1 &&
+        dbD._store.order[0].couponReleased === true, dbD._store.order)
+    }
 
     // 幂等：同一 token 重复提交 → 只落一张单、只消耗一次券
     {
@@ -758,6 +813,10 @@ async function main() {
       }), { db: dbF, openid: 'user_freight' })
       check('前置：地址无坐标的外送单（运费待确认）下单成功', r.code === 0, r)
       check('  下单时实付 = 88 - 10 + 0 = 78', r.data.amountReal === 78, r.data)
+      // 2026-10-19 P1-5：这类订单金额不含运费，返回体要标记"需先确认运费"，
+      // 前端据此不拉起收银台（服务端 wxpay 也会拒绝）。
+      check('★ 标记 needsFreightConfirm（运费确认前不允许线上支付）',
+        r.data.needsFreightConfirm === true, r.data)
       const confirm = await dispatch('orderFreightConfirm', { id: r.data.id, freight: 18 },
         { db: dbF, openid: ADMIN_OPENID })
       check('★ 补录运费后实付 = 88 - 10 + 18 = 96（优惠没被丢掉）',
@@ -1191,11 +1250,12 @@ async function main() {
     check('结算页有选券弹层与"不使用优惠券"选项',
       /couponPopupShow/.test(payWxml) && /不使用优惠券/.test(payWxml) &&
       /onCouponTap/.test(payWxml))
-    check('结算页写明「优惠券使用后取消订单不退回」',
-      /取消订单不退回/.test(payWxml))
+    check('结算页写明「未支付取消/超时后优惠券自动退回」',
+      /优惠券会自动退回/.test(payWxml))
     const orderViewWxml = src('pages/order-view/index.wxml')
-    check('订单详情页有优惠券抵扣行与不退券提示',
-      /couponAmount/.test(orderViewWxml) && /优惠券使用后，取消订单不退回/.test(orderViewWxml))
+    check('订单详情页有优惠券抵扣行，并按状态说明「券已退回 / 已使用」',
+      /couponAmount/.test(orderViewWxml) &&
+      /优惠券会自动退回/.test(orderViewWxml) && /本单已使用优惠券/.test(orderViewWxml))
   }
 
   console.log('\n' + '='.repeat(60))

@@ -10,7 +10,7 @@
           改因：当前主体未开通「手机号快速验证」，点自动填写会弹 getPhoneNumber:fail no permission，
                 顾客无法填写电话。现改为输入框（11 位校验，成功后存 storage 供下次带出）。
        5. 费用区（小计 / 配送费）与底部栏（合计 + 去支付）按参考图重排，适配 iPhone 安全区。
-     ⚠️ 参考图中的「会员卡 / 优惠券 / 余额支付 / 储值卡」四块**未实现**：
+     ⚠️ 参考图中的「会员卡 / 余额支付 / 储值卡」三块**未实现**（优惠券已在阶段 11 实现，见本页券入口与弹层）：
         会员、积分、余额体系在阶段二已整体移除（云函数 orderPay、前端 orderPayV2/userAmount 均已删除），
         此处不做假数据，避免页面显示无法兑现的优惠。
 -->
@@ -271,7 +271,7 @@
     </view>
   </block>
 
-  <view class="coupon-pop-foot">每单限用 1 张优惠券；优惠券使用后取消订单不退回。</view>
+  <view class="coupon-pop-foot">每单限用 1 张优惠券；未支付的订单取消或 15 分钟超时后，优惠券会自动退回。</view>
   <view class="coupon-pop-safe"></view>
 </van-popup>
 

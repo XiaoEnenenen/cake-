@@ -235,7 +235,8 @@ Page({
     const orderId = e.currentTarget.dataset.id;
     wx.showModal({
       title: '确定要取消该订单吗？',
-      content: '',
+      // 2026-10-19（P0-3）：取消/超时会把优惠券退回，取消前告诉顾客，避免以为券没了
+      content: '取消后订单将关闭；如果本单用了优惠券，优惠券会自动退回。',
       success: function(res) {
         if (res.confirm) {
           // https://www.yuque.com/apifm/nu0f75/wh4rrs
@@ -383,7 +384,8 @@ Page({
   },
   _toPayTap: function (orderId, money){
     // 2026-09-26 阶段二：已删除余额支付分支（money <= 0 时走 orderPayV2）。
-    // 现统一走微信支付统一下单；云开发支付接入前会提示"云开发支付尚未接入"。
+    // 2026-10-19 P0-1：统一走微信支付统一下单；支付成功后 utils/pay.js 会向服务端
+    // 确认到账（orderPayConfirm），商户号未配置时提示「线上支付暂未开通」。
     wxpay.wxpay('order', money, orderId, "/pages/current-order/index");
   },
 })

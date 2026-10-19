@@ -317,7 +317,7 @@ justify-content: space-between;
   box-sizing: border-box;
 }
 
-/* 阶段 11：优惠券抵扣行与"不退券"提示 */
+/* 阶段 11：优惠券抵扣行与"券退回 / 已使用"提示（2026-10-19 取消/超时改为退券） */
 .coupon-amount-text {
   color: #ff4b33;
 }

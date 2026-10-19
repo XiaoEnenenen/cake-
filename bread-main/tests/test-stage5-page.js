@@ -58,6 +58,16 @@ const LOGIN_GATE_STUB = {
   onLoginSuccess: () => {}
 }
 
+// 2026-10-19（上线清单 P0-4）：结算页新增隐私同意门禁。
+// 本文件验证的是金额/状态/幂等逻辑，统一按"已同意隐私政策"处理；
+// 门禁本身的行为在 tests/test-privacy-gate.js 里单独覆盖。
+const PRIVACY_STUB = {
+  hasAgreed: () => true,
+  ensureAgreed: async () => true,
+  markAgreed() {},
+  requestPlatformAuthorize: async () => ({ ok: true })
+}
+
 /**
  * 通用沙箱加载器。
  * @param {string} rel 页面文件（相对 bread-main）
@@ -204,6 +214,7 @@ async function main() {
     const page = loadPage('pages/pay/index.js', {
       requires: {
         'api-map$': makeApi(),
+        'utils/privacy$': PRIVACY_STUB,
         'utils/auth$': { login() {}, wxaCode: async () => 'c', checkHasLogined: async () => true, authorize: async () => ({}) },
         'utils/pay': { wxpay() {} },
         'shop-config$': SHOP_STUB,
@@ -254,6 +265,7 @@ async function main() {
     const mkPay = (list) => loadPage('pages/pay/index.js', {
       requires: {
         'api-map$': makeApi(),
+        'utils/privacy$': PRIVACY_STUB,
         'utils/auth$': { login() {}, wxaCode: async () => 'c', checkHasLogined: async () => true, authorize: async () => ({}) },
         'utils/pay': { wxpay() {} },
         'shop-config$': SHOP_STUB,
@@ -550,6 +562,7 @@ async function main() {
     const page = loadPage('pages/pay/index.js', {
       requires: {
         'api-map$': api,
+        'utils/privacy$': PRIVACY_STUB,
         'utils/auth$': { login() {}, wxaCode: async () => 'c', checkHasLogined: async () => true, authorize: async () => ({}) },
         'utils/pay': { wxpay() {} },
         'shop-config$': SHOP_STUB,
@@ -595,12 +608,67 @@ async function main() {
     check('wxss 定义提交中置灰样式', /\.pay-byn-disabled\s*\{/.test(src('pages/pay/index.wxss')))
   }
 
+  {
+    // 2026-10-19（P1-5）：运费待确认的订单不进入收银台，提示等门店确认运费
+    let payCalls = 0
+    const modals = []
+    const relaunches = []
+    const api = makeApi({
+      orderCreate: async () => ({
+        code: 0,
+        data: { id: 'o_freight', amountReal: 64, needsFreightConfirm: true, duplicated: false }
+      }),
+      shippingCarInfoRemoveAll: async () => ({ code: 0 })
+    })
+    const page = loadPage('pages/pay/index.js', {
+      requires: {
+        'api-map$': api,
+        'utils/privacy$': PRIVACY_STUB,
+        'utils/auth$': { login() {}, wxaCode: async () => 'c', checkHasLogined: async () => true, authorize: async () => ({}) },
+        'utils/pay': { wxpay() { payCalls++ } },
+        'shop-config$': SHOP_STUB,
+        'utils/delivery$': { isDelivery: () => false, isDeliveryEnabled: () => true, setMode: () => 'pickup', DELIVERY: 'delivery' },
+        'delivery-range$': { calcQuote: () => ({ freight: 0, freightText: '', deliverable: true, distanceKm: null }), checkAdvanceTime: () => ({ valid: true }), setDeliveryRule: () => ({}), getDeliveryRule: () => ({ area: { outOfAreaTip: '超出配送范围' } }) },
+        'config/delivery$': { area: { outOfAreaTip: '超出配送范围' } },
+        'utils/location$': { formatDistance: () => '', openNavigation: async () => {} }
+      },
+      wx: {
+        // 直接确认弹窗（与真实点击一致），以便断言后续 reLaunch
+        showModal: (o) => {
+          modals.push(o)
+          if (o && typeof o.success === 'function') o.success({ confirm: true })
+        },
+        reLaunch: (a) => { relaunches.push(a && a.url) }
+      }
+    })
+    page.data.mobile = '13800138000'
+    page.data.fetchTime = '今天 15:00'
+    page.data.isDelivery = true
+    page.data.fetchTime = '今天 15:00'
+    page.data.selectedAddress = { name: '张三', phone: '13800138000', detail: 'x' }
+    page.data.addressText = '张三 13800138000 x'
+    page.data.quote = { deliverable: true, distanceKm: 9, freight: null, freightText: '运费待确认' }
+    page.data.shippingCarInfo = { items: [{ goodsId: 'g_plain', number: 1, sku: [] }], number: 1, price: 54 }
+    page.data.shopInfo = { id: 0, name: '卿欢蛋糕' }
+    page.data.cartItemsForQuote = []
+    await page.createorder()
+    check('★ 运费待确认订单：下单后不拉起收银台',
+      payCalls === 0, { payCalls })
+    const m = modals[0] || {}
+    check('★ 提示「订单已提交，运费待确认」并回订单页等门店确认',
+      /运费待确认/.test(String(m.title)) && relaunches.indexOf('/pages/current-order/index') >= 0,
+      { modals, relaunches })
+    check('  源码有 needsFreightConfirm 分支（P1-5）',
+      /needsFreightConfirm/.test(src('pages/pay/index.js')))
+  }
+
   // =========================================================================
   console.log('\n=== 5.6 复核整改：每个缺陷都补一条回归 ===')
   // =========================================================================
   const flush = () => new Promise((r) => setTimeout(r, 0))
   const PAY_REQUIRES = (api, payStub) => ({
     'api-map$': api,
+    'utils/privacy$': PRIVACY_STUB,
     'utils/auth$': { login() {}, wxaCode: async () => 'c', checkHasLogined: async () => true, authorize: async () => ({}) },
     'utils/pay': payStub || { wxpay() {} },
     'shop-config$': SHOP_STUB,

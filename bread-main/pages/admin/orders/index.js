@@ -47,6 +47,8 @@ Page({
     loadingMore: false,
     // 正在"完成订单"的订单 id（防止连点两次）
     finishingId: '',
+    // 正在"确认收款"的订单 id（防止连点两次；进行中再点直接忽略）
+    markingPaidId: '',
     // 运费补录弹层
     freightOrder: null,
     freightInput: '',
@@ -239,6 +241,50 @@ Page({
     }
   },
 
+  // ===== 线下收款（P0-1：无商户号阶段由店主手动推进订单）=====
+
+  /**
+   * 确认收款：待支付(0) → 制作中(1)，由服务端把 payChannel 记为 'offline'。
+   * 这一步会直接改变订单状态（顾客端从「待支付」变成「制作中」），
+   * 所以必须二次确认；markingPaidId 防连点（进行中再点直接忽略）。
+   */
+  markPaid(e) {
+    const index = Number(e.currentTarget.dataset.index)
+    const o = this.data.orderList[index]
+    if (!o || this.data.markingPaidId) return
+    wx.showModal({
+      title: '确认收款',
+      content: '确认已收到这一单（' + (o.pickupCode || o.orderNumber || '—') + '）的 ¥' +
+        (Number(o.amountReal) || 0) + '？确认后订单进入「制作中」。',
+      confirmText: '确认收款',
+      cancelText: '再等等',
+      success: (r) => {
+        if (r.confirm) this.doMarkPaid(o)
+      }
+    })
+  },
+
+  async doMarkPaid(o) {
+    if (!o || this.data.markingPaidId) return
+    this.setData({ markingPaidId: o.id })
+    try {
+      const res = await API.adminOrderMarkPaid(o.id)
+      if (!res || res.code != 0) {
+        // 失败要停住让店主看清原因（服务端会校验店主身份），不能用一闪而过的 toast
+        wx.showModal({
+          title: '确认收款失败',
+          content: (res && res.msg) || '请检查网络后重试；订单状态没有改变。',
+          showCancel: false
+        })
+        return
+      }
+      wx.showToast({ title: '已确认收款', icon: 'success' })
+      await this.loadList(true)
+    } finally {
+      this.setData({ markingPaidId: '' })
+    }
+  },
+
   // ===== 运费补录（「运费待确认」的订单）=====
 
   openFreight(e) {
@@ -336,14 +382,17 @@ function viewOf(o) {
       : '',
     needFreight: needFreight,
     canFinish: Number(o.status) === 1,
+    // 待支付(0)的单：店主确认线下已收款后由服务端推进到制作中(1)
+    canMarkPaid: Number(o.status) === 0,
     // 取餐码：自提单最显眼（叫号用）；外送单显示"外送"
     badgeText: isDelivery ? '外送' : '自提 ' + (o.pickupCode || ''),
     hasAddress: !!(o.address && isFinite(Number(o.address.latitude)) && isFinite(Number(o.address.longitude))),
     // 状态说明（**必须让店主看懂"为什么这一单完不成"**）：
-    //   支付还没接入（阶段 7），所以订单只会停在「待支付」并在 15 分钟后自动取消 ——
-    //   不写这句，店主会以为是 App 坏了（"完成订单"按钮永远不出现）。
+    //   待支付订单在 15 分钟内没付款会自动取消，所以「完成订单」按钮不会出现；
+    //   2026-10-19 P0-1：补一句线下收款入口，店主才知道「确认收款」是干什么的。
+    //   （不再写死"支付未接入"：商户号配置后线上支付就会开通，写死会变成误导。）
     statusHint: Number(o.status) === 0
-      ? '顾客还没付款（支付未接入：15 分钟未付会自动取消；可先电话沟通并补录运费）'
+      ? '顾客还没付款（15 分钟未付会自动取消；可先电话沟通，必要时补录运费）。如顾客已到店/线下转账，可点「确认收款」记为已收款'
       : ''
   })
 }

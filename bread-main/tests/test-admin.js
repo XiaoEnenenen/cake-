@@ -1335,6 +1335,134 @@ async function main() {
         calls.freight)
     }
 
+    // ---- 9.3b 店主确认线下收款（P0-1 支付闭环：待支付 → 制作中）----
+    {
+      const unpaid = {
+        id: 'o_unpaid', orderNumber: 'QH2', pickupCode: '0002', status: 0, statusStr: '待支付',
+        deliveryMode: 'pickup', dateAdd: Date.now(), amountReal: 88, goodsAmount: 80,
+        packingFee: 8, freight: 0, goodsNumber: 1, expectTime: '2026-10-15 16:00',
+        contactName: '李四', contactPhone: '13700137000', address: null,
+        goodsSummary: '蛋糕×1', deliveryQuote: null
+      }
+      const making = Object.assign({}, unpaid, {
+        id: 'o_making', orderNumber: 'QH3', pickupCode: '0003', status: 1, statusStr: '制作中'
+      })
+      const listOf = (orders) => ({
+        code: 0,
+        data: {
+          orderList: orders, total: orders.length, page: 1, pageSize: 20,
+          statusCounts: { '0': 1, '1': 1, '3': 0 }
+        }
+      })
+      const calls = { mark: [], list: 0 }
+      const api = {
+        adminOrderList: async () => { calls.list++; return listOf([unpaid, making]) },
+        adminOrderMarkPaid: async (id) => {
+          calls.mark.push(id)
+          return { code: 0, data: { id, orderNumber: 'QH2', status: 1, payChannel: 'offline' } }
+        }
+      }
+      const PAGE_REQUIRES = {
+        'api-map$': api,
+        'utils/admin$': ADMIN_STUB,
+        'utils/format$': FMT,
+        'utils/log$': QUIET_LOG
+      }
+      const page = loadPage('pages/admin/orders/index.js', {
+        requires: PAGE_REQUIRES,
+        wx: { showModal: (o) => { o.success && o.success({ confirm: true }) } }
+      })
+      await page.loadList(true)
+      const vUnpaid = page.data.orderList[0]
+      const vMaking = page.data.orderList[1]
+      check('★ 待支付单可以「确认收款」（canMarkPaid）', vUnpaid.canMarkPaid === true, vUnpaid.canMarkPaid)
+      check('  制作中的单不出现「确认收款」按钮', vMaking.canMarkPaid === false)
+      check('★ 待支付提示说明"为什么不能完成"并指向「确认收款」',
+        /顾客还没付款/.test(String(vUnpaid.statusHint)) &&
+        /确认收款/.test(String(vUnpaid.statusHint)), vUnpaid.statusHint)
+      check('  制作中的单不显示待支付说明', vMaking.statusHint === '', vMaking.statusHint)
+
+      const listBefore = calls.list
+      page.markPaid({ currentTarget: { dataset: { index: 0 } } })
+      await new Promise((r) => setTimeout(r, 0))
+      await new Promise((r) => setTimeout(r, 0))
+      check('★ 二次确认后调用 adminOrderMarkPaid（只传订单 id）',
+        calls.mark.length === 1 && calls.mark[0] === 'o_unpaid', calls.mark)
+      check('  成功后重新拉列表（订单从待支付变成制作中）', calls.list === listBefore + 1, calls.list)
+      check('  成功有明确提示（店主知道收款已记上）',
+        page.__toasts.some((t) => /确认收款/.test(String(t))), page.__toasts)
+      check('  动作结束后防连点标志复位', page.data.markingPaidId === '', page.data.markingPaidId)
+
+      // 取消二次确认 → 一次都不调（误点绝不能改订单状态）
+      {
+        let cancelMarks = 0
+        const apiCancel = Object.assign({}, api, {
+          adminOrderMarkPaid: async (id) => { cancelMarks++; return { code: 0, data: { id } } }
+        })
+        const pageCancel = loadPage('pages/admin/orders/index.js', {
+          requires: Object.assign({}, PAGE_REQUIRES, { 'api-map$': apiCancel }),
+          wx: { showModal: (o) => { o.success && o.success({ confirm: false }) } }
+        })
+        await pageCancel.loadList(true)
+        pageCancel.markPaid({ currentTarget: { dataset: { index: 0 } } })
+        await new Promise((r) => setTimeout(r, 0))
+        check('★ 取消二次确认 → 不调接口', cancelMarks === 0, cancelMarks)
+      }
+
+      // 失败 → 弹窗展示服务端文案（不能用一闪而过的 toast）
+      {
+        const modals = []
+        const apiFail = Object.assign({}, api, {
+          adminOrderMarkPaid: async () => ({ code: 403, msg: '仅店主可确认收款' })
+        })
+        const pageFail = loadPage('pages/admin/orders/index.js', {
+          requires: Object.assign({}, PAGE_REQUIRES, { 'api-map$': apiFail }),
+          wx: {
+            showModal: (o) => {
+              modals.push(o)
+              o.success && o.success({ confirm: true })
+            }
+          }
+        })
+        await pageFail.loadList(true)
+        pageFail.markPaid({ currentTarget: { dataset: { index: 0 } } })
+        await new Promise((r) => setTimeout(r, 0))
+        await new Promise((r) => setTimeout(r, 0))
+        check('★ 失败时弹窗展示服务端文案（店主知道为什么没记上）',
+          modals.some((m) => /仅店主可确认收款/.test(String(m.content))),
+          modals.map((m) => m.content))
+        check('  失败后防连点标志复位（可以重试）',
+          pageFail.data.markingPaidId === '', pageFail.data.markingPaidId)
+      }
+
+      // 连点：进行中再点直接忽略（只发一次请求）
+      {
+        let markCalls = 0
+        let resolveMark = null
+        const apiSlow = Object.assign({}, api, {
+          adminOrderMarkPaid: (id) => {
+            markCalls++
+            return new Promise((resolve) => { resolveMark = () => resolve({ code: 0, data: { id } }) })
+          }
+        })
+        const pageDouble = loadPage('pages/admin/orders/index.js', {
+          requires: Object.assign({}, PAGE_REQUIRES, { 'api-map$': apiSlow }),
+          wx: { showModal: (o) => { o.success && o.success({ confirm: true }) } }
+        })
+        await pageDouble.loadList(true)
+        pageDouble.markPaid({ currentTarget: { dataset: { index: 0 } } })
+        pageDouble.markPaid({ currentTarget: { dataset: { index: 0 } } })
+        check('★ 确认收款进行中再点直接忽略（只发一次请求）', markCalls === 1, markCalls)
+        check('  请求中按钮显示「确认中…」（markingPaidId = 当前订单）',
+          pageDouble.data.markingPaidId === 'o_unpaid', pageDouble.data.markingPaidId)
+        resolveMark()
+        await new Promise((r) => setTimeout(r, 0))
+        await new Promise((r) => setTimeout(r, 0))
+        check('  完成后恢复，可再次操作',
+          pageDouble.data.markingPaidId === '', pageDouble.data.markingPaidId)
+      }
+    }
+
     // ---- 9.4 店主中心：两个接口都成功才显示数字 ----
     {
       let failGoods = false

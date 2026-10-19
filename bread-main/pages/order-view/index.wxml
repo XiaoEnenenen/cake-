@@ -191,7 +191,8 @@
 </block>
 
 <!-- 阶段 11：优惠券抵扣（订单快照；0 = 本单没用券 → 整块不渲染）
-     「取消订单不退券」是本期明确的取舍，写在这一行下面，别让顾客以为会退。 -->
+     2026-10-19 上线收尾 P0-3：规则从「取消不退券」改为「未支付取消/超时退券」，
+     因此文案按订单状态区分：未支付/已取消 → 说明券会退回；已支付 → 本单已使用。 -->
 <block wx:if="{{ orderDetail.orderInfo.couponAmount > 0 }}">
   <view class="shops-bar">
     <view class="shops-box">
@@ -201,7 +202,8 @@
       <view class="text coupon-amount-text">-¥{{ orderDetail.orderInfo.couponAmount }}</view>
     </view>
   </view>
-  <view class="coupon-refund-tip">优惠券使用后，取消订单不退回</view>
+  <view wx:if="{{ orderDetail.orderInfo.status == 0 || orderDetail.orderInfo.status == -1 }}" class="coupon-refund-tip">未支付的订单取消或超时后，优惠券会自动退回</view>
+  <view wx:else class="coupon-refund-tip">本单已使用优惠券</view>
   <view class="blank1"></view>
 </block>
 
@@ -234,7 +236,7 @@
     <view class="content">
       <view class="titles">支付方式</view>
     </view>
-    <view class="text">微信支付</view>
+    <view class="text">{{ orderDetail.orderInfo.status == 0 ? '待支付' : (orderDetail.orderInfo.status == -1 ? '未支付' : (orderDetail.orderInfo.payChannel == 'offline' ? '线下收款（到店/转账）' : '微信支付')) }}</view>
   </view>
 </view>
 <view class="blank1"></view>

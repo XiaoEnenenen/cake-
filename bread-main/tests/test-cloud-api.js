@@ -5,7 +5,19 @@
  * 原理：handlers.js 不依赖 wx-server-sdk，只要给它一个内存版 db 就能跑。
  * ---------------------------------------------------------------------------
  */
-const { dispatch, calcPrice } = require('../cloudfunctions/api/handlers')
+const H = require('../cloudfunctions/api/handlers')
+const { calcPrice } = H
+// 2026-10-19 P1-4：服务端现在要求「含蛋糕的订单必须带期望时间」。
+// 本文件大量用例只关心金额/权限/幂等，统一在 dispatch 入口补一个合法的远未来时间
+// （2099-01-01 12:00：营业时间内、远超 3 小时，与真实日期无关）；
+// 显式传了 expectTime 的用例不受影响，需要验证"缺时间被拒"的用例走 H.dispatch。
+const DEFAULT_EXPECT_TIME = '2099-01-01 12:00'
+const dispatch = (action, payload, ctx) => {
+  if (action === 'orderCreate' && payload && payload.expectTime === undefined) {
+    payload = Object.assign({}, payload, { expectTime: DEFAULT_EXPECT_TIME })
+  }
+  return H.dispatch(action, payload, ctx)
+}
 
 // ===== 内存数据库（实现 handlers 需要的那套接口）=====
 function createMockDb(seed) {
@@ -473,6 +485,8 @@ async function main() {
     }, { db: dbD3c, openid: 'user_far9' })
     check('★ 9km 仍可下单（不拒绝）', rd.code === 0, rd)
     check('  运费待确认时金额按 0 计（不预收）', rd.data.freight === 0, rd.data)
+    check('★ 标记 needsFreightConfirm（前端据此不拉起收银台，P1-5）',
+      rd.data.needsFreightConfirm === true, rd.data)
     check('  文案说明要电话确认',
       String(rd.data.freightText).indexOf('确认') >= 0, rd.data.freightText)
 
@@ -956,6 +970,39 @@ async function main() {
       goodsJsonStr: oneGoods(1), extJsonStr: '{}', deliveryMode: 'pickup', expectTime: tomorrowNoon
     }, mkCtx())
     check('  合法的明天中午 → 通过', r.code === 0, r)
+
+    // (4b) 2026-10-19 P1-4 补漏：含蛋糕但**省略**期望时间 → 拒绝（原来只 warn，可绕过 3 小时）
+    r = await H.dispatch('orderCreate', {
+      goodsJsonStr: oneGoods(1), extJsonStr: '{}', deliveryMode: 'pickup'
+    }, mkCtx())
+    check('★ 含蛋糕但没带期望时间 → 拒绝（不再只 warn）',
+      r.code !== 0 && /期望时间/.test(r.msg), r)
+
+    // (4c) 2026-10-19 P1-4：行数上限 / extJson 超长 / 外送电话校验
+    r = await H.dispatch('orderCreate', {
+      goodsJsonStr: JSON.stringify(Array.from({ length: 51 }, () => ({ goodsId: 'g_plain', number: 1 }))),
+      extJsonStr: '{}', deliveryMode: 'pickup', expectTime: tomorrowNoon
+    }, mkCtx())
+    check('★ 单次下单行数超过 50 → 拒绝（防恶意放大数据库调用）',
+      r.code !== 0 && /最多 50/.test(r.msg), r)
+    r = await H.dispatch('orderCreate', {
+      goodsJsonStr: oneGoods(1),
+      extJsonStr: JSON.stringify({ x: 'y'.repeat(5000) }),
+      deliveryMode: 'pickup', expectTime: tomorrowNoon
+    }, mkCtx())
+    check('★ extJson 超长（>4KB）→ 拒绝', r.code !== 0 && /扩展信息过长/.test(r.msg), r)
+    r = await H.dispatch('orderCreate', {
+      goodsJsonStr: oneGoods(1), extJsonStr: '{}', deliveryMode: 'delivery',
+      address: Object.assign({}, nearAddr, { phone: '123' }), expectTime: tomorrowNoon
+    }, mkCtx())
+    check('★ 外送收货电话不是 11 位手机号 → 拒绝（P1-4）',
+      r.code !== 0 && /收货电话/.test(r.msg), r)
+    r = await H.dispatch('orderCreate', {
+      goodsJsonStr: oneGoods(1), extJsonStr: JSON.stringify({ 联络电话: 'abc' }),
+      deliveryMode: 'pickup', expectTime: tomorrowNoon
+    }, mkCtx())
+    check('★ 自提联系电话格式非法 → 拒绝（P1-4）',
+      r.code !== 0 && /联系电话/.test(r.msg), r)
 
     // (5) 备注类型/长度（原来 30 万字符也能入库并把店主端响应撑到 5MB+）
     r = await dispatch('orderCreate', {

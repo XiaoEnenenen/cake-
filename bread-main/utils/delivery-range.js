@@ -220,6 +220,61 @@ function getDefaultDeliveryRule() {
 }
 
 // ===========================================================================
+// ★ 北京时间工具（P0-2 新增）
+// ===========================================================================
+// 背景：云函数运行在 UTC。`new Date(y, m-1, d, h, min)` 与 `getHours()` 这类
+//      "按本地时区掰墙上时间"的写法，在 UTC 机器上会整体晚 8 小时 ——
+//      「蛋糕提前 3 小时」和「营业时间 09:00-22:00」的判断全部错位。
+// 原则：**所有墙上时间（用户选的期望送达时间、营业时间）一律按北京时间解释**，
+//      内部统一换成 epoch 毫秒再比较，绝不依赖运行环境时区。
+const BEIJING_OFFSET_MS = 8 * 60 * 60 * 1000
+
+/**
+ * 取某一时刻在北京时间下的年/月/日/时/分/秒（不依赖运行环境时区）
+ * @param {Date|number} value Date 或 epoch 毫秒
+ * @returns {{year:number,month:number,day:number,hour:number,minute:number,second:number}|null}
+ */
+function beijingParts(value) {
+  const d = value instanceof Date ? value : new Date(value)
+  if (!d || isNaN(d.getTime())) return null
+  const shifted = new Date(d.getTime() + BEIJING_OFFSET_MS)
+  return {
+    year: shifted.getUTCFullYear(),
+    month: shifted.getUTCMonth() + 1,
+    day: shifted.getUTCDate(),
+    hour: shifted.getUTCHours(),
+    minute: shifted.getUTCMinutes(),
+    second: shifted.getUTCSeconds()
+  }
+}
+
+/**
+ * 把时间统一解析成 epoch 毫秒
+ *   - Date / number：已经是绝对时刻，原样取 epoch（不再按墙上时间解释）
+ *   - 'YYYY-MM-DD HH:mm[:ss]'（也接受 T 分隔）：按**北京时间**解释
+ *   - 其它字符串：交给 new Date()（ISO 带时区等标准格式）
+ * @returns {number|null} epoch 毫秒；无法解析返回 null
+ */
+function parseBeijingTime(value) {
+  if (value instanceof Date) {
+    const t = value.getTime()
+    return isNaN(t) ? null : t
+  }
+  if (typeof value === 'number') return isFinite(value) ? value : null
+  const str = value === null || value === undefined ? '' : String(value).trim()
+  if (!str) return null
+  const m = str.match(/^(\d{4})-(\d{1,2})-(\d{1,2})[ T](\d{1,2}):(\d{2})(?::(\d{2}))?\s*$/)
+  if (m) {
+    return Date.UTC(
+      Number(m[1]), Number(m[2]) - 1, Number(m[3]),
+      Number(m[4]), Number(m[5]), Number(m[6] || 0)
+    ) - BEIJING_OFFSET_MS
+  }
+  const d = new Date(str)
+  return isNaN(d.getTime()) ? null : d.getTime()
+}
+
+// ===========================================================================
 // 1. 距离计算
 // ===========================================================================
 
@@ -643,17 +698,21 @@ function parseHours(str) {
  */
 function checkAdvanceTime(params) {
   const p = params || {}
-  const now = p.now ? new Date(p.now) : new Date()
+  const nowMs = parseBeijingTime(p.now)
+  const baseMs = nowMs === null ? Date.now() : nowMs
   const openingHours = p.openingHours || require('../shop-config').shop.openingHours
   const hours = parseHours(openingHours)
 
   const needAdvance =
     CFG.advance.applyToAll || analyzeCake(p.items || []).hasCake
+  // 提前量是"绝对时长"（3 小时就是 3 小时），用 epoch 做算术即不受时区影响
   const minMs = CFG.advance.minHours * 60 * 60 * 1000
-  const earliest = new Date(now.getTime() + minMs)
+  const earliest = new Date(baseMs + minMs)
 
-  const expect = p.expectTime ? new Date(p.expectTime) : null
-  if (!expect || isNaN(expect.getTime())) {
+  // expectTime 可能是 Date（页面/测试注入）或 'YYYY-MM-DD HH:mm' 字符串（云函数入参），
+  // 统一解析成 epoch 再比较；墙上时间的字符串按北京时间解释。
+  const expectMs = p.expectTime ? parseBeijingTime(p.expectTime) : null
+  if (expectMs === null) {
     return {
       valid: false,
       reason: 'no_time',
@@ -666,9 +725,10 @@ function checkAdvanceTime(params) {
   // 原因：若先校验提前时间，选了个"未营业"的时间会报"不足3小时"，
   //      提示误导用户。先报"不在营业时间"更准确。
 
-  // ---- 1) 营业时间校验 ----
+  // ---- 1) 营业时间校验（按**北京时间**取时/分，不依赖运行环境时区）----
   if (hours) {
-    const minutes = expect.getHours() * 60 + expect.getMinutes()
+    const bp = beijingParts(expectMs)
+    const minutes = bp.hour * 60 + bp.minute
     const start = hours.startH * 60 + hours.startM
     const end = hours.endH * 60 + hours.endM
     if (minutes < start || minutes > end) {
@@ -684,7 +744,7 @@ function checkAdvanceTime(params) {
   // ---- 2) 提前时间校验 ----
   // ★ 仅在 needAdvance 为 true 时生效（配置 advance.applyToAll 或订单含蛋糕）
   //   非蛋糕订单在 applyToAll=false 时可立即下单，不受 3 小时限制
-  if (needAdvance && expect.getTime() < earliest.getTime()) {
+  if (needAdvance && expectMs < earliest.getTime()) {
     return {
       valid: false,
       reason: 'too_soon',
@@ -697,28 +757,37 @@ function checkAdvanceTime(params) {
 }
 
 /**
- * 格式化时间为 HH:MM
+ * 格式化时间为 HH:MM（按**北京时间**，不依赖运行环境时区）
  */
 function fmtTime(d) {
-  const hh = String(d.getHours()).padStart(2, '0')
-  const mm = String(d.getMinutes()).padStart(2, '0')
+  const bp = beijingParts(d)
+  if (!bp) return ''
+  const hh = String(bp.hour).padStart(2, '0')
+  const mm = String(bp.minute).padStart(2, '0')
   return `${hh}:${mm}`
 }
 
 /**
  * 生成可选的日期列表（从今天起 selectableDays 天）
+ * "今天/明天"与 value 都按**北京日期**算（云函数 UTC 下凌晨不再错一天）
  */
 function buildDateOptions(now) {
-  const base = now ? new Date(now) : new Date()
+  const nowMs = parseBeijingTime(now)
+  const base = new Date(nowMs === null ? Date.now() : nowMs)
+  const bp = beijingParts(base)
   const list = []
   for (let i = 0; i < CFG.advance.selectableDays; i++) {
-    const d = new Date(base.getFullYear(), base.getMonth(), base.getDate() + i)
-    let label = `${d.getMonth() + 1}月${d.getDate()}日`
+    // 北京日历日 +i：用 Date.UTC 做日历加法，再取 UTC 字段，避开本地时区与夏令时
+    const d = new Date(Date.UTC(bp.year, bp.month - 1, bp.day + i))
+    const y = d.getUTCFullYear()
+    const mo = d.getUTCMonth() + 1
+    const day = d.getUTCDate()
+    let label = `${mo}月${day}日`
     if (i === 0) label = '今天'
     else if (i === 1) label = '明天'
     else if (i === 2) label = '后天'
     list.push({
-      value: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`,
+      value: `${y}-${String(mo).padStart(2, '0')}-${String(day).padStart(2, '0')}`,
       label
     })
   }
@@ -727,15 +796,16 @@ function buildDateOptions(now) {
 
 /**
  * 生成某天的可预约时段（按 slotMinutes 粒度，营业时间内）
- * @param {string} dateStr YYYY-MM-DD
+ * @param {string} dateStr YYYY-MM-DD（北京时间）
  * @param {Date} now 当前时间（用于过滤掉已过期的时段）
  */
 function buildTimeSlots(dateStr, now) {
   const openingHours = require('../shop-config').shop.openingHours
   const hours = parseHours(openingHours) || { startH: 9, startM: 0, endH: 22, endM: 0 }
-  const base = now ? new Date(now) : new Date()
+  const nowMs = parseBeijingTime(now)
+  const baseMs = nowMs === null ? Date.now() : nowMs
   const minMs = CFG.advance.minHours * 60 * 60 * 1000
-  const earliest = new Date(base.getTime() + minMs)
+  const earliestMs = baseMs + minMs
 
   const slots = []
   const step = CFG.advance.slotMinutes
@@ -746,9 +816,11 @@ function buildTimeSlots(dateStr, now) {
     const hh = String(Math.floor(m / 60)).padStart(2, '0')
     const mm = String(m % 60).padStart(2, '0')
     const time = `${hh}:${mm}`
-    const dt = new Date(`${dateStr}T${time}:00`)
+    // 时段是北京时间的墙上时间 → 显式换算成 epoch，不能依赖 new Date 的本地解析
+    const slotMs = parseBeijingTime(`${dateStr} ${time}`)
+    if (slotMs === null) continue
     // 过滤掉早于「最早可预约时间」的时段
-    if (dt.getTime() < earliest.getTime()) continue
+    if (slotMs < earliestMs) continue
     slots.push(time)
   }
   return slots
@@ -772,6 +844,9 @@ module.exports = {
   analyzeCake,
   // 报价
   calcQuote,
+  // 时区工具（P0-2）
+  BEIJING_OFFSET_MS,
+  parseBeijingTime,
   // 预约时间
   parseHours,
   checkAdvanceTime,

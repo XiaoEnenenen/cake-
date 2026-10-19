@@ -193,7 +193,10 @@ function orderPayload(rows, extra) {
       goodsJsonStr: JSON.stringify(rows),
       extJsonStr: '{}',
       shopIdZt: 0,
-      shopNameZt: '卿欢蛋糕'
+      shopNameZt: '卿欢蛋糕',
+      // 2026-10-19 P1-4：含蛋糕订单现在必须带期望时间（否则可绕过「提前 3 小时」）。
+      // 本文件只测安全边界，统一给合法的远未来时间；需要测时间规则的用例会显式覆盖。
+      expectTime: '2099-01-01 12:00'
     },
     extra || {}
   )
@@ -201,28 +204,52 @@ function orderPayload(rows, extra) {
 
 ;(async () => {
   // =========================================================================
-  section('SEC-1 支付回调分支必须默认关闭')
+  section('SEC-1 支付回调分支必须验真（历史漏洞：伪造回调即可改订单状态）')
   // =========================================================================
+  // 2026-10-19 P0-1 重写：旧实现把 event.outTradeNo/resultCode 直接当"支付成功"写库，
+  // 客户端 wx.cloud.callFunction 可以伪造这份 event；旧代码用 ENABLE_PAY_CALLBACK=false
+  // 把分支关掉（等于支付不可用）。现在改为"回调字段只当线索 + 服务端 queryOrder 查单验真"，
+  // 因此开关被删除、回调常开也安全。这里守住新的安全边界，防止以后有人改回裸信任。
   const indexSrc = fs.readFileSync(
     path.join(__dirname, '..', 'cloudfunctions', 'api', 'index.js'),
     'utf8'
   )
+  // 注释里允许出现开关名（解释历史漏洞），先剥注释再查代码
+  const indexCode = indexSrc
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1')
   check(
-    'index.js 声明了 ENABLE_PAY_CALLBACK 开关',
-    /ENABLE_PAY_CALLBACK\s*=/.test(indexSrc)
+    '★ 旧的无校验回调开关已删除（ENABLE_PAY_CALLBACK 不再作为开关存在，回调已验真）',
+    !/ENABLE_PAY_CALLBACK\s*=/.test(indexCode) && !/if\s*\(\s*ENABLE_PAY_CALLBACK/.test(indexCode)
   )
   check(
-    '开关默认值为 false（不接支付前禁止回调分支）',
-    /ENABLE_PAY_CALLBACK\s*=\s*false/.test(indexSrc)
+    '★ 支付回调统一走 payCallbackCore（不在这里直接写订单状态）',
+    /payCallbackCore/.test(indexSrc) && /isPayCallbackEvent/.test(indexSrc)
   )
-  const guardAt = indexSrc.search(/if\s*\(\s*ENABLE_PAY_CALLBACK/)
-  check('回调分支受开关保护（存在 if (ENABLE_PAY_CALLBACK）', guardAt >= 0)
-  // 关键：真正的回调分支必须出现在开关之后（受其保护），而不能是裸的入口判断
-  const branchAt = indexSrc.search(/event\.outTradeNo\s*&&\s*event\.resultCode/)
   check(
-    '回调入口判断位于开关之后（不再无条件进入回调）',
-    guardAt >= 0 && branchAt > guardAt,
-    { guardAt, branchAt }
+    '回调入口要求"不带 action"（客户端调用都带 action，不会误入回调分支）',
+    /event\.action/.test(indexSrc) && /event\.outTradeNo/.test(indexSrc)
+  )
+  check(
+    '回调分支不再直接读 resultCode 当支付结果（旧漏洞的写法）',
+    indexSrc.search(/resultCode\s*!==\s*'SUCCESS'[\s\S]{0,120}status:\s*ORDER_STATUS\.MAKING/) < 0
+  )
+  // 真正的验真逻辑在 handlers.js：查单 + 金额校验 + 条件更新
+  const handlersSrc = fs.readFileSync(
+    path.join(__dirname, '..', 'cloudfunctions', 'api', 'handlers.js'),
+    'utf8'
+  )
+  check(
+    '★ 使用服务端 queryOrder 查单（不信任回调 body）',
+    /queryOrder\(/.test(handlersSrc) && /tradeState\s*!==\s*'SUCCESS'/.test(handlersSrc)
+  )
+  check(
+    '★ 校验实付金额与订单金额一致（分）',
+    /paidFee\s*!==\s*expectFee/.test(handlersSrc)
+  )
+  check(
+    '★ 状态推进用数据库端条件更新（只允许 0 → 1，幂等）',
+    /\{\s*_id:\s*order\._id,\s*status:\s*ORDER_STATUS\.UNPAID\s*\}/.test(handlersSrc)
   )
 
   // =========================================================================

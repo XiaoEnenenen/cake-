@@ -269,6 +269,15 @@ async function main() {
           checkHasLogined: async () => true, authorize: async () => ({})
         },
         'utils/pay$': { wxpay() {} },
+        // 2026-10-19（上线清单 P0-4）：结算页新增隐私同意门禁。
+        // 本节只验证登录门禁，统一按"已同意隐私政策"处理（真实 privacy.hasAgreed()
+        // 会读空 storage 返回 false，导致 createorder 先被隐私门禁拦住，原断言失效）。
+        'utils/privacy$': {
+          hasAgreed: () => true,
+          ensureAgreed: async () => true,
+          markAgreed() {},
+          requestPlatformAuthorize: async () => ({ ok: true })
+        },
         'shop-config$': SHOP_STUB,
         'utils/delivery$': DELIVERY_STUB,
         'utils/address$': {

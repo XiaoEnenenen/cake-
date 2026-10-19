@@ -123,15 +123,21 @@ function minBuyNumberOf(goods) {
 }
 
 /**
- * 解析期望时间（2026-10-14）
+ * 解析期望时间（2026-10-14；2026-10-19 上线收尾 P0-2 时区修复）
  * 接受 'YYYY-MM-DD HH:mm'（结算页存进 storage 的绝对时间格式）与 ISO 串；
  * 其它（如"今天 22:00"这种可读文案）返回 null，由调用方决定是拒绝还是跳过。
+ *
+ * ★ 2026-10-19：'YYYY-MM-DD HH:mm' 必须按**北京时间**解释，不能按运行环境时区。
+ *   云函数运行在 UTC，原来 `new Date(年, 月, 日, 时, 分)` 构造的是"UTC 的 22:00"，
+ *   而顾客选的是"北京时间的 22:00"——服务端算出的时刻比真实时刻**晚 8 小时**，
+ *   「蛋糕提前 3 小时」这条规则在服务端形同虚设（本地测试跑在 UTC+8，永远发现不了）。
+ *   现在统一交给 delivery.parseBeijingTime（与 checkAdvanceTime 用同一套时区口径）。
  */
 function parseExpectTime(s) {
   const str = String(s || '').trim()
-  const m = str.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{1,2}):(\d{2})/)
-  if (m) {
-    return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]))
+  if (!str) return null
+  if (/^\d{4}-\d{2}-\d{2}[ T]\d{1,2}:\d{2}/.test(str)) {
+    return delivery.parseBeijingTime(str)
   }
   const d = new Date(str)
   return isNaN(d.getTime()) ? null : d
@@ -164,6 +170,77 @@ function resolveDeliveryMode(payload) {
   return payload && payload.address ? 'delivery' : 'pickup'
 }
 
+// ===========================================================================
+// P1-4 服务端入参加固（2026-10-19）
+// ---------------------------------------------------------------------------
+// 上线审查发现 orderCreate 仍有三处缺口：
+//   ① 期望时间可以缺省（只 warn）→ 改过的客户端/直接调云函数可以绕过「蛋糕提前 3 小时」；
+//   ② 联系电话完全不校验（回退读 extJson）→ 外送单可能没有可联系的电话；
+//   ③ goodsJson 行数无上限、extJson / address 无大小与结构校验 →
+//      恶意构造几千行可以放大数据库调用；超长 extJson/地址会污染订单与店主端响应体。
+// 这里统一收口。原则：**校验失败的请求一律不落单**（错误发生在占券/生成单号之前）。
+// ===========================================================================
+const ORDER_GOODS_MAX_ROWS = 50
+const ORDER_EXT_JSON_MAX_LEN = 4096
+// 地址字段白名单 + 每项最大长度（前端 utils/address.js 的字段与此一致）
+const ORDER_ADDRESS_FIELD_MAX = {
+  name: 20,
+  phone: 20,
+  province: 20,
+  city: 20,
+  district: 20,
+  detail: 120,
+  tag: 10
+}
+const MOBILE_RE = /^1[3-9]\d{9}$/
+
+/**
+ * 校验并归一化收货地址：只保留白名单字段、逐项限长；坐标必须是合理数字。
+ * 说明：坐标允许缺失/为 0（顾客手填地址或地图没取到时，配送规则降级为「运费待确认」），
+ *      但一旦给了就必须是合法经纬度，避免 NaN/字符串进入运费计算。
+ * @returns {{ok:true, address:object} | {ok:false, msg:string}}
+ */
+function validateOrderAddress(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { ok: false, msg: '收货地址格式不正确' }
+  }
+  const addr = {}
+  for (const key of Object.keys(ORDER_ADDRESS_FIELD_MAX)) {
+    const value = raw[key]
+    if (value === undefined || value === null) {
+      addr[key] = ''
+      continue
+    }
+    if (typeof value !== 'string') return { ok: false, msg: '收货地址格式不正确' }
+    const text = value.trim()
+    if (text.length > ORDER_ADDRESS_FIELD_MAX[key]) return { ok: false, msg: '收货地址内容过长' }
+    addr[key] = text
+  }
+  for (const key of ['latitude', 'longitude']) {
+    const n = Number(raw[key] === undefined || raw[key] === null ? 0 : raw[key])
+    if (!Number.isFinite(n) || Math.abs(n) > 180) {
+      return { ok: false, msg: '收货地址坐标不正确' }
+    }
+    addr[key] = n
+  }
+  return { ok: true, address: addr }
+}
+
+/**
+ * 订单是否需要店主先确认运费（P1-5，2026-10-19）
+ * 场景：地址超出最后一档（beyond）或没有经纬度算不出距离（unknown_distance）时，
+ *      下单的 freight 记 0、amountReal 不含运费；如果允许直接线上支付，就会漏收运费。
+ * 规则：这类订单在店主「确认运费」（orderFreightConfirm 写入 freightConfirmed）之前，
+ *      **不允许线上支付**；确认后金额已重算，可正常支付。
+ */
+function needsFreightConfirmOf(order) {
+  if (!order || order.deliveryMode !== 'delivery') return false
+  const q = order.deliveryQuote
+  if (!q) return false
+  const pending = q.reason === 'beyond' || q.reason === 'unknown_distance'
+  return pending && q.freightConfirmed !== true
+}
+
 /**
  * 生成购物车项的唯一 key：同一商品 + 同一规格组合 视为同一项
  */
@@ -192,6 +269,40 @@ function stableDocId(prefix, openid, seed) {
     .update(String(openid) + '|' + String(seed))
     .digest('hex')
   return prefix + hash.slice(0, 24)
+}
+
+// ===========================================================================
+// 并发安全的「条件更新」（2026-10-19 上线收尾 P0-3 / P1-3 新增）
+// ---------------------------------------------------------------------------
+// 为什么必须有它：原实现（orderClose / cancelExpiredCore / orderFinish / 支付回调）
+//   都是"先读出来判断状态，再整条 update 写回"——两步之间没有原子性。接入支付后
+//   会出现最危险的一种并发：15 分钟超时取消与微信支付回调同时到达，
+//   两个请求都读到 status=0，各自认为自己该改，最后可能是
+//   "已支付却被写成已取消"（钱收了、单没了）。
+//   `where({ _id, status: 期望值 }).update()` 由数据库端判断条件：
+//   只有一行真正从期望值改成了新值时才返回 updated=1，天然幂等且不会互相覆盖。
+//
+// 适配器约定：
+//   · 线上：cloudfunctions/api/index.js 的 dbAdapter.updateWhere（wx-server-sdk 的条件 update）；
+//   · 本地测试 / 老适配器：没有该方法时降级为"先查后逐条改"。
+//     ⚠️ 降级路径没有原子性，只用于单线程的测试环境；线上一定走真适配器。
+//
+// @returns {Promise<number>} 实际更新的行数（0 = 条件不匹配，什么都没改）
+// ===========================================================================
+async function updateWhere(ctx, collection, where, data) {
+  if (ctx && ctx.db && typeof ctx.db.updateWhere === 'function') {
+    const r = await ctx.db.updateWhere(collection, where, data)
+    if (r && typeof r.updated === 'number') return r.updated
+    if (r && r.stats && typeof r.stats.updated === 'number') return r.stats.updated
+    return 0
+  }
+  const rows = await ctx.db.find(collection, where || {})
+  let updated = 0
+  for (const row of rows) {
+    await ctx.db.update(collection, row._id, data)
+    updated++
+  }
+  return updated
 }
 
 // ===========================================================================
@@ -1322,8 +1433,10 @@ async function orderFreightConfirm(payload, ctx) {
 //      前端传的 `couponId` 只是"想用哪张券"，改前端改不了优惠金额；
 //   2) 优惠只作用于**商品金额**（不含打包费、不含运费），门槛也按商品金额判断：
 //      `amountReal = max(0, 商品金额 - 优惠) + 打包费 + 运费`；
-//   3) 一单最多用 **1 张**券（不叠加）。取消订单/超时未支付**不退券**
-//      （结算页有文案说明；避免再写一套返还逻辑，见阶段 11 第 7 步的取舍）。
+//   3) 一单最多用 **1 张**券（不叠加）。
+//      下单时**原子占用**（防止同一张券并发下多单），订单取消/超时未支付时**退回**
+//      （2026-10-19 上线收尾 P0-3 从"不退券"改为"退券"，见 cancelPendingOrder）；
+//      支付成功后占用才最终生效（不是"支付成功才占用"，而是"取消才归还"）。
 //
 // 数据模型（集合 `coupon`，权限「仅创建者可读写」——顾客只经云函数访问）：
 //   { _id, name, type: 'newCustomer' | 'threshold', threshold, amount,
@@ -2414,19 +2527,451 @@ async function cmsPage(payload, ctx) {
 }
 
 // ===========================================================================
-// 微信支付统一下单（第 2 阶段接入；当前明确返回未接入）
+// 微信支付（上线收尾 P0-1，2026-10-19 接入）
+// ---------------------------------------------------------------------------
+// 背景：阶段 7 之前 `wxpay` 固定返回 501，订单只会停在「待支付」并被 15 分钟超时取消；
+//   店主端也没有任何入口能把订单推进到「制作中」，真实经营开始不了。
+//
+// 设计要点（为什么是"服务端查单"而不是"信任回调参数"）：
+//   1) 云开发支付（cloud.cloudPay）的回调是云函数事件，客户端可以用
+//      `wx.cloud.callFunction({ data: { outTradeNo, resultCode: 'SUCCESS' } })`
+//      伪造一份"支付成功"事件（这正是 index.js 原 ENABLE_PAY_CALLBACK 开关要防的洞）。
+//      因此**回调里的任何字段都只当作线索**，真正的支付状态一律用
+//      `cloud.cloudPay.queryOrder()` 向微信支付服务端查单确认，并校验金额；
+//      伪造的事件查单只会得到 NOTPAY，不会推进订单。
+//   2) 状态推进只走 `markOrderPaid` 的**数据库端条件更新**（status 0 → 1）：
+//      重复回调幂等；与 15 分钟超时取消并发时，只有一方能成功，不会"钱收了单没了"。
+//   3) 除回调外还提供两条路径：
+//      · orderPayConfirm —— 顾客在 requestPayment 成功后主动向服务端确认
+//        （回调可能延迟/漏投递，客户端确认能立刻让订单变「制作中」）；
+//      · orderMarkPaid —— 店主确认线下收款（到店支付 / 转账）。
+//        商户号没下来之前，这条路径就能让真实经营先跑起来，不再卡在「待支付」。
+//   4) 退款（P1-8）依赖商户号与退款接口，本期只留 needRefund 标记与日志，不做资金操作。
+//
+// ⚠️ 配置：cloudfunctions/api/shop-config.js 的 pay 段（enabled / subMchId / envId）。
+//    未配置时 wxpay 明确返回 501「线上支付尚未开通」，**绝不伪造支付成功**。
 // ===========================================================================
+const PAY_CALLBACK_FN_DEFAULT = 'api'
+
+/**
+ * 统一下单的 body（商户订单标题）。
+ * ⚠️ 店名不在这里写字面量：唯一出处是 shop-config.js 的 shop.name
+ *   （tests/test-stage5.js 有守卫：handlers.js 的**代码**里不得出现硬编码店名）。
+ */
+function payBodyOf(orderNumber) {
+  const SHOP = require('./shop-config')
+  const name = (SHOP && SHOP.shop && SHOP.shop.name) || '订单'
+  return name + '-' + orderNumber
+}
+
+/** 支付配置（shop-config.js 的 pay 段；缺省为空对象 = 未开通） */
+function payConfigOf() {
+  const SHOP = require('./shop-config')
+  return (SHOP && SHOP.pay) || {}
+}
+
+/**
+ * 线上支付是否已正确配置：商户号 + 云环境 ID 都必须有值。
+ * 只配了 enabled 但没填商户号时仍视为未开通（fail-closed，宁可提示到店支付，
+ * 也不能发一个注定失败的统一下单让顾客看到"支付失败"）。
+ */
+function payConfigured() {
+  const p = payConfigOf()
+  return !!(p && p.enabled === true &&
+    String(p.subMchId || '').trim() &&
+    String(p.envId || '').trim())
+}
+
+/** 未配置时的统一文案（utils/pay.js 的 isPayNotReady 依赖 501 + 文案关键词） */
+function payNotReadyResult() {
+  return fail('线上支付尚未开通（云开发支付未配置商户号），请到店支付或联系门店', 501)
+}
+
+/** 随机串（微信支付 nonceStr / 查单 nonceStr） */
+function payNonce() {
+  return crypto.randomBytes(16).toString('hex')
+}
+
+/**
+ * 把一张「待支付」订单推进到「制作中」（微信支付成功 / 店主线下确认收款共用）
+ *
+ * 幂等与并发：`where({ _id, status: 0 }).update()` 是数据库端条件更新，
+ *   只有真正把状态从 0 改成 1 的那一次调用返回 updated=1；
+ *   重复回调、回调与超时取消并发都不会重复推进。
+ *
+ * @param {object} ctx
+ * @param {object} order 订单（调用方已读取）
+ * @param {object} payInfo 写入订单 payInfo 的支付信息
+ * @param {object} opts { source: 'wxpay_callback'|'client_confirm'|'admin_offline' }
+ * @returns {Promise<{paid:boolean, duplicated?:boolean, conflict?:string}>}
+ */
+async function markOrderPaid(ctx, order, payInfo, opts) {
+  const now = Date.now()
+  const info = Object.assign({ payTime: now }, payInfo || {})
+  const updated = await updateWhere(
+    ctx,
+    'order',
+    { _id: order._id, status: ORDER_STATUS.UNPAID },
+    {
+      status: ORDER_STATUS.MAKING,
+      statusStr: statusTextOf(ORDER_STATUS.MAKING),
+      payTime: now,
+      payInfo: info,
+      paySource: (opts && opts.source) || ''
+    }
+  )
+  if (updated > 0) return { paid: true }
+  // 没改到行：读一次当前状态，区分「已经付过（幂等重放）」与「状态冲突（已取消/已完成）」
+  const cur = await ctx.db.get('order', order._id)
+  if (cur && (cur.status === ORDER_STATUS.MAKING || cur.status === ORDER_STATUS.DONE)) {
+    return { paid: true, duplicated: true }
+  }
+  return { paid: false, conflict: cur ? statusTextOf(cur.status) : '订单不存在' }
+}
+
+/**
+ * 记录支付异常并标记需要人工退款（2026-10-19 审查补强）
+ * ---------------------------------------------------------------------------
+ * 适用两类"钱可能已经收了、但订单没能正常推进"的情况：
+ *   ① 金额不一致（如支付期间店主补录了运费，amountReal 变了）；
+ *   ② 订单已被超时取消却收到支付成功（调用方另写 payAfterCancel 快照）。
+ * 只打日志会漏对账，所以统一落库 needRefund / refundStatus='pending'；
+ * 本期不做资金操作（P1-8），由店主/开发在商户平台退款后手工把状态改成 done。
+ */
+async function recordPayAnomaly(ctx, order, info) {
+  try {
+    await ctx.db.update('order', order._id, {
+      payAnomaly: Object.assign({ detectedAt: Date.now() }, info || {}),
+      needRefund: true,
+      refundStatus: 'pending'
+    })
+  } catch (e) {
+    console.error('[payAnomaly] 记录支付异常失败：' + ((e && e.message) || e))
+  }
+}
+
 /**
  * 微信支付统一下单
  * 前端用法：utils/pay.js → 期望 res.code === 0 且 res.data 含
  *          timeStamp / nonceStr / package / signType / paySign
  *
- * 说明：云开发下建议用 cloud.cloudPay.unifiedOrder()，需先申请微信支付商户号。
- *       在接入之前明确返回"未接入"，让页面提示"支付暂时不可用"，
- *       **绝不伪造支付成功**。
+ * 金额纪律：totalFee **由服务端按订单 amountReal 重算**（分），绝不接受前端传来的金额。
  */
 async function wxpay(payload, ctx) {
-  return fail('云开发支付尚未接入：需先申请微信支付商户号并配置云开发支付（cloud.cloudPay）', 501)
+  if (!payConfigured()) return payNotReadyResult()
+
+  const orderId = payload && (payload.orderId || payload.id)
+  if (!orderId) return fail('缺少订单 id')
+  const order = await ctx.db.get('order', orderId)
+  if (!order) return fail('订单不存在')
+  if (order._openid !== ctx.openid) return fail('无权支付该订单')
+  if (!order.orderNumber) return fail('订单号缺失，无法发起支付')
+
+  // 已支付：幂等返回，前端据此直接回订单页，不再重复拉起支付
+  if (order.status === ORDER_STATUS.MAKING || order.status === ORDER_STATUS.DONE) {
+    return ok({ alreadyPaid: true, orderId: order._id, orderNumber: order.orderNumber })
+  }
+  if (order.status !== ORDER_STATUS.UNPAID) return fail('订单已取消，不能支付')
+
+  // 2026-10-19 P1-5：运费待确认的订单**不允许线上支付** ——
+  //   这类订单下单时 freight 记 0、amountReal 不含运费；若直接支付，店主事后补录运费
+  //   也收不回来（只能退款重来）。先让店主在店主端「确认运费」，金额重算后再付。
+  if (needsFreightConfirmOf(order)) {
+    return fail('该订单运费待确认，请先联系门店确认运费后再支付')
+  }
+
+  // 超时兜底：与定时触发器/读取兜底同一口径，先取消失效订单再拒绝支付
+  const now = Date.now()
+  if (Number(order.dateAdd) > 0 && now - Number(order.dateAdd) > orderTimeoutMs()) {
+    const r = await cancelPendingOrder(ctx, order, { cancelReason: 'timeout', cancelTime: now })
+    return fail(r && r.ok
+      ? '订单已超过支付时限，已自动取消'
+      : '订单已超时，当前状态不可支付，请刷新订单页')
+  }
+
+  const totalFee = Math.round(Number(order.amountReal) * 100)
+  if (!Number.isFinite(totalFee) || totalFee <= 0) return fail('订单金额异常，无法发起支付')
+
+  if (!ctx.pay || typeof ctx.pay.unifiedOrder !== 'function') {
+    // 云函数入口没注入支付模块（例如只更新了 handlers.js、没重新部署 index.js）
+    console.error('[wxpay] ctx.pay.unifiedOrder 缺失：请更新并重新部署云函数 api')
+    return fail('线上支付暂时不可用（云函数未加载支付模块），请到店支付或联系门店', 501)
+  }
+
+  const conf = payConfigOf()
+  const nonceStr = payNonce()
+  let res
+  try {
+    res = await ctx.pay.unifiedOrder({
+      body: payBodyOf(order.orderNumber),
+      outTradeNo: order.orderNumber,
+      spbillCreateIp: conf.spbillCreateIp || '127.0.0.1',
+      subMchId: String(conf.subMchId),
+      totalFee: totalFee,
+      envId: String(conf.envId),
+      functionName: conf.callbackFunction || PAY_CALLBACK_FN_DEFAULT,
+      nonceStr: nonceStr
+    })
+  } catch (e) {
+    console.error('[wxpay] 统一下单异常：' + (e && e.message ? e.message : e))
+    return fail('微信支付下单失败，请稍后重试；订单已保存')
+  }
+
+  if (!res || res.returnCode !== 'SUCCESS' || res.resultCode !== 'SUCCESS' || !res.payment) {
+    // 只把可读原因给顾客，完整返回体只进日志（避免把支付接口细节暴露到前端）
+    console.error('[wxpay] 统一下单失败：' + JSON.stringify({
+      returnCode: res && res.returnCode,
+      returnMsg: res && res.returnMsg,
+      resultCode: res && res.resultCode,
+      errCode: res && res.errCode,
+      errCodeDes: res && res.errCodeDes
+    }))
+    const reason = (res && (res.errCodeDes || res.returnMsg)) || '未知原因'
+    return fail('微信支付下单失败：' + reason + '，请稍后重试；订单已保存')
+  }
+
+  // 记录预支付信息：仅用于对账排查，**支付状态一律以查单/回调结果为准**
+  try {
+    await ctx.db.update('order', order._id, {
+      prepayInfo: { totalFee: totalFee, nonceStr: nonceStr, prepayTime: now }
+    })
+  } catch (e) {
+    console.error('[wxpay] 记录预支付信息失败（不影响支付）：' + (e && e.message ? e.message : e))
+  }
+
+  return ok(Object.assign({
+    orderId: order._id,
+    orderNumber: order.orderNumber,
+    totalFee: totalFee
+  }, res.payment))
+}
+
+/**
+ * 微信支付结果回调核心（由 index.js 在 action 路由之前拦截调用）
+ *
+ * 安全：**不信任 event 里的任何支付结果字段**——它们可能来自伪造的客户端调用。
+ *   唯一可信来源是 `ctx.pay.queryOrder()` 的查单结果（微信支付服务端返回）：
+ *   · tradeState 必须是 SUCCESS；
+ *   · 实付 totalFee（分）必须与订单 amountReal 完全一致；
+ *   · 只有上述校验都通过，才把订单 0 → 1（数据库端条件更新，幂等）。
+ * @returns {Promise<{errcode:number, errmsg:string}>} errcode=0 让微信停止重试
+ */
+async function payCallbackCore(event, ctx) {
+  const e = event || {}
+  const outTradeNo = String(e.outTradeNo || '').trim()
+  if (!outTradeNo) return { errcode: 0, errmsg: 'ignored' }
+
+  const order = await ctx.db.findOne('order', { orderNumber: outTradeNo })
+  if (!order) {
+    console.error('[payCallback] 找不到订单：outTradeNo=' + outTradeNo)
+    // 返回 0：无法处理的单不要无限重试（保留日志供人工排查）
+    return { errcode: 0, errmsg: 'order not found' }
+  }
+  // 已经付过：直接返回成功（幂等，避免微信反复重试）
+  if (order.status === ORDER_STATUS.MAKING || order.status === ORDER_STATUS.DONE) {
+    return { errcode: 0, errmsg: 'duplicated' }
+  }
+  if (!payConfigured() || !ctx.pay || typeof ctx.pay.queryOrder !== 'function') {
+    console.error('[payCallback] 支付未配置或缺少查单能力，拒绝推进订单：' + outTradeNo)
+    return { errcode: -1, errmsg: 'pay not configured' }
+  }
+
+  const conf = payConfigOf()
+  let q
+  try {
+    q = await ctx.pay.queryOrder({
+      subMchId: String(conf.subMchId),
+      outTradeNo: outTradeNo,
+      nonceStr: payNonce()
+    })
+  } catch (err) {
+    console.error('[payCallback] 查单异常：' + (err && err.message ? err.message : err))
+    return { errcode: -1, errmsg: 'query order failed' }
+  }
+  if (!q || q.resultCode !== 'SUCCESS' || q.tradeState !== 'SUCCESS') {
+    console.warn('[payCallback] 查单未成功，不推进订单：outTradeNo=' + outTradeNo +
+      ' tradeState=' + (q && q.tradeState))
+    return { errcode: 0, errmsg: 'not paid' }
+  }
+
+  const paidFee = Number(q.totalFee)
+  const expectFee = Math.round(Number(order.amountReal) * 100)
+  if (!Number.isFinite(paidFee) || paidFee !== expectFee) {
+    console.error('[payCallback] 金额不一致，拒绝推进：outTradeNo=' + outTradeNo +
+      ' 实付分=' + paidFee + ' 应付分=' + expectFee)
+    // 2026-10-19 审查补强：金额不一致也要留痕。典型场景：顾客发起支付后店主补录了运费
+    //   （amountReal 变了）→ 顾客仍按旧金额付款。钱可能已经收了，只打日志会漏对账。
+    await recordPayAnomaly(ctx, order, {
+      type: 'amount_mismatch',
+      outTradeNo: outTradeNo,
+      paidFee: paidFee,
+      expectFee: expectFee,
+      transactionId: q.transactionId || '',
+      timeEnd: q.timeEnd || ''
+    })
+    // 返回 -1 让微信重试一次，便于排查；但状态绝不推进
+    return { errcode: -1, errmsg: 'amount mismatch' }
+  }
+
+  const advanced = await markOrderPaid(ctx, order, {
+    payChannel: 'wxpay',
+    outTradeNo: outTradeNo,
+    transactionId: q.transactionId || '',
+    totalFee: paidFee,
+    cashFee: Number.isFinite(Number(q.cashFee)) ? Number(q.cashFee) : paidFee,
+    timeEnd: q.timeEnd || ''
+  }, { source: 'wxpay_callback' })
+  if (advanced.paid) return { errcode: 0, errmsg: 'ok' }
+
+  // 钱已经收到、订单却已取消/完成：钱货不一致，必须留痕人工退款（本期不做资金操作）
+  console.error('[payCallback] 已支付但订单状态冲突（可能已超时取消），需人工退款：outTradeNo=' +
+    outTradeNo + ' 当前状态=' + advanced.conflict)
+  try {
+    await ctx.db.update('order', order._id, {
+      payAfterCancel: {
+        outTradeNo: outTradeNo,
+        transactionId: q.transactionId || '',
+        totalFee: paidFee,
+        timeEnd: q.timeEnd || '',
+        detectedAt: Date.now()
+      },
+      needRefund: true,
+      refundStatus: 'pending'
+    })
+  } catch (e2) {
+    console.error('[payCallback] 记录退款标记失败：' + ((e2 && e2.message) || e2))
+  }
+  return { errcode: 0, errmsg: 'paid but order conflicted' }
+}
+
+/**
+ * 顾客端支付确认（requestPayment 成功后立即调用）
+ * 作用：不依赖支付回调是否及时到达，主动查单确认并推进订单状态。
+ * 语义：查单未成功（NOTPAY 等）返回 paid:false + 原因，属正常情况，不算接口失败。
+ */
+async function orderPayConfirm(payload, ctx) {
+  const id = payload && payload.id
+  if (!id) return fail('缺少订单 id')
+  const order = await ctx.db.get('order', id)
+  if (!order) return fail('订单不存在')
+  if (order._openid !== ctx.openid) return fail('无权查看该订单')
+
+  if (order.status === ORDER_STATUS.MAKING || order.status === ORDER_STATUS.DONE) {
+    return ok({
+      paid: true,
+      status: order.status,
+      orderNumber: order.orderNumber,
+      amountReal: order.amountReal
+    })
+  }
+  if (!payConfigured() || !ctx.pay || typeof ctx.pay.queryOrder !== 'function') {
+    return ok({ paid: false, status: order.status, reason: 'pay_not_configured' })
+  }
+
+  const conf = payConfigOf()
+  let q
+  try {
+    q = await ctx.pay.queryOrder({
+      subMchId: String(conf.subMchId),
+      outTradeNo: order.orderNumber,
+      nonceStr: payNonce()
+    })
+  } catch (e) {
+    console.error('[orderPayConfirm] 查单异常：' + (e && e.message ? e.message : e))
+    return ok({ paid: false, status: order.status, reason: 'query_failed' })
+  }
+  if (!q || q.resultCode !== 'SUCCESS' || q.tradeState !== 'SUCCESS') {
+    return ok({ paid: false, status: order.status, reason: (q && q.tradeState) || 'NOTPAY' })
+  }
+
+  const paidFee = Number(q.totalFee)
+  const expectFee = Math.round(Number(order.amountReal) * 100)
+  if (!Number.isFinite(paidFee) || paidFee !== expectFee) {
+    console.error('[orderPayConfirm] 金额不一致：outTradeNo=' + order.orderNumber +
+      ' 实付分=' + paidFee + ' 应付分=' + expectFee)
+    // 同 payCallbackCore：金额不一致必须留痕（钱可能已经付了，只是订单金额在支付期间变了）
+    await recordPayAnomaly(ctx, order, {
+      type: 'amount_mismatch',
+      outTradeNo: order.orderNumber,
+      paidFee: paidFee,
+      expectFee: expectFee,
+      transactionId: q.transactionId || '',
+      timeEnd: q.timeEnd || ''
+    })
+    return ok({ paid: false, status: order.status, reason: 'amount_mismatch' })
+  }
+
+  const advanced = await markOrderPaid(ctx, order, {
+    payChannel: 'wxpay',
+    outTradeNo: order.orderNumber,
+    transactionId: q.transactionId || '',
+    totalFee: paidFee,
+    cashFee: Number.isFinite(Number(q.cashFee)) ? Number(q.cashFee) : paidFee,
+    timeEnd: q.timeEnd || ''
+  }, { source: 'client_confirm' })
+  if (!advanced.paid) {
+    console.error('[orderPayConfirm] 已支付但订单状态冲突：outTradeNo=' + order.orderNumber +
+      ' 当前状态=' + advanced.conflict)
+    try {
+      await ctx.db.update('order', order._id, {
+        payAfterCancel: {
+          outTradeNo: order.orderNumber,
+          transactionId: q.transactionId || '',
+          totalFee: paidFee,
+          timeEnd: q.timeEnd || '',
+          detectedAt: Date.now()
+        },
+        needRefund: true,
+        refundStatus: 'pending'
+      })
+    } catch (e2) {
+      console.error('[orderPayConfirm] 记录退款标记失败：' + ((e2 && e2.message) || e2))
+    }
+    return ok({ paid: false, status: order.status, reason: 'order_conflict' })
+  }
+  return ok({
+    paid: true,
+    status: ORDER_STATUS.MAKING,
+    orderNumber: order.orderNumber,
+    amountReal: order.amountReal
+  })
+}
+
+/**
+ * 店主确认线下收款（到店支付 / 微信转账 / 现金），把待支付订单推进到「制作中」。
+ * 为什么需要：商户号审核周期 1~3 周，在线上支付开通之前，这条路径让真实经营可先跑；
+ *   鉴权走 requireAdmin（服务端 openid 白名单），顾客调不动。
+ * 流程：二次确认后由店主点「确认收款」→ 服务端只接受 0 → 1（条件更新，幂等）。
+ */
+async function orderMarkPaid(payload, ctx) {
+  const denied = requireAdmin(ctx)
+  if (denied) return denied
+  const id = payload && payload.id
+  if (!id) return fail('缺少订单 id')
+  const order = await ctx.db.get('order', id)
+  if (!order) return fail('订单不存在')
+  if (order.status === ORDER_STATUS.MAKING || order.status === ORDER_STATUS.DONE) {
+    return fail('该订单已收款，无需重复确认')
+  }
+  if (order.status !== ORDER_STATUS.UNPAID) {
+    return fail('该订单当前不可确认收款（当前状态：' + statusTextOf(order.status) + '）')
+  }
+  const advanced = await markOrderPaid(ctx, order, {
+    payChannel: 'offline',
+    confirmedBy: ctx.openid,
+    remark: payload && payload.remark ? String(payload.remark).slice(0, 100) : ''
+  }, { source: 'admin_offline' })
+  if (!advanced.paid) {
+    return fail('订单状态已变化（' + (advanced.conflict || '未知') + '），请刷新后重试')
+  }
+  console.log('[orderMarkPaid] 店主确认线下收款 openid=' + ctx.openid +
+    ' 订单号=' + order.orderNumber + ' 金额=' + order.amountReal)
+  return ok({
+    id: order._id,
+    orderNumber: order.orderNumber,
+    status: ORDER_STATUS.MAKING,
+    payChannel: 'offline'
+  })
 }
 
 // ===========================================================================
@@ -2498,6 +3043,9 @@ function orderCreateOk(o, duplicated) {
     couponAmount: Number(o.couponAmount) || 0,
     freightText: (q && q.freightText) || '免配送费',
     distanceKm: q ? q.distanceKm : null,
+    // 2026-10-19 P1-5：本单运费是否还需店主确认。前端据此**不进入收银台**，
+    // 提示顾客等门店电话确认运费后再从订单页继续支付（否则会按不含运费的金额付款）。
+    needsFreightConfirm: needsFreightConfirmOf(o),
     status: o.status,
     duplicated: !!duplicated
   })
@@ -2564,7 +3112,19 @@ async function orderCreate(payload, ctx) {
   // 业务错误必须是业务错误，且不能泄露实现细节。
   if (!Array.isArray(goodsJson)) return fail('商品数据格式错误')
   if (!goodsJson.length) return fail('购物车为空')
+  // 2026-10-19 P1-4：单次下单行数上限（防恶意构造几千行放大数据库调用）
+  if (goodsJson.length > ORDER_GOODS_MAX_ROWS) {
+    return fail('单次下单最多 ' + ORDER_GOODS_MAX_ROWS + ' 行商品')
+  }
 
+  // 2026-10-19 P1-4：extJsonStr 必须是字符串且不能过长（原来对象/超长串会被 String() 后塞进库）
+  if (extJsonStr !== undefined && extJsonStr !== null &&
+    typeof extJsonStr !== 'string') {
+    return fail('订单扩展信息格式不正确')
+  }
+  if (String(extJsonStr || '').length > ORDER_EXT_JSON_MAX_LEN) {
+    return fail('订单扩展信息过长')
+  }
   let extJson = {}
   try {
     extJson = JSON.parse(extJsonStr || '{}')
@@ -2573,6 +3133,14 @@ async function orderCreate(payload, ctx) {
   }
   // extJson 必须是普通对象（数组/null/字符串会让后续 extJson['x'] 语义跑偏）
   if (!extJson || typeof extJson !== 'object' || Array.isArray(extJson)) extJson = {}
+
+  // 2026-10-19 P1-4：联系电话若提供必须是 11 位手机号。
+  //   自提单的联络电话在 extJson（"联络电话" / "收货电话"），外送单在 address.phone
+  //   （下面按配送方式再强制要求）。这里只做格式校验，不强制存在（老客户端兼容）。
+  const extPhone = String(extJson['联络电话'] || extJson['收货电话'] || '').trim()
+  if (extPhone && !MOBILE_RE.test(extPhone)) {
+    return fail('联系电话格式不正确（请填 11 位手机号）')
+  }
 
   // 2026-10-14 审查修复：备注的**类型与长度**校验。
   // 原来原样入库并原样回给店主列表：一条 30 万字符的备注能把店主端整页响应撑到 5.7MB，
@@ -2713,13 +3281,22 @@ async function orderCreate(payload, ctx) {
   //   · 客户端**结构化字段** `payload.expectTime`（绝对时间）→ 严格校验，不合法直接拒；
   //   · 只在 `extJson` 里的可读文案（"今天 22:00"这类老格式）→ 能解析就校验，不能解析则跳过并记日志
   //     （不为难老版本客户端，但规则不再只存在于前端）。
+  // 2026-10-19 P1-4：**含蛋糕的订单必须带期望时间** —— 否则直接省略字段就能绕过
+  //   「提前 3 小时」（这是原来"缺省只 warn"留下的后门）。
   {
     const expectFromPayload = payload && payload.expectTime ? String(payload.expectTime).trim() : ''
     const expectFromExt = String(extJson['期望送达时间'] || extJson['自取时间'] || '').trim()
     const expectRaw = expectFromPayload || expectFromExt
     if (!expectRaw) {
-      console.warn('[orderCreate] 请求未带期望时间，跳过提前时间校验 openid=' + ctx.openid +
-        ' 订单商品数=' + items.length)
+      const cakeInfo = delivery.analyzeCake(
+        items.map((it) => ({ goods: it._goodsForQuote || it, sku: it.sku }))
+      )
+      if (cakeInfo.hasCake) {
+        return fail('请选择期望时间（蛋糕需提前 ' +
+          require('./delivery-config').advance.minHours + ' 小时预订）')
+      }
+      console.warn('[orderCreate] 请求未带期望时间（非蛋糕订单，按可立即下单处理）openid=' +
+        ctx.openid + ' 订单商品数=' + items.length)
     } else {
       const expectDate = parseExpectTime(expectRaw)
       if (!expectDate) {
@@ -2749,11 +3326,20 @@ async function orderCreate(payload, ctx) {
     items.forEach((it) => { delete it._goodsForQuote })
   }
 
+  // 2026-10-19 P1-4：外送地址先归一化（白名单字段 + 限长 + 坐标合法），
+  //   并要求必须有 11 位收货电话（原来电话完全不校验，外送单可能没有可联系号码）。
+  let orderAddress = null
   if (deliveryMode === 'delivery') {
-    const address = payload.address || null
-    if (!address) {
+    if (!payload.address) {
       return fail('外送订单缺少收货地址')
     }
+    const addrRes = validateOrderAddress(payload.address)
+    if (!addrRes.ok) return fail(addrRes.msg)
+    const address = addrRes.address
+    if (!MOBILE_RE.test(address.phone)) {
+      return fail('外送订单请填写正确的收货电话（11 位手机号）')
+    }
+    orderAddress = address
     // 阶段 8：先从云库装入规则（取不到 → 代码默认值），再算运费 ——
     // 保证「顾客屏显的运费」与「服务端实收」用的是同一份规则。
     await loadDeliveryRule(ctx)
@@ -2833,15 +3419,16 @@ async function orderCreate(payload, ctx) {
     packingFee: packingFeeTotal,
     freight: freight,
     // 阶段 11：优惠券快照（券面 + 实际抵扣额）。
-    // 取消订单/超时未支付**不退券**（本期明确取舍，结算页有文案说明）：
-    // 因此 usedCount 记的是"已用次数"，不随订单取消回退。
+    // 2026-10-19 P0-3：取消订单/超时未支付会**退回优惠券**（见 cancelPendingOrder），
+    //   返还后 usedCount 会回滚；订单上的 couponReleased 记录是否已返还（审计用）。
+    //   支付成功时券才最终计入"已用次数"（不再回滚）。
     couponId: couponDoc ? couponDoc._id : '',
     couponName: couponDoc ? couponDoc.name : '',
     couponType: couponDoc ? couponDoc.type : '',
     couponAmount: couponDiscount,
     deliveryMode: deliveryMode,
-    // 收货地址快照（仅外送订单）
-    address: deliveryMode === 'delivery' ? (payload.address || null) : null,
+    // 收货地址快照（仅外送订单；字段已按 P1-4 白名单归一化）
+    address: orderAddress,
     deliveryQuote: quote ? {
       distanceKm: quote.distanceKm,
       inArea: quote.inArea,
@@ -3145,6 +3732,10 @@ async function orderDetail(payload, ctx) {
       couponName: o.couponName || '',
       couponType: o.couponType || '',
       couponAmount: Number(o.couponAmount) || 0,
+      // 2026-10-19 P0-1：支付渠道（订单详情「支付方式」按它显示微信支付 / 线下收款）。
+      // 老订单 / 未支付订单没有 payInfo → 空串，页面回退显示「待支付/未支付」。
+      payChannel: (o.payInfo && o.payInfo.payChannel) || '',
+      paySource: o.paySource || '',
       freight: o.freight,
       deliveryQuote: o.deliveryQuote || null,
       // 收货地址快照（外送单才有；自提单为 null）
@@ -3164,18 +3755,72 @@ async function orderDetail(payload, ctx) {
   })
 }
 
+/**
+ * 取消一张「待支付」订单，并把它占用的优惠券还回去（上线收尾 P0-3，2026-10-19）
+ * ---------------------------------------------------------------------------
+ * 背景：阶段 11 的取舍是「取消/超时不退券」，但接入支付后这变成稳定投诉源与资损：
+ *   顾客下单（券被原子占用）→ 支付取消/超时 → 订单取消、券却没了。
+ *   现在改为：**下单时占用（防止同一张券并发下多单），订单取消/超时时返还**。
+ *
+ * 幂等与并发（关键）：
+ *   · 状态用数据库端条件更新 `where({ _id, status: 0 })`，只有真正把 0 改成 -1 的
+ *     那一次调用会返回 updated=1；重复调用/并发取消不会二次返还；
+ *   · 订单上的 `couponReleased` 与状态更新**同一次写入**，作为返还审计字段；
+ *   · 用券次数的回滚失败只会记日志（`releaseCouponUsage` 内部吞异常），
+ *     宁可少退一张也不重复加券（重复加券 = 超发）。
+ *
+ * @returns {Promise<{ok:boolean, updated:number, couponReleased:boolean}>}
+ *          ok=false 表示状态已不是「待支付」（被别的请求改过），调用方按冲突处理
+ */
+async function cancelPendingOrder(ctx, order, extra) {
+  if (!order || !order._id) return { ok: false, updated: 0, couponReleased: false }
+  const now = Date.now()
+  const patch = Object.assign({
+    status: ORDER_STATUS.CANCELLED,
+    statusStr: statusTextOf(ORDER_STATUS.CANCELLED)
+  }, extra || {})
+  // 有券的订单：把"已返还"标记与状态更新写在一起（并发下只有一次能写成功）
+  patch.couponReleased = !!order.couponId
+  if (order.couponId) {
+    patch.couponReleaseTime = now
+    patch.couponReleaseReason = (extra && extra.cancelReason) || 'cancel'
+  }
+
+  const updated = await updateWhere(
+    ctx,
+    'order',
+    { _id: order._id, status: ORDER_STATUS.UNPAID },
+    patch
+  )
+  if (updated <= 0) return { ok: false, updated: 0, couponReleased: false }
+  if (!order.couponId) return { ok: true, updated, couponReleased: false }
+
+  // 状态已成功取消 → 真正归还用券次数（数据库端原子自减，min:0 兜底）
+  await releaseCouponUsage(ctx, { _id: order.couponId }, order._openid)
+  console.log('[cancelOrder] 订单取消，优惠券已退回 openid=' + order._openid +
+    ' 订单号=' + order.orderNumber + ' 券=' + order.couponId)
+  return { ok: true, updated, couponReleased: true }
+}
+
 async function orderClose(payload, ctx) {
   const id = payload && payload.id
   const o = await ctx.db.get('order', id)
   if (!o) return fail('订单不存在')
   if (o._openid !== ctx.openid) return fail('无权操作该订单')
   if (o.status !== ORDER_STATUS.UNPAID) return fail('当前状态不可取消')
-  await ctx.db.update('order', o._id, {
-    status: ORDER_STATUS.CANCELLED,
-    statusStr: statusTextOf(ORDER_STATUS.CANCELLED)
-  })
+
+  const r = await cancelPendingOrder(ctx, o, { cancelReason: 'close', cancelTime: Date.now() })
+  if (!r.ok) {
+    // 并发/重放：可能另一条链路（超时取消）已经把它取消了 —— 对顾客来说结果一致
+    const cur = await ctx.db.get('order', o._id)
+    if (cur && cur.status === ORDER_STATUS.CANCELLED) {
+      return ok({ id: o._id, couponReleased: cur.couponReleased === true })
+    }
+    return fail('订单状态已变化，请刷新后重试')
+  }
+  // 2026-10-19 P0-3：取消订单会退回优惠券（原实现"取消不退券"）
   // 2026-10-09：库存概念已删除，取消订单不再回补库存
-  return ok({ id })
+  return ok({ id: o._id, couponReleased: r.couponReleased })
 }
 
 /**
@@ -3209,8 +3854,18 @@ async function orderDelete(payload, ctx) {
   }
   console.log('[orderDelete] openid=' + ctx.openid + ' 删除订单 ' + id +
     ' 状态=' + o.status + ' 金额=' + o.amountReal)
-  await ctx.db.remove('order', o._id)
-  return ok({ id })
+  const removed = await ctx.db.remove('order', o._id)
+  // 2026-10-19 P0-3：历史上「取消不退券」期间产生的已取消订单，删除前补一次返还。
+  //   用「删除行数」当幂等闸门：并发/重复删除时只有真正删掉一行的那次才返还
+  //   （真适配器返回 stats.removed；本地假 db 不返回时按 1 处理，测试不会重复删）。
+  const removedCount = removed && typeof removed.removed === 'number' ? removed.removed : 1
+  if (removedCount > 0 && o.status === ORDER_STATUS.CANCELLED &&
+    o.couponId && o.couponReleased !== true) {
+    await releaseCouponUsage(ctx, { _id: o.couponId }, o._openid)
+    console.log('[orderDelete] 老订单删除前补退优惠券 openid=' + o._openid +
+      ' 订单号=' + o.orderNumber + ' 券=' + o.couponId)
+  }
+  return ok({ id: o._id, removed: removedCount })
 }
 
 /**
@@ -3240,12 +3895,23 @@ async function orderFinish(payload, ctx) {
     return fail('该订单当前不可完成（仅已付款/制作中的订单可完成，当前状态：' +
       statusTextOf(o.status) + '）')
   }
-  await ctx.db.update('order', o._id, {
-    status: ORDER_STATUS.DONE,
-    statusStr: statusTextOf(ORDER_STATUS.DONE),
-    finishBy: ctx.openid,
-    finishTime: Date.now()
-  })
+  // 2026-10-19（P0-1 配套 / P1-3）：条件更新 1 → 3，防连点/并发重复完成
+  const updated = await updateWhere(
+    ctx,
+    'order',
+    { _id: o._id, status: ORDER_STATUS.MAKING },
+    {
+      status: ORDER_STATUS.DONE,
+      statusStr: statusTextOf(ORDER_STATUS.DONE),
+      finishBy: ctx.openid,
+      finishTime: Date.now()
+    }
+  )
+  if (updated <= 0) {
+    const cur = await ctx.db.get('order', o._id)
+    if (cur && cur.status === ORDER_STATUS.DONE) return fail('该订单已完成')
+    return fail('订单状态已变化，请刷新后重试')
+  }
   return ok({ id: o._id, orderNumber: o.orderNumber })
 }
 
@@ -3312,19 +3978,27 @@ async function cancelExpiredCore(ctx, opts = {}) {
     .filter((o) => Number(o.dateAdd) > 0 && Number(o.dateAdd) <= cutoff)
     .slice(0, CANCEL_MAX_PER_RUN)
 
+  let cancelled = 0
+  let couponReleased = 0
   for (const o of expired) {
-    await ctx.db.update('order', o._id, {
-      status: ORDER_STATUS.CANCELLED,
-      statusStr: statusTextOf(ORDER_STATUS.CANCELLED),
-      // 审计：区分"顾客主动取消"（无 cancelReason）与"超时自动取消"
+    // 2026-10-19 P0-3：超时取消同样退回优惠券；条件更新保证与支付回调并发时只有一方成功
+    const r = await cancelPendingOrder(ctx, o, {
+      // 审计：区分"顾客主动取消"与"超时自动取消"
       cancelReason: 'timeout',
       cancelTime: now
     })
+    if (!r.ok) {
+      // 竞态：查出来之后订单被支付/被顾客取消 → 跳过，下一轮不会再是待支付
+      continue
+    }
+    cancelled++
+    if (r.couponReleased) couponReleased++
     console.log('[cancelExpiredOrders] 超时未支付自动取消 openid=' + o._openid +
-      ' 订单号=' + o.orderNumber + ' 下单时间=' + o.dateAdd)
+      ' 订单号=' + o.orderNumber + ' 下单时间=' + o.dateAdd +
+      (r.couponReleased ? '（已退券）' : ''))
   }
 
-  return { scanned: pending.length, cancelled: expired.length, minutes }
+  return { scanned: pending.length, cancelled: cancelled, couponReleased: couponReleased, minutes }
 }
 
 /**
@@ -3351,7 +4025,7 @@ async function expireUnpaidForViewer(ctx, now, opts) {
  * 定时触发器入口：扫描并取消全部超时未支付订单
  * @param {object} payload 可注入 { now, timeoutMinutes, openid } 便于测试
  * @param {object} ctx 含 db
- * @returns {Promise<{code:number,data:{scanned:number,cancelled:number,timeoutMinutes:number}}>}
+ * @returns {Promise<{code:number,data:{scanned:number,cancelled:number,couponReleased:number,timeoutMinutes:number}}>}
  */
 async function cancelExpiredOrders(payload, ctx) {
   const p = payload || {}
@@ -3363,6 +4037,8 @@ async function cancelExpiredOrders(payload, ctx) {
   return ok({
     scanned: r.scanned,
     cancelled: r.cancelled,
+    // 2026-10-19 P0-3：本轮顺带退回优惠券的订单数（审计/日志用）
+    couponReleased: r.couponReleased || 0,
     timeoutMinutes: r.minutes
   })
 }
@@ -3371,9 +4047,11 @@ async function cancelExpiredOrders(payload, ctx) {
 // 2026-09-26 阶段二：已删除 orderPay（余额支付 / 标记已支付）action。
 // 会员余额体系整体移除，不再需要"用余额支付"这条链路。
 //
-// ⚠️ 注意：删除后 cloudfunctions/api/index.js 的 handlePayCallback（微信支付回调）
-//    暂无可写状态的入口。接入微信支付（第 2 阶段）时需在此处重新加回
-//    一个"标记订单已支付"的 action，并让回调调用它。
+// 2026-10-19（P0-1）：支付推进状态的入口已经补回来了，见上方支付段：
+//   · payCallbackCore —— 微信支付结果回调（服务端 queryOrder 查单验真后 0→1）
+//   · orderPayConfirm —— 顾客支付成功后主动确认到账
+//   · orderMarkPaid  —— 店主确认线下收款（到店支付/转账）
+// 三者共用 markOrderPaid 的数据库端条件更新，幂等且并发安全。
 
 // ===========================================================================
 // 数据导入 / 自检（初始化用，上线后可以保留也可以删）
@@ -3663,8 +4341,11 @@ const handlers = {
   couponUsableForCart,
   couponAdminList,
   couponUpsert,
-  // 支付统一下单（当前返回"未接入"，不伪造支付成功）
-  wxpay
+  // 微信支付（上线收尾 P0-1）：统一下单 / 支付后客户端确认 / 店主确认线下收款。
+  // 支付结果回调不走路由表（见 payCallbackCore，由 index.js 在 action 路由之前拦截）。
+  wxpay,
+  orderPayConfirm,
+  orderMarkPaid
 }
 
 /**
@@ -3739,5 +4420,15 @@ module.exports = {
   couponRuleText,
   couponViewOf,
   effectivePerUserLimitOf,
-  COUPON_TYPES: { NEW: COUPON_TYPE_NEW, THRESHOLD: COUPON_TYPE_THRESHOLD }
+  COUPON_TYPES: { NEW: COUPON_TYPE_NEW, THRESHOLD: COUPON_TYPE_THRESHOLD },
+  // 上线收尾 P0-1/P0-3（2026-10-19）：支付与"取消退券"内部函数导出，便于
+  //   index.js 支付回调复用、本地测试直接断言（不进路由表，前端调不到）
+  payConfigOf,
+  payConfigured,
+  payCallbackCore,
+  orderPayConfirm,
+  orderMarkPaid,
+  markOrderPaid,
+  updateWhere,
+  cancelPendingOrder
 }

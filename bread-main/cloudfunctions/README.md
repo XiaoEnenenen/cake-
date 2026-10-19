@@ -39,7 +39,7 @@ cloudfunctions/
 
 ## 已实现的接口
 
-> **路由表实际可调用的 action 共 32 个**（`handlers.js` 的 `handlers` 导出对象，
+> **路由表实际可调用的 action 共 34 个**（`handlers.js` 的 `handlers` 导出对象，
 > 由 `tests/test-cleanup.js` 断言数量与本文档一致）。下表多出的 `importData`
 > 已不在路由表里，仅通过 `module.exports` 暴露给云控制台/本地测试。
 
@@ -75,7 +75,9 @@ cloudfunctions/
 | `couponUsableForCart` | — | **结算页可用券 + 预估优惠**（阶段 11，只读）：按当前购物车与配送方式，服务端算出每张券能否用、能减多少，并给出默认最优券；**金额的唯一预览出处** |
 | `couponAdminList` | — | **店主端券列表**（阶段 11）：含已停用券，带使用量 / 命中上限 / 当前状态 / 有效期文案；`requireAdmin` |
 | `couponUpsert` | — | **新建 / 编辑 / 停用券**（阶段 11）：新客立减或满减，有效期、总量、每人限用、排序、启用；**没传的字段沿用旧值**（可只传 `{id, enabled}` 停用）；`usedCount` 只由服务端维护；`requireAdmin` + 入参校验 + 审计 |
-| `wxpay` | `wxpay` | 微信支付统一下单（**当前返回"未接入"**，需先申请商户号，阶段一未接线） |
+| `wxpay` | `wxpay` | **微信支付统一下单**（2026-10-19 P0-1 接入）：服务端按订单 `amountReal` 算 `totalFee`（分），调 `cloud.cloudPay.unifiedOrder`，返回 `wx.requestPayment` 参数；订单已支付时返回 `alreadyPaid`（不重复拉起收银台）；**运费待确认的订单拒绝线上支付**（P1-5，店主确认运费后金额重算再付）；商户号未配置时返回 501「线上支付尚未开通」（**绝不伪造支付成功**） |
+| `orderPayConfirm` | — | **支付后客户端确认到账**（2026-10-19 P0-1）：`requestPayment` 成功后调用，服务端 `queryOrder` 查单验真 + 金额校验后把订单 0 → 1（回调延迟时也能立刻变成「制作中」）；查单未成功返回 `paid:false`（不是错误） |
+| `orderMarkPaid` | — | **店主确认线下收款**（2026-10-19 P0-1）：到店支付/转账/现金场景，店主把待支付订单推进到「制作中」（`payChannel=offline`）；`requireAdmin` + 条件更新 0 → 1（幂等）；商户号下来前真实经营靠它 |
 | `fetchShops` | `fetchShops` | 单店模式兼容桩，固定返回空数组（前端已无调用方） |
 | `shopSubdetail` | `shopSubdetail` | 单店模式兼容桩，固定返回失败（`pages/current-order` 拨号取号用） |
 
@@ -144,7 +146,10 @@ const res = await API.goodsv2({ categoryId: cid })   // 原来：WXAPI.goodsv2(.
 > （店主端 7 个页面都不进 tabBar，普通顾客看不到入口）。
 > （此前这里写的「13 个页面」是 api 工厂时代的数字，从未复核过；报告 E-07 已记录该文档与代码不符。）
 >
-> `utils/pay.js` 的支付统一下单仍未接线（见文末），云开发通道会返回"未接入"文案。
+> `utils/pay.js` 的支付链路已接线（2026-10-19 P0-1，见文末「微信支付」）：
+> 统一下单 → `wx.requestPayment` → 服务端 `orderPayConfirm` 确认到账；
+> `shop-config.js` 的 `pay.enabled=false` 时云函数返回 501「线上支付尚未开通」，
+> 店主可用「确认收款」（`orderMarkPaid`）走线下收款。
 
 
 ---
@@ -233,6 +238,9 @@ node tests/test-coupon.js    # 阶段 11 优惠券（含并发防超发 / 结算
 node tests/test-profile.js   # 阶段 12 隐私合规 / 退出登录 / 编辑资料
 node tests/test-login-gate.js # 2026-10-17 登录门禁（未登录不能加购/结算/支付）
 node tests/test-pay.js       # 2026-10-17 支付失败体验（不弹原始 JSON / 未接入提示）
+node tests/test-pay-server.js # 2026-10-19 P0-1/P0-3：支付回调验真/金额/幂等 + 取消退券
+node tests/test-privacy-gate.js # 2026-10-19 P0-4：未同意隐私不能下单
+node tests/test-timezone.js  # 2026-10-19 P0-2：以 TZ=UTC 重跑，验证北京时间校验
 ```
 
 `tests/test-cloud-api.js` 用内存版数据库跑完整流程：分类 → 商品 → 加购 → 下单 → 查单 → 取消 → 核销，
@@ -252,18 +260,26 @@ node tests/test-pay.js       # 2026-10-17 支付失败体验（不弹原始 JSON
    规格每组必选且选项合法；**本店没有库存概念**，不校验也不扣减库存（2026-10-09 删除）。
 3. **用户隔离**：购物车与订单的读写都按 `_openid` 过滤。
 4. **规格必选校验**：商品有规格组时，每组都必须选，且选项必须属于该商品。
+5. **期望时间服务端权威校验**（2026-10-19 P1-4 补强）：含蛋糕订单**必须带期望时间**，
+   营业时间与「提前 3 小时」按北京时间判断（不依赖云函数运行时区）；
+   外送单必须有 11 位收货电话，`goodsJson` ≤50 行，`extJson` ≤4KB，收货地址按字段白名单+限长。
+6. **运费待确认不允许线上支付**（2026-10-19 P1-5）：8km+ / 地址无坐标的订单 `amountReal`
+   不含运费，`wxpay` 直接拒绝；店主端「确认运费」重算金额后才可支付（防止漏收运费）。
 
 ---
 
-## 第 2 阶段（拿到商户号后）
+## 微信支付（2026-10-19 已接线，配置商户号即可开通）
 
-支付相关代码位置已预留：
+代码位置（P0-1）：
 
-- `api/index.js` 里的 `handlePayCallback()`：微信支付结果回调入口
+- `handlers.js` 的 `wxpay`：统一下单（金额由服务端按订单 `amountReal` 算）
+- `handlers.js` 的 `payCallbackCore` + `index.js` 的 `isPayCallbackEvent`：支付结果回调。
+  **回调字段只当线索**，真实状态用 `cloud.cloudPay.queryOrder()` 查单确认 + 金额校验，
+  再用条件更新 0 → 1（幂等、与超时取消并发安全）；伪造回调不会改任何订单状态。
+- `handlers.js` 的 `orderPayConfirm`：客户端支付成功后主动确认到账（回调延迟兜底）
+- `handlers.js` 的 `orderMarkPaid`：店主确认线下收款（商户号下来前的经营路径）
+- `cloudfunctions/api/shop-config.js` 的 `pay` 段：`enabled / subMchId / envId / callbackFunction`
 
-> **2026-02-14 更正**：此处此前还列了「`orderPay` action：标记订单已支付」。
-> 该 action 已随会员余额体系一并删除（`handlers.js` 内有就地注释），现移除。
-
-接入方式建议用 `cloud.cloudPay.unifiedOrder()`（云开发支付），
-可以省掉自己写签名和处理证书的部分。`utils/pay.js` 里
-`wx.requestPayment` 那段结构可以直接复用。
+开通步骤：拿到商户号 → 填 `pay` 段三个值 → **重新上传并部署云函数** → 真机联调一笔
+（顾客端支付后应变「制作中」，店主端可「完成订单」）。退款（P1-8）本期不做资金操作，
+回调发现「订单已取消却支付成功」时会打 `needRefund / refundStatus='pending'` 标记供人工处理。

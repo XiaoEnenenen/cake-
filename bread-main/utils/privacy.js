@@ -30,7 +30,9 @@ const PROMPT_KEY = 'privacyPromptedVersion'
 // 清掉同意/已提示状态 → 隐私弹窗重新出现（2026-10-17 第二轮顾客反馈）
 const RESET_ON_LAUNCH_KEY = 'privacyResetOnNextLaunch'
 // 隐私政策内容有实质变化时改这个版本号（会重新弹同意）
-const POLICY_VERSION = '2026-10-17'
+// 2026-10-19：修正收货地址存储描述（地址簿仅保存在手机本地，不上传服务器）——
+//   协议内容有实质变化，需让老用户重新征得同意 → 版本号 2026-10-17 升到 2026-10-19。
+const POLICY_VERSION = '2026-10-19'
 
 /** 本机是否已同意当前版本的隐私政策 */
 function hasAgreed() {
@@ -164,6 +166,67 @@ function requestPlatformAuthorize() {
   })
 }
 
+/**
+ * 「关键操作前的隐私同意门禁」（2026-10-19 上线清单 P0-4，合规硬要求）
+ * ---------------------------------------------------------------------------
+ * 问题：结算页原来只校验手机号，**未同意隐私政策也能下单** ——
+ *   等于在未取得用户同意的情况下收集/使用其手机号、收货地址等个人信息，
+ *   不符合微信小程序隐私合规要求（首次调用隐私接口前必须获得用户同意）。
+ * 行为约定（fail-closed：任何拿不到"明确同意"的路径都返回 false）：
+ *   · 本机已同意当前版本（hasAgreed）→ 直接 resolve(true)，不打扰顾客；
+ *   · 未同意 → wx.showModal 明确告知，只有顾客点「同意并继续」才：
+ *       1) markAgreed() 记录本机同意；
+ *       2) requestPlatformAuthorize() 补一次微信平台级授权；
+ *       3) 平台**明确拒绝**（denied）→ 撤掉刚记的本地同意并 resolve(false)，
+ *          保证下一次仍会重新征得同意（不能留下"本地说同意了、平台说拒绝了"的缝）；
+ *   · 顾客点「暂不同意」/ 关闭弹窗 / showModal 调用失败 → 一律 resolve(false)，
+ *     调用方（结算页 createorder）必须拦住下单，**不得静默放行**。
+ *
+ * @param {object} [options] 可覆盖弹窗文案 { title, content, confirmText, cancelText }
+ * @returns {Promise<boolean>} true = 已取得同意、可继续；false = 不得继续
+ */
+function ensureAgreed(options) {
+  const o = options || {}
+  return new Promise((resolve) => {
+    // 已同意当前版本：不重复打扰
+    if (hasAgreed()) {
+      resolve(true)
+      return
+    }
+    try {
+      wx.showModal({
+        title: o.title || '隐私政策',
+        content: o.content ||
+          '下单前请阅读并同意《用户隐私政策》。我们会收集完成订单所必需的信息' +
+          '（微信身份标识、手填手机号、收货地址等），仅用于下单、配送与售后。',
+        confirmText: o.confirmText || '同意并继续',
+        cancelText: o.cancelText || '暂不同意',
+        success: (r) => {
+          // 未点「同意并继续」（取消 / 关闭）→ 不放行
+          if (!r || !r.confirm) {
+            resolve(false)
+            return
+          }
+          markAgreed()
+          requestPlatformAuthorize().then((res) => {
+            if (res && res.denied) {
+              // 平台明确拒绝：撤掉本地同意，下次继续拦（fail-closed）
+              resetAgreed()
+              resolve(false)
+              return
+            }
+            resolve(true)
+          }, () => resolve(false))
+        },
+        fail: () => resolve(false)
+      })
+    } catch (e) {
+      // 弹窗都弹不出来时不能放过（fail-closed）
+      resolve(false)
+    }
+  })
+}
+
 /** 打开隐私政策页（我们自己的协议页，内容见云函数 shop-config.js 的 cms.agreement） */
 function openPolicy() {
   wx.navigateTo({
@@ -199,6 +262,8 @@ module.exports = {
   cancelResetOnNextLaunch,
   shouldShowOnLaunch,
   requestPlatformAuthorize,
+  // 2026-10-19 上线清单 P0-4：关键操作前的隐私同意门禁
+  ensureAgreed,
   openPolicy,
   openContractPage
 }

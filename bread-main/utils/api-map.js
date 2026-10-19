@@ -253,6 +253,16 @@ const API = {
   // 2026-10-10：店主手动完成订单，取代原 orderHXV2（扫码核销）。
   orderFinish: (token, orderId) => callCloud('orderFinish', { id: orderId }),
 
+  /**
+   * 支付成功后向服务端确认真实到账（2026-10-19 P0-1 支付闭环）。
+   * 为什么不只看 wx.requestPayment 的 success：它只代表顾客完成了付款动作，
+   * 微信支付回调可能延迟几秒才落到云端。用订单 id 再问一次服务端，只有
+   * data.paid === true 才算真的到账（顾客端据此提示「支付成功」）。
+   * 云端返回 data: { paid: true|false, status, orderNumber, amountReal }；
+   * 订单不存在 / 不是本人 → code !== 0（页面按"确认中"处理，不吓顾客）。
+   */
+  orderPayConfirm: (orderId) => callCloud('orderPayConfirm', { id: orderId }),
+
   // ---------- 店主端（阶段 10）----------
   // ⚠️ 这些接口在**服务端**用 ctx.openid 比对白名单（requireAdmin）——
   //    前端只是"入口显不显示"的展示判断，改前端拿不到权限。
@@ -289,6 +299,15 @@ const API = {
   adminOrderFreightConfirm: (id, freight) =>
     callCloud('orderFreightConfirm', { id, freight }),
 
+  /**
+   * 店主手动确认线下收款（2026-10-19 P0-1 支付闭环）。
+   * 无商户号阶段顾客会到店付 / 线下转账，店主用这个把订单从
+   * 待支付(0) 推进到制作中(1)，payChannel 由服务端记为 'offline'。
+   * ⚠️ 仅店主白名单可调（服务端 requireAdmin 兜底，前端隐藏按钮只是展示判断）。
+   * 返回 data: { id, orderNumber, status: 1, payChannel: 'offline' }。
+   */
+  adminOrderMarkPaid: (id) => callCloud('orderMarkPaid', { id }),
+
   // ---------- 优惠券（阶段 11）----------
   // ⚠️ 金额纪律：券能不能用、能减多少**只由服务端算** —— 本文件只负责转发，
   //    页面只展示服务端给的 discount，绝不自己用券面金额拼一遍。
@@ -315,14 +334,16 @@ const API = {
 
   // ---------- 支付统一下单 ----------
   /**
-   * 微信支付统一下单。
-   * 返回结构（页面/utils/pay.js 依赖）：res.code === 0 时提供
-   * timeStamp / nonceStr / package / signType / paySign 供 wx.requestPayment 使用。
-   *
-   * 云函数当前返回「支付尚未接入」的明确文案（阶段 7 才接微信支付），
-   * 页面据此提示用户，**不伪造支付成功**。
+   * 微信支付统一下单（2026-10-19 P0-1 已接入真实支付）。
+   * 返回结构（utils/pay.js 依赖）：res.code === 0 时提供
+   * timeStamp / nonceStr / package / signType / paySign 供 wx.requestPayment 使用；
+   * 订单已支付时返回 { alreadyPaid: true }（前端不再拉起收银台）。
+   * 商户号未配置时云函数返回 501「线上支付尚未开通」，**绝不伪造支付成功**。
    */
   wxpay: (data) => callCloud('wxpay', data),
+
+  // 注：orderPayConfirm 定义在「订单」区、adminOrderMarkPaid 定义在「店主端」区，
+  //     这里不再重复定义（重复对象键会静默覆盖，改了一处不生效，排查成本很高）。
 
   // ---------- 用户 ----------
   /** 读取当前用户资料。云开发下身份由 OPENID 自动确定，token 参数忽略。 */

@@ -25,6 +25,8 @@ const AUTH = require('../../utils/auth')
 const wxpay = require('../../utils/pay.js')
 // 2026-10-17 顾客反馈：退出登录后不允许下单/去支付（必须重新登录）
 const LOGIN_GATE = require('../../utils/login-gate')
+// 2026-10-19（上线清单 P0-4）：下单前的隐私同意门禁（合规硬要求，见 createorder）
+const PRIVACY = require('../../utils/privacy')
 const SHOP_CONFIG = require('../../shop-config')
 const DELIVERY = require('../../utils/delivery')
 const ADDR = require('../../utils/address')
@@ -519,7 +521,7 @@ Page({
   //   1) **金额不在前端算**：券能不能用、能减多少，全部来自服务端
   //      couponUsableForCart（下单时 orderCreate 会用同一套逻辑再校验一次）；
   //   2) 接口失败**不阻塞下单**：按"不使用优惠券"处理，页面金额与实付口径一致；
-  //   3) 一单一张：弹层里选一张，选"不使用"即取消；取消订单不退券（弹层底部有文案）。
+  //   3) 一单一张：弹层里选一张，选"不使用"即取消；未支付取消/超时后优惠券自动退回（弹层底部有文案）。
   // =========================================================================
 
   /** 顾客可见的券（券入口提示用；具体到购物车的可用性交给 refreshCoupons） */
@@ -715,6 +717,20 @@ Page({
     if (LOGIN_GATE.isLoggedOut()) {
       LOGIN_GATE.requireLogin(this, () => this.createorder())
       return
+    }
+    // ===== 2026-10-19（上线清单 P0-4）：隐私同意门禁（合规硬要求）=====
+    // 问题：此前结算页只校验手机号，**未同意隐私政策也能下单** —— 等于在未取得同意
+    // 的情况下收集手机号/收货地址等个人信息。这里在**登录门禁之后、提交中防抖判断之前**
+    // 与登录门禁同级拦截：未同意先让顾客明确同意（ensureAgreed 为 fail-closed：
+    // 取消 / 弹窗失败 / 平台明确拒绝都返回 false），不同意则明确提示并直接 return，
+    // **不发起下单**。注意顺序：门禁必须在 _submitting 判断之前（与登录门禁同级）；
+    // 已同意时 hasAgreed() 直接为 true，不进入 await 分支，不影响"连点只发一次"。
+    if (!PRIVACY.hasAgreed()) {
+      const ok = await PRIVACY.ensureAgreed()
+      if (!ok) {
+        wx.showToast({ title: '需同意隐私政策后才能下单', icon: 'none' })
+        return
+      }
     }
     if (this._submitting) {
       wx.showToast({ title: '正在提交，请稍候', icon: 'none' })
@@ -938,6 +954,22 @@ Page({
     // 支付弹窗走完之前顾客若再点一次「去支付」，原来会生成第二张重复订单。
     this._ordered = true
 
+    // ===== 2026-10-19（P1-5）：运费待确认的订单不进入收银台 =====
+    // 距离超出最后一档 / 地图没取到坐标时，服务端下单时运费按 0 记（amountReal 不含运费）。
+    // 这时直接支付会漏收运费，所以先让顾客知道"订单已保存、等门店确认运费后再付"，
+    // 而不是先拉起收银台、再被服务端拒绝。
+    if (res.data && res.data.needsFreightConfirm) {
+      wx.showModal({
+        title: '订单已提交，运费待确认',
+        content: '该地址的配送费需要门店电话确认。确认后可在「我的订单」里继续支付；' +
+          '15 分钟内未支付订单会自动取消。',
+        showCancel: false,
+        confirmText: '查看订单',
+        success: () => wx.reLaunch({ url: '/pages/current-order/index' })
+      })
+      return
+    }
+
     // ===== 阶段 5.1 复核整改：下单金额与页面展示金额不一致时先告知顾客 =====
     // 场景：顾客在结算页停留期间商家改了价（或运费被服务端重算）。
     // 服务端返回的 amountReal 是**权威金额**，但顾客看到的是页面上的 88 元，
@@ -974,7 +1006,8 @@ Page({
     // 删除内容：读取用户余额（API.userAmount）→ 计算 money = amountReal - balance
     //          → 余额足够时走 API.orderPayV2（"用余额支付"）的整段逻辑。
     // 原因：会员卡 / 积分 / 余额体系整体删除，orderPayV2 与云函数 orderPay action 已移除。
-    // 现行为：下单成功后统一走微信支付统一下单（云开发支付接入前会提示"云开发支付尚未接入"）。
+    // 2026-10-19 P0-1：下单成功后统一走微信支付统一下单；支付成功后由 utils/pay.js
+    // 调 orderPayConfirm 向服务端确认到账（未配置商户号时提示「线上支付暂未开通」）。
     wxpay.wxpay('order', serverTotal, res.data.id, "/pages/current-order/index");
   },
 })
